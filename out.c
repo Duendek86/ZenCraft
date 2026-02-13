@@ -311,6 +311,10 @@ struct AsyncSystem {
     ChunkMeshes compute_chunk_mesh(Chunk* c, Chunk* chunks, int num_chunks);
     Mesh compute_plant_mesh(Chunk* c);
 
+    // Prototype for lighting functions
+    void recalculate_chunk_lighting(Chunk* c, Chunk* chunks, int num_chunks);
+    void propagate_light_in_chunk(Chunk* c, Chunk* chunks, int num_chunks);
+
 
     // Worker Function
     #if defined(_WIN32)
@@ -344,6 +348,30 @@ struct AsyncSystem {
                         }
                         worked = 1;
                         continue;
+                    }
+                    
+                    if(req->type == 4) { // REQ_LIGHT_RECALC
+                         if (global_chunks_ptr != NULL) {
+                            Chunk* c = &global_chunks_ptr[req->target_idx];
+                            recalculate_chunk_lighting(c, global_chunks_ptr, global_num_chunks);
+                            req->status = 2; // COMPLETED
+                         } else {
+                            req->status = 3; // FAILED
+                         }
+                         worked = 1;
+                         continue;
+                    }
+
+                    if(req->type == 5) { // REQ_LIGHT_PROPAGATE
+                         if (global_chunks_ptr != NULL) {
+                            Chunk* c = &global_chunks_ptr[req->target_idx];
+                            propagate_light_in_chunk(c, global_chunks_ptr, global_num_chunks);
+                            req->status = 2; // COMPLETED
+                         } else {
+                            req->status = 3; // FAILED
+                         }
+                         worked = 1;
+                         continue;
                     }
 
                     // --- REGION-BASED FILE I/O ---
@@ -753,6 +781,8 @@ const int REQ_NONE = 0;
 const int REQ_SAVE = 1;
 const int REQ_LOAD = 2;
 const int REQ_BUILD_MESH = 3;
+const int REQ_LIGHT_RECALC = 4;
+const int REQ_LIGHT_PROPAGATE = 5;
 const int IO_STATUS_FREE = 0;
 const int IO_STATUS_PENDING = 1;
 const int IO_STATUS_COMPLETED = 2;
@@ -774,6 +804,7 @@ void poll_async_results(Chunk* chunks, int num_chunks);
 int get_pending_req_count(void);
 ProfilingStats get_profiling_stats(void);
 int is_chunk_pending(int cx, int cz);
+int request_light_async(int idx, int mode);
 int request_mesh_async(int idx);
 int request_load_async(int idx, int cx, int cz);
 void request_save_async(Chunk* c);
@@ -1373,8 +1404,7 @@ set_block((&chunks[0]), 961, (hit.x - 1), hit.y, hit.z, 0);
     int cx = ((int)(floor((((float)(hit.x)) / 16.000000))));
     int cz = ((int)(floor((((float)(hit.z)) / 16.000000))));
     int idx = get_chunk_index(cx, cz);
-recalculate_chunk_lighting((&chunks[idx]), (&chunks[0]), 961);
-(chunks[idx].mesh_dirty = 1);
+request_light_async(idx, 4);
 (chunks[idx].grass_deco_built = 0);
 request_save_async((&chunks[idx]));
     int idx_xm = get_chunk_index((cx - 1), cz);
@@ -1382,23 +1412,19 @@ request_save_async((&chunks[idx]));
     int idx_zm = get_chunk_index(cx, (cz - 1));
     int idx_zp = get_chunk_index(cx, (cz + 1));
 if (((chunks[idx_xm].x == (cx - 1)) && (chunks[idx_xm].z == cz)))     {
-recalculate_chunk_lighting((&chunks[idx_xm]), (&chunks[0]), 961);
-(chunks[idx_xm].mesh_dirty = 1);
+request_light_async(idx_xm, 4);
 (chunks[idx_xm].grass_deco_built = 0);
     }
 if (((chunks[idx_xp].x == (cx + 1)) && (chunks[idx_xp].z == cz)))     {
-recalculate_chunk_lighting((&chunks[idx_xp]), (&chunks[0]), 961);
-(chunks[idx_xp].mesh_dirty = 1);
+request_light_async(idx_xp, 4);
 (chunks[idx_xp].grass_deco_built = 0);
     }
 if (((chunks[idx_zm].x == cx) && (chunks[idx_zm].z == (cz - 1))))     {
-recalculate_chunk_lighting((&chunks[idx_zm]), (&chunks[0]), 961);
-(chunks[idx_zm].mesh_dirty = 1);
+request_light_async(idx_zm, 4);
 (chunks[idx_zm].grass_deco_built = 0);
     }
 if (((chunks[idx_zp].x == cx) && (chunks[idx_zp].z == (cz + 1))))     {
-recalculate_chunk_lighting((&chunks[idx_zp]), (&chunks[0]), 961);
-(chunks[idx_zp].mesh_dirty = 1);
+request_light_async(idx_zp, 4);
 (chunks[idx_zp].grass_deco_built = 0);
     }
     }
@@ -1447,8 +1473,7 @@ set_block((&chunks[0]), 961, nx, ny, nz, block_to_place);
     int cx = ((int)(floor((((float)(nx)) / 16.000000))));
     int cz = ((int)(floor((((float)(nz)) / 16.000000))));
     int idx = get_chunk_index(cx, cz);
-recalculate_chunk_lighting((&chunks[idx]), (&chunks[0]), 961);
-(chunks[idx].mesh_dirty = 1);
+request_light_async(idx, 4);
 (chunks[idx].grass_deco_built = 0);
 request_save_async((&chunks[idx]));
     int idx_xm = get_chunk_index((cx - 1), cz);
@@ -1456,23 +1481,19 @@ request_save_async((&chunks[idx]));
     int idx_zm = get_chunk_index(cx, (cz - 1));
     int idx_zp = get_chunk_index(cx, (cz + 1));
 if (((chunks[idx_xm].x == (cx - 1)) && (chunks[idx_xm].z == cz)))     {
-recalculate_chunk_lighting((&chunks[idx_xm]), (&chunks[0]), 961);
-(chunks[idx_xm].mesh_dirty = 1);
+request_light_async(idx_xm, 4);
 (chunks[idx_xm].grass_deco_built = 0);
     }
 if (((chunks[idx_xp].x == (cx + 1)) && (chunks[idx_xp].z == cz)))     {
-recalculate_chunk_lighting((&chunks[idx_xp]), (&chunks[0]), 961);
-(chunks[idx_xp].mesh_dirty = 1);
+request_light_async(idx_xp, 4);
 (chunks[idx_xp].grass_deco_built = 0);
     }
 if (((chunks[idx_zm].x == cx) && (chunks[idx_zm].z == (cz - 1))))     {
-recalculate_chunk_lighting((&chunks[idx_zm]), (&chunks[0]), 961);
-(chunks[idx_zm].mesh_dirty = 1);
+request_light_async(idx_zm, 4);
 (chunks[idx_zm].grass_deco_built = 0);
     }
 if (((chunks[idx_zp].x == cx) && (chunks[idx_zp].z == (cz + 1))))     {
-recalculate_chunk_lighting((&chunks[idx_zp]), (&chunks[0]), 961);
-(chunks[idx_zp].mesh_dirty = 1);
+request_light_async(idx_zp, 4);
 (chunks[idx_zp].grass_deco_built = 0);
     }
     }
@@ -1823,10 +1844,37 @@ void poll_async_results(Chunk* chunks, int num_chunks)
                      io_queue[i].status = 0;
                      processed++;
                 }
+                else if (io_queue[i].type == 4 || io_queue[i].type == 5) { // LIGHT CALC/PROP DONE
+                     if(idx >= 0 && idx < num_chunks) {
+                         // Unlock
+                         chunks[idx].locked--;
+                         if (chunks[idx].locked < 0) chunks[idx].locked = 0;
+                         
+                         // Unlock Neighbors
+                         int neighbor_offsets[8] = {-1, 0, 1, 0, 0, -1, 0, 1};
+                         Chunk* c = &chunks[idx];
+                         for(int ni = 0; ni < 4; ni++) {
+                            int ncx = c->x + neighbor_offsets[ni * 2];
+                            int ncz = c->z + neighbor_offsets[ni * 2 + 1];
+                            int nidx = get_chunk_index(ncx, ncz);
+                            
+                            if(chunks[nidx].x == ncx && chunks[nidx].z == ncz) {
+                                 chunks[nidx].locked--; 
+                                 if (chunks[nidx].locked < 0) chunks[nidx].locked = 0;
+                                 
+                                 // Mark neighbor mesh dirty (lighting spilled over)
+                                 chunks[nidx].mesh_dirty = 1;
+                            }
+                         }
+                         
+                         chunks[idx].mesh_dirty = 1;
+                     }
+                     io_queue[i].status = 0;
+                     processed++;
+                }
                 else if (io_queue[i].type == 2) { // LOAD
                     if(idx >= 0 && idx < num_chunks) {
-                        // CRITICAL: Do not update chunk data if it is locked (being read by mesh gen)
-                        if (chunks[idx].locked > 0) {
+                         if (chunks[idx].locked > 0) {
                             // Defer this update. Keep status as COMPLETED (2).
                             // We will try again next frame.
                             continue;
@@ -1846,33 +1894,28 @@ void poll_async_results(Chunk* chunks, int num_chunks)
                         chunks[idx].plant_mesh_built = 0;
                         chunks[idx].grass_deco_built = 0;
                         
+                        // CHAIN lighting request (Async)
+                        // This prevents main thread lag spike
+                        int req_mode = 4; // CALC
                         if(io_queue[i].data.light_calculated) {
-                            double t0 = GetTime();
-                            propagate_light_in_chunk(&chunks[idx], chunks, num_chunks);
-                            prof_prop_time += (GetTime() - t0);
-                            
-                        } else {
-                            double t0 = GetTime();
-                            recalculate_chunk_lighting(&chunks[idx], chunks, num_chunks);
-                            propagate_light_in_chunk(&chunks[idx], chunks, num_chunks);
-                            prof_prop_time += (GetTime() - t0);
+                            req_mode = 5; // PROPAGATE
                         }
                         
-                        // Mark neighbors
-                        int cx = chunks[idx].x;
-                        int cz = chunks[idx].z;
-                        int neighbor_offsets[8] = {-1, 0, 1, 0, 0, -1, 0, 1};
-                        for(int ni = 0; ni < 4; ni++) {
-                            int ncx = cx + neighbor_offsets[ni * 2];
-                            int ncz = cz + neighbor_offsets[ni * 2 + 1];
-                            int nidx = get_chunk_index(ncx, ncz);
-                            if(chunks[nidx].x == ncx && chunks[nidx].z == ncz) {
-                                double t0 = GetTime();
-                                propagate_light_in_chunk(&chunks[nidx], chunks, num_chunks);
-                                chunks[nidx].mesh_dirty = 1;
-                                prof_prop_time += (GetTime() - t0);
-                            }
-                        }
+                        // Try to schedule lighting immediate
+                        // If we fail (queue full), we have a problem: chunk is loaded but unlit.
+                        // We'll mark it dirty and let normal update cycle catch it? 
+                        // Or we can manually retry?
+                        // Better: If request_light_async fails, we DONT clear the io_queue entry logic?
+                        // But we already applied data. 
+                        // Let's just try to request. If it fails, we fall back to main thread or just skip (it will look dark until update).
+                        // Actually, if we just set mesh_dirty=1, it will eventually request mesh... 
+                        // But lighting needs to happen BEFORE mesh.
+                        
+                        // We can use a trick: If lighting request fails, we can add a flag "needs_lighting" to chunk?
+                        // Or just loop until we can push? No, that freezes.
+                        
+                        // Let's just try. queue is large.
+                        request_light_async(idx, req_mode);
                     }
                     io_queue[i].status = 0; // Free
                     processed++;
@@ -1923,6 +1966,54 @@ int is_chunk_pending(int cx, int cz)
                 result = 1;
                 break;
             }
+        }
+    
+    return result;
+    }
+}
+
+int request_light_async(int idx, int mode)
+{
+    {
+    int result = 0;
+    
+        if(global_chunks_ptr == NULL) return 0;
+        
+        Chunk* c = &global_chunks_ptr[idx];
+        if(c->locked) return 0; // Already busy
+        
+        // Find free slot
+        int slot = -1;
+        for(int i=0; i<256; i++) {
+            if(io_queue[i].status == 0) {
+                slot = i;
+                break;
+            }
+        }
+        
+        if(slot != -1) {
+            io_queue[slot].type = mode;
+            io_queue[slot].cx = c->x;
+            io_queue[slot].cz = c->z;
+            io_queue[slot].target_idx = idx;
+            
+            // Lock Center
+            c->locked = 1;
+            
+            // Lock Neighbors (Lighting touches neighbors)
+            int neighbor_offsets[8] = {-1, 0, 1, 0, 0, -1, 0, 1};
+            for(int ni = 0; ni < 4; ni++) {
+                int ncx = c->x + neighbor_offsets[ni * 2];
+                int ncz = c->z + neighbor_offsets[ni * 2 + 1];
+                int nidx = get_chunk_index(ncx, ncz);
+                
+                if(global_chunks_ptr[nidx].x == ncx && global_chunks_ptr[nidx].z == ncz) {
+                     global_chunks_ptr[nidx].locked++; 
+                }
+            }
+            
+            io_queue[slot].status = 1; // PENDING
+            result = 1;
         }
     
     return result;

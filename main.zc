@@ -719,9 +719,9 @@ fn main() {
                         let cz = (int)floor((float)hit.z / 16.0);
                         let idx = get_chunk_index(cx, cz);
                         
-                        // Full recalc on this chunk AND neighbors
-                        recalculate_chunk_lighting(&chunks[idx], &chunks[0], MAX_CHUNKS);
-                        chunks[idx].mesh_dirty = 1;
+                        // Full recalc on this chunk AND neighbors (ASYNC)
+                        request_light_async(idx, 4); // REQ_LIGHT_RECALC
+                        // chunks[idx].mesh_dirty = 1; // Will be set by async result
                         chunks[idx].grass_deco_built = 0; // Force grass deco rebuild
                         request_save_async(&chunks[idx]);
                         
@@ -732,23 +732,19 @@ fn main() {
                         let idx_zp = get_chunk_index(cx, cz + 1);
                         
                         if chunks[idx_xm].x == cx - 1 && chunks[idx_xm].z == cz {
-                            recalculate_chunk_lighting(&chunks[idx_xm], &chunks[0], MAX_CHUNKS);
-                            chunks[idx_xm].mesh_dirty = 1;
+                            request_light_async(idx_xm, 4);
                             chunks[idx_xm].grass_deco_built = 0;
                         }
                         if chunks[idx_xp].x == cx + 1 && chunks[idx_xp].z == cz {
-                            recalculate_chunk_lighting(&chunks[idx_xp], &chunks[0], MAX_CHUNKS);
-                            chunks[idx_xp].mesh_dirty = 1;
+                            request_light_async(idx_xp, 4);
                             chunks[idx_xp].grass_deco_built = 0;
                         }
                         if chunks[idx_zm].x == cx && chunks[idx_zm].z == cz - 1 {
-                            recalculate_chunk_lighting(&chunks[idx_zm], &chunks[0], MAX_CHUNKS);
-                            chunks[idx_zm].mesh_dirty = 1;
+                            request_light_async(idx_zm, 4);
                             chunks[idx_zm].grass_deco_built = 0;
                         }
                         if chunks[idx_zp].x == cx && chunks[idx_zp].z == cz + 1 {
-                            recalculate_chunk_lighting(&chunks[idx_zp], &chunks[0], MAX_CHUNKS);
-                            chunks[idx_zp].mesh_dirty = 1;
+                            request_light_async(idx_zp, 4);
                             chunks[idx_zp].grass_deco_built = 0;
                         }
                     }
@@ -815,9 +811,8 @@ fn main() {
                              let cz = (int)floor((float)nz / 16.0);
                              let idx = get_chunk_index(cx, cz);
                              
-                             // Full recalc on this chunk AND neighbors to prevent light bleed
-                             recalculate_chunk_lighting(&chunks[idx], &chunks[0], MAX_CHUNKS);
-                             chunks[idx].mesh_dirty = 1;
+                             // Full recalc on this chunk AND neighbors (ASYNC)
+                             request_light_async(idx, 4); // REQ_LIGHT_RECALC
                              chunks[idx].grass_deco_built = 0;
                              request_save_async(&chunks[idx]);
                              
@@ -828,23 +823,19 @@ fn main() {
                              let idx_zp = get_chunk_index(cx, cz + 1);
                              
                              if chunks[idx_xm].x == cx - 1 && chunks[idx_xm].z == cz {
-                                 recalculate_chunk_lighting(&chunks[idx_xm], &chunks[0], MAX_CHUNKS);
-                                 chunks[idx_xm].mesh_dirty = 1;
+                                 request_light_async(idx_xm, 4);
                                  chunks[idx_xm].grass_deco_built = 0;
                              }
                              if chunks[idx_xp].x == cx + 1 && chunks[idx_xp].z == cz {
-                                 recalculate_chunk_lighting(&chunks[idx_xp], &chunks[0], MAX_CHUNKS);
-                                 chunks[idx_xp].mesh_dirty = 1;
+                                 request_light_async(idx_xp, 4);
                                  chunks[idx_xp].grass_deco_built = 0;
                              }
                              if chunks[idx_zm].x == cx && chunks[idx_zm].z == cz - 1 {
-                                 recalculate_chunk_lighting(&chunks[idx_zm], &chunks[0], MAX_CHUNKS);
-                                 chunks[idx_zm].mesh_dirty = 1;
+                                 request_light_async(idx_zm, 4);
                                  chunks[idx_zm].grass_deco_built = 0;
                              }
                              if chunks[idx_zp].x == cx && chunks[idx_zp].z == cz + 1 {
-                                 recalculate_chunk_lighting(&chunks[idx_zp], &chunks[0], MAX_CHUNKS);
-                                 chunks[idx_zp].mesh_dirty = 1;
+                                 request_light_async(idx_zp, 4);
                                  chunks[idx_zp].grass_deco_built = 0;
                              }
                         }
