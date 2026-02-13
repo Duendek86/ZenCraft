@@ -3,10 +3,27 @@ import "chunk.zc";
 import "chunk_mesh.zc";
 raw {
     #include "pending_map.h"
+    
+    #if defined(_WIN32)
+        #define WIN32_LEAN_AND_MEAN
+        #define NOGDI
+        #define NOUSER
+    #endif
+    
+    #define ZTHREAD_IMPLEMENTATION
+    #include "zthread.h"
+    
+    typedef void* any;
+    
+    typedef struct {
+        float x, y, z;
+        int selected_block;
+        float yaw, pitch;
+    } PlayerSaveData;
 }
 
 // Global constants for Async System
-def MAX_PENDING_IO = 256;
+def MAX_PENDING_IO = 512;
 
 // Request Types
 def REQ_NONE = 0;
@@ -474,31 +491,9 @@ fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
 }
 
 
+    // Old thread declarations removed
 raw {
-    #if defined(_WIN32)
-        // Prevent Windows.h from polluting global namespace
-        #define WIN32_LEAN_AND_MEAN
-        #define NOGDI
-        #define NOUSER
-        #include <windows.h>
-        
-        // Undefine common collisions just in case
-        #undef Near
-        #undef Far
-        #undef Rectangle
-        #undef CloseWindow
-        #undef ShowCursor
-        
-        HANDLE db_thread;
-        DWORD WINAPI db_worker(LPVOID lpParam);
-        CRITICAL_SECTION db_cs;
-    #else
-        #include <pthread.h>
-        #include <unistd.h>
-        pthread_t db_thread;
-        void* db_worker(void* is_running_ptr);
-        pthread_mutex_t db_mutex;
-    #endif
+
 
     // The Queue
     typedef struct {
@@ -513,7 +508,8 @@ raw {
         int priority; // 0=LOW, 1=HIGH
     } RawIORequest;
 
-    RawIORequest io_queue[256];
+    RawIORequest* io_queue = NULL;
+    int io_queue_capacity = 0;
     RawIORequest hp_queue[64];
 
     typedef struct {
@@ -560,11 +556,7 @@ raw {
 
 
     // Worker Function
-    #if defined(_WIN32)
-    DWORD WINAPI db_worker(LPVOID lpParam)
-    #else
-    void* db_worker(void* arg)
-    #endif
+    void db_worker(void* lpParam)
     {
         WorkerConfig* config = (WorkerConfig*)lpParam;
         RawIORequest* queue = config->queue;
@@ -765,14 +757,10 @@ raw {
             
             if(!worked) {
                 // Sleep to avoid burning CPU
-                #if defined(_WIN32)
-                Sleep(5);
-                #else
-                usleep(5000);
-                #endif
+                zthread_sleep(5);
             }
         }
-        return 0;
+        return;
     }
 }
 
@@ -789,31 +777,37 @@ fn init_persistence(chunks: Chunk*) {
         }
         
         // Zero queues
-        for(int i=0; i<256; i++) io_queue[i].status = 0;
+        if(io_queue) {
+            for(int i=0; i<io_queue_capacity; i++) io_queue[i].status = 0;
+        }
         for(int i=0; i<64; i++) hp_queue[i].status = 0;
         
         system_running = 1;
 
         global_chunks_ptr = chunks;
         global_num_chunks = MAX_CHUNKS;
+
+        // Dynamic Allocation based on MAX_CHUNKS
+        // Allow enough slots for potentially loading ALL chunks at once + buffer
+        io_queue_capacity = MAX_CHUNKS + 64; 
+        if(io_queue == NULL) {
+            io_queue = (RawIORequest*)ZTHREAD_CALLOC(io_queue_capacity, sizeof(RawIORequest));
+        } else {
+             // Realloc if already exists? For now assume one-time init or manual restart
+        }
         
         // Setup Workers
         worker_low.queue = io_queue;
-        worker_low.size = 256;
+        worker_low.size = io_queue_capacity;
         worker_low.id = 0;
         
         worker_high.queue = hp_queue;
         worker_high.size = 64;
         worker_high.id = 1;
 
-        #if defined(_WIN32)
-            CreateThread(NULL, 0, db_worker, &worker_low, 0, NULL);
-            CreateThread(NULL, 0, db_worker, &worker_high, 0, NULL); // High Priority Thread
-        #else
-            pthread_t t1, t2;
-            pthread_create(&t1, NULL, db_worker, &worker_low);
-            pthread_create(&t2, NULL, db_worker, &worker_high);
-        #endif
+        zthread_t t1, t2;
+        zthread_create(&t1, db_worker, &worker_low);
+        zthread_create(&t2, db_worker, &worker_high);
         
         pmap_ensure_init();
     }
@@ -826,8 +820,9 @@ fn request_save_async(c: Chunk*) {
 
     raw {
         // 1. Check if already pending - Update data if so
-        for(int i=0; i<256; i++) {
-            if(io_queue[i].status == 1 && io_queue[i].type == 1) { // PENDING SAVE
+        if(io_queue) {
+            for(int i=0; i<io_queue_capacity; i++) {
+                if(io_queue[i].status == 1 && io_queue[i].type == 1) { // PENDING SAVE
                 if(io_queue[i].cx == c->x && io_queue[i].cz == c->z) {
                      // Found existing save request! Update data and return.
                      memcpy(io_queue[i].data.blocks, c->blocks, sizeof(io_queue[i].data.blocks));
@@ -837,14 +832,18 @@ fn request_save_async(c: Chunk*) {
                      return;
                 }
             }
+            }
         }
 
+    
         // 2. Find free slot
         int slot = -1;
-        for(int i=0; i<256; i++) {
-            if(io_queue[i].status == 0) {
-                slot = i;
-                break;
+        if(io_queue) {
+            for(int i=0; i<io_queue_capacity; i++) {
+                if(io_queue[i].status == 0) {
+                    slot = i;
+                    break;
+                }
             }
         }
         
@@ -876,10 +875,12 @@ fn request_load_async(idx: int, cx: int, cz: int, priority: int) -> int {
         // Find free slot
         // io_queue is now Low Priority only, so use all slots
         int slot = -1;
-        for(int i=0; i<256; i++) {
-            if(io_queue[i].status == 0) {
-                slot = i;
-                break;
+        if(io_queue) {
+            for(int i=0; i<io_queue_capacity; i++) {
+                if(io_queue[i].status == 0) {
+                    slot = i;
+                    break;
+                }
             }
         }
         
@@ -934,7 +935,7 @@ fn request_mesh_async(idx: int, priority: int) -> int {
         
         // Select Queue
         RawIORequest* queue = io_queue;
-        int queue_size = 256;
+        int queue_size = io_queue_capacity;
         if(priority > 0) {
              queue = hp_queue;
              queue_size = 64;
@@ -993,7 +994,7 @@ fn request_light_async(idx: int, mode: int, priority: int) -> int {
         
         // Select Queue
         RawIORequest* queue = io_queue;
-        int queue_size = 256;
+        int queue_size = io_queue_capacity;
         if(priority > 0) {
              queue = hp_queue;
              queue_size = 64;
@@ -1065,9 +1066,11 @@ fn get_profiling_stats() -> ProfilingStats {
 fn get_pending_req_count() -> int {
     let count = 0;
     raw {
-        for(int i=0; i<256; i++) {
-            if(io_queue[i].status == 1) { // PENDING
-                count++;
+        if(io_queue) {
+            for(int i=0; i<io_queue_capacity; i++) {
+                if(io_queue[i].status == 1) { // PENDING
+                    count++;
+                }
             }
         }
     }
@@ -1075,17 +1078,25 @@ fn get_pending_req_count() -> int {
 }
 
 // Returns 1 if chunk was loaded/generated this frame
-fn poll_async_results(chunks: Chunk*, num_chunks: int) {
+fn poll_async_results() {
     raw {
+        Chunk* chunks = global_chunks_ptr;
+        int num_chunks = global_num_chunks;
+        
+        if(chunks == NULL) return;
         double start_time = GetTime();
         double time_budget = 0.001; // 1ms budget (Aggressive)
         int processed = 0;
         prof_prop_time = 0.0; // Reset frame counter
         
         RawIORequest* queues[2] = { hp_queue, io_queue };
-        int sizes[2] = { 64, 256 };
+        int sizes[2] = { 64, io_queue_capacity };
+        
+        int stop_polling = 0;
         
         for(int q=0; q<2; q++) {
+            if(stop_polling) break;
+            
             RawIORequest* queue = queues[q];
             int size = sizes[q];
 
@@ -1093,7 +1104,8 @@ fn poll_async_results(chunks: Chunk*, num_chunks: int) {
                  // Check time budget every iteration
                  double current_time = GetTime();
                  if ((current_time - start_time) > time_budget && processed > 0) {
-                     goto end_poll; // Break out of both loops
+                     stop_polling = 1;
+                     break;
                  }
 
                  
@@ -1200,20 +1212,10 @@ fn poll_async_results(chunks: Chunk*, num_chunks: int) {
                 }
             }
         }
-        end_poll:;
     }
 }
 
 // --- Player Persistence ---
-
-struct PlayerSaveData {
-    x: float;
-    y: float;
-    z: float;
-    selected_block: int;
-    yaw: float;
-    pitch: float;
-}
 
 fn save_player_data(x: float, y: float, z: float, block: int, yaw: float, pitch: float) {
     raw {
@@ -1243,9 +1245,16 @@ fn save_player_data(x: float, y: float, z: float, block: int, yaw: float, pitch:
     }
 }
 
-fn load_player_data(x: float*, y: float*, z: float*, block: int*, yaw: float*, pitch: float*) -> int {
+fn load_player_data(x_ptr: any, y_ptr: any, z_ptr: any, block_ptr: any, yaw_ptr: any, pitch_ptr: any) -> int {
     let success = 0;
     raw {
+        float* x = (float*)x_ptr;
+        float* y = (float*)y_ptr;
+        float* z = (float*)z_ptr;
+        int* block = (int*)block_ptr;
+        float* yaw = (float*)yaw_ptr;
+        float* pitch = (float*)pitch_ptr;
+        
         char filename[256];
         sprintf(filename, "%s/player.dat", world_dir);
         
@@ -1261,6 +1270,7 @@ fn load_player_data(x: float*, y: float*, z: float*, block: int*, yaw: float*, p
                 *yaw = pd.yaw;
                 *pitch = pd.pitch;
                 success = 1;
+                success = 1;
                 TraceLog(LOG_INFO, "Player data loaded: %.2f, %.2f, %.2f, Yaw: %.2f, Pitch: %.2f, Block: %d", 
                          pd.x, pd.y, pd.z, pd.yaw, pd.pitch, pd.selected_block);
             } else {
@@ -1275,17 +1285,19 @@ fn load_player_data(x: float*, y: float*, z: float*, block: int*, yaw: float*, p
 }
 
 // Synchronous load - try to load from disk, generate if file doesn't exist
-fn load_chunk_into(c: Chunk*, cx: int, cz: int) {
-    // Initialize defaults 
-    c.x = cx;
-    c.z = cz;
-    c.mesh_built = 0;
-    c.plant_mesh_built = 0;
-    c.grass_deco_built = 0;
-    c.water_mesh_built = 0;
-    c.plant_count = 0;
-    
+fn load_chunk_into(c_ptr: any, cx: int, cz: int) {
     raw {
+        Chunk* c = (Chunk*)c_ptr;
+        
+        // Initialize defaults 
+        c->x = cx;
+        c->z = cz;
+        c->mesh_built = 0;
+        c->plant_mesh_built = 0;
+        c->grass_deco_built = 0;
+        c->water_mesh_built = 0;
+        c->plant_count = 0;
+
         ChunkData* data_ptr = (ChunkData*)malloc(sizeof(ChunkData));
         if (data_ptr) {
             int loaded = 0;

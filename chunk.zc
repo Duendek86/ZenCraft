@@ -16,8 +16,8 @@ extern fn abs(v: int) -> int;
 
 // World configuration
 def RENDER_DISTANCE = 15;
-def CHUNK_MAP_SIZE = 31; // RENDER_DISTANCE * 2 + 1
-def MAX_CHUNKS = 961;    // CHUNK_MAP_SIZE * CHUNK_MAP_SIZE
+def CHUNK_MAP_SIZE = 32; // Power of 2 for safety/speed
+def MAX_CHUNKS = 1024;   // 32 * 32
 #define CHUNK_HEIGHT 128
 
 struct Plant {
@@ -80,8 +80,8 @@ fn build_plant_mesh(c: Chunk*, plant_tex: rl::Texture2D);
 
 // Global helpers for multi-chunk operations (Optimized O(1) Lookup)
 fn get_chunk_index(cx: int, cz: int) -> int {
-    let mx = ((cx % CHUNK_MAP_SIZE) + CHUNK_MAP_SIZE) % CHUNK_MAP_SIZE;
-    let mz = ((cz % CHUNK_MAP_SIZE) + CHUNK_MAP_SIZE) % CHUNK_MAP_SIZE;
+    let mx = cx & (CHUNK_MAP_SIZE - 1);
+    let mz = cz & (CHUNK_MAP_SIZE - 1);
     return mz * CHUNK_MAP_SIZE + mx;
 }
 

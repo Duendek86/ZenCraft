@@ -128,7 +128,7 @@ fn main() {
                      request_load_async(id_x, x, 0, 0);
                  }
             }
-            poll_async_results(&chunks[0], MAX_CHUNKS);
+            poll_async_results();
 
             // Async Mesh Build for Title
             for i in 0..MAX_CHUNKS {
@@ -482,7 +482,7 @@ fn main() {
             }
             
             // Poll completed async loads (applies data, recalculates lighting, marks dirty)
-            poll_async_results(&chunks[0], MAX_CHUNKS);
+            poll_async_results();
             
             // --- MESH UPDATE LOOP (ASYNC) ---
             let mesh_requests = 0;
