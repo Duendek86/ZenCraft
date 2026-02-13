@@ -32,7 +32,7 @@ fn main() {
     rl::ToggleFullscreen(); // Start in fullscreen
     defer { rl::CloseWindow(); }
 
-    rl::SetTargetFPS(60);
+    rl::SetTargetFPS(120);
 
     // Load Assets
     init_textures();
@@ -125,7 +125,7 @@ fn main() {
                      chunks[id_x].z = 0;
                      chunks[id_x].mesh_built = 0;
                      raw { memset(chunks[id_x].blocks, 0, sizeof(chunks[id_x].blocks)); }
-                     request_load_async(id_x, x, 0);
+                     request_load_async(id_x, x, 0, 0);
                  }
             }
             poll_async_results(&chunks[0], MAX_CHUNKS);
@@ -133,7 +133,7 @@ fn main() {
             // Async Mesh Build for Title
             for i in 0..MAX_CHUNKS {
                 if chunks[i].x != -9999 && chunks[i].mesh_dirty != 0 && chunks[i].locked == 0 {
-                     request_mesh_async(i);
+                     request_mesh_async(i, 0);
                 }
             }
 
@@ -432,9 +432,9 @@ fn main() {
                             if chunks[idx].x != -9999 {
                                 request_save_async(&chunks[idx]);
                             }
-                            chunks[idx].x = -9999; // Mark as loading
-                            request_load_async(idx, pcx, pcz);
-                            requests_this_frame = requests_this_frame + 1;
+                                chunks[idx].x = -9999; // Mark as loading
+                                request_load_async(idx, pcx, pcz, 0); // Low Priority
+                                requests_this_frame = requests_this_frame + 1;
                         }
                     }
                     continue;
@@ -473,7 +473,7 @@ fn main() {
                                     request_save_async(&chunks[idx]);
                                 }
                                 chunks[idx].x = -9999; // Mark slot as loading
-                                request_load_async(idx, cx, cz);
+                                request_load_async(idx, cx, cz, 0); // Low Priority
                                 requests_this_frame = requests_this_frame + 1;
                             }
                         }
@@ -491,7 +491,15 @@ fn main() {
             for i in 0..MAX_CHUNKS {
                 if mesh_requests >= MAX_MESH_REQ { break; }
                 if chunks[i].x != -9999 && chunks[i].mesh_dirty != 0 && chunks[i].locked == 0 {
-                    if(request_mesh_async(i)) {
+                    // Check if close to player for priority
+                    // (Simplification: mesh rebuilds are high priority to avoid holes? 
+                    // Actually, background mesh builds should be low. 
+                    // But if triggered by block break, we want high.
+                    // We can check distance or just default to low for general loop, 
+                    // and manual trigger will be high).
+                    
+                    // Priority 0 for general loop.
+                    if(request_mesh_async(i, 0)) {
                         mesh_requests = mesh_requests + 1;
                     }
                 }
@@ -736,7 +744,7 @@ fn main() {
                         let idx = get_chunk_index(cx, cz);
                         
                         // Full recalc on this chunk AND neighbors (ASYNC)
-                        request_light_async(idx, 4); // REQ_LIGHT_RECALC
+                        request_light_async(idx, 4, 1); // REQ_LIGHT_RECALC, High
                         // chunks[idx].mesh_dirty = 1; // Will be set by async result
                         chunks[idx].grass_deco_built = 0; // Force grass deco rebuild
                         request_save_async(&chunks[idx]);
@@ -748,19 +756,19 @@ fn main() {
                         let idx_zp = get_chunk_index(cx, cz + 1);
                         
                         if chunks[idx_xm].x == cx - 1 && chunks[idx_xm].z == cz {
-                            request_light_async(idx_xm, 4);
+                            request_light_async(idx_xm, 4, 1); // High Priority
                             chunks[idx_xm].grass_deco_built = 0;
                         }
                         if chunks[idx_xp].x == cx + 1 && chunks[idx_xp].z == cz {
-                            request_light_async(idx_xp, 4);
+                            request_light_async(idx_xp, 4, 1); // High Priority
                             chunks[idx_xp].grass_deco_built = 0;
                         }
                         if chunks[idx_zm].x == cx && chunks[idx_zm].z == cz - 1 {
-                            request_light_async(idx_zm, 4);
+                            request_light_async(idx_zm, 4, 1); // High Priority
                             chunks[idx_zm].grass_deco_built = 0;
                         }
                         if chunks[idx_zp].x == cx && chunks[idx_zp].z == cz + 1 {
-                            request_light_async(idx_zp, 4);
+                            request_light_async(idx_zp, 4, 1); // High Priority
                             chunks[idx_zp].grass_deco_built = 0;
                         }
                     }
@@ -828,7 +836,7 @@ fn main() {
                              let idx = get_chunk_index(cx, cz);
                              
                              // Full recalc on this chunk AND neighbors (ASYNC)
-                             request_light_async(idx, 4); // REQ_LIGHT_RECALC
+                             request_light_async(idx, 4, 1); // REQ_LIGHT_RECALC, High
                              chunks[idx].grass_deco_built = 0;
                              request_save_async(&chunks[idx]);
                              
@@ -839,19 +847,19 @@ fn main() {
                              let idx_zp = get_chunk_index(cx, cz + 1);
                              
                              if chunks[idx_xm].x == cx - 1 && chunks[idx_xm].z == cz {
-                                 request_light_async(idx_xm, 4);
+                                 request_light_async(idx_xm, 4, 1);
                                  chunks[idx_xm].grass_deco_built = 0;
                              }
                              if chunks[idx_xp].x == cx + 1 && chunks[idx_xp].z == cz {
-                                 request_light_async(idx_xp, 4);
+                                 request_light_async(idx_xp, 4, 1);
                                  chunks[idx_xp].grass_deco_built = 0;
                              }
                              if chunks[idx_zm].x == cx && chunks[idx_zm].z == cz - 1 {
-                                 request_light_async(idx_zm, 4);
+                                 request_light_async(idx_zm, 4, 1);
                                  chunks[idx_zm].grass_deco_built = 0;
                              }
                              if chunks[idx_zp].x == cx && chunks[idx_zp].z == cz + 1 {
-                                 request_light_async(idx_zp, 4);
+                                 request_light_async(idx_zp, 4, 1);
                                  chunks[idx_zp].grass_deco_built = 0;
                              }
                         }
@@ -872,7 +880,7 @@ fn main() {
             rl::DrawText("Zen Craft", 10, 10, 40, rl::WHITE);
             
             // Version
-            let v_text = "v0.0.1 alpha";
+            let v_text = "v0.0.1.1 alpha-dev";
             let v_width = rl::MeasureText(v_text, 20);
             rl::DrawText(v_text, sw - v_width - 10, 10, 20, rl::WHITE);
 

@@ -1,6 +1,9 @@
 import "raylib.h";
 import "chunk.zc";
 import "chunk_mesh.zc";
+raw {
+    #include "pending_map.h"
+}
 
 // Global constants for Async System
 def MAX_PENDING_IO = 256;
@@ -507,9 +510,20 @@ raw {
         ChunkData data;
         ChunkMeshes mesh_data;
         Mesh plant_mesh;
+        int priority; // 0=LOW, 1=HIGH
     } RawIORequest;
 
     RawIORequest io_queue[256];
+    RawIORequest hp_queue[64];
+
+    typedef struct {
+        RawIORequest* queue;
+        int size;
+        int id;
+    } WorkerConfig;
+
+    WorkerConfig worker_low;
+    WorkerConfig worker_high;
     volatile int system_running = 0;
     
     // Global world directory
@@ -552,12 +566,27 @@ raw {
     void* db_worker(void* arg)
     #endif
     {
+        WorkerConfig* config = (WorkerConfig*)lpParam;
+        RawIORequest* queue = config->queue;
+        int queue_size = config->size;
+
         while(system_running) {
             int worked = 0;
-            for(int i=0; i<256; i++) {
-                if(io_queue[i].status == 1) { // IO_STATUS_PENDING
+            
+            // PRIORITY SCAN
+            int best_idx = -1;
+            for(int k=0; k<queue_size; k++) {
+                if(queue[k].status == 1) {
+                    if(queue[k].priority > 0) { best_idx = k; break; }
+                    if(best_idx == -1) best_idx = k;
+                }
+            }
+            int loop_once = (best_idx != -1);
+            for(int i = best_idx; loop_once; loop_once = 0) {
+
+                if(queue[i].status == 1) { // IO_STATUS_PENDING
                     // Processor
-                    RawIORequest *req = &io_queue[i];
+                    RawIORequest *req = &queue[i];
                     
                     if(req->type == 3) { // REQ_BUILD_MESH
                         if (global_chunks_ptr != NULL) {
@@ -759,19 +788,34 @@ fn init_persistence(chunks: Chunk*) {
             MakeDirectory("world");
         }
         
-        // Zero queue
+        // Zero queues
         for(int i=0; i<256; i++) io_queue[i].status = 0;
+        for(int i=0; i<64; i++) hp_queue[i].status = 0;
         
         system_running = 1;
 
         global_chunks_ptr = chunks;
         global_num_chunks = MAX_CHUNKS;
+        
+        // Setup Workers
+        worker_low.queue = io_queue;
+        worker_low.size = 256;
+        worker_low.id = 0;
+        
+        worker_high.queue = hp_queue;
+        worker_high.size = 64;
+        worker_high.id = 1;
 
         #if defined(_WIN32)
-            CreateThread(NULL, 0, db_worker, NULL, 0, NULL);
+            CreateThread(NULL, 0, db_worker, &worker_low, 0, NULL);
+            CreateThread(NULL, 0, db_worker, &worker_high, 0, NULL); // High Priority Thread
         #else
-            pthread_create(&db_thread, NULL, db_worker, NULL);
+            pthread_t t1, t2;
+            pthread_create(&t1, NULL, db_worker, &worker_low);
+            pthread_create(&t2, NULL, db_worker, &worker_high);
         #endif
+        
+        pmap_ensure_init();
     }
     // rl::TraceLog(rl::LOG_INFO, "Async Persistence Initialized");
 }
@@ -810,6 +854,7 @@ fn request_save_async(c: Chunk*) {
             io_queue[slot].cx = c->x;
             io_queue[slot].cz = c->z;
             io_queue[slot].target_idx = -1; // Not needed for save
+            io_queue[slot].priority = 0; // Save is always low priority
             
             // Copy Data
             memcpy(io_queue[slot].data.blocks, c->blocks, sizeof(io_queue[slot].data.blocks));
@@ -825,10 +870,11 @@ fn request_save_async(c: Chunk*) {
     }
 }
 
-fn request_load_async(idx: int, cx: int, cz: int) -> int {
+fn request_load_async(idx: int, cx: int, cz: int, priority: int) -> int {
     let result = 0;
     raw {
         // Find free slot
+        // io_queue is now Low Priority only, so use all slots
         int slot = -1;
         for(int i=0; i<256; i++) {
             if(io_queue[i].status == 0) {
@@ -843,7 +889,11 @@ fn request_load_async(idx: int, cx: int, cz: int) -> int {
             io_queue[slot].cz = cz;
             io_queue[slot].target_idx = idx;
             io_queue[slot].status = 1; // PENDING
+            io_queue[slot].priority = priority;
+            pmap_add(cx, cz);
             result = 1;
+        } else {
+             TraceLog(LOG_WARNING, "Async Load Queue Full!");
         }
     }
     return result;
@@ -851,7 +901,7 @@ fn request_load_async(idx: int, cx: int, cz: int) -> int {
 
 // Request Mesh Generation
 // This LOCKS the target chunk and its neighbors
-fn request_mesh_async(idx: int) -> int {
+fn request_mesh_async(idx: int, priority: int) -> int {
     let result = 0;
     
     // Lock logic: Set locked = 1 for center and neighbors
@@ -882,20 +932,29 @@ fn request_mesh_async(idx: int) -> int {
         Chunk* c = &global_chunks_ptr[idx];
         if(c->locked) return 0; // Already busy
         
+        // Select Queue
+        RawIORequest* queue = io_queue;
+        int queue_size = 256;
+        if(priority > 0) {
+             queue = hp_queue;
+             queue_size = 64;
+        }
+
         // Find free slot
         int slot = -1;
-        for(int i=0; i<256; i++) {
-            if(io_queue[i].status == 0) {
+        for(int i=0; i<queue_size; i++) {
+            if(queue[i].status == 0) {
                 slot = i;
                 break;
             }
         }
         
         if(slot != -1) {
-            io_queue[slot].type = 3; // BUILD_MESH
-            io_queue[slot].cx = c->x;
-            io_queue[slot].cz = c->z;
-            io_queue[slot].target_idx = idx;
+            queue[slot].type = 3; // BUILD_MESH
+            queue[slot].cx = c->x;
+            queue[slot].cz = c->z;
+            queue[slot].target_idx = idx;
+            queue[slot].priority = priority;
             
             // Lock Center
             c->locked = 1;
@@ -913,8 +972,10 @@ fn request_mesh_async(idx: int) -> int {
                 }
             }
             
-            io_queue[slot].status = 1; // PENDING
+            queue[slot].status = 1; // PENDING
             result = 1;
+        } else {
+            TraceLog(LOG_WARNING, "Async Mesh Queue Full!");
         }
     }
     return result;
@@ -922,7 +983,7 @@ fn request_mesh_async(idx: int) -> int {
 
 // Request Async Lighting Operation
 // Mode: REQ_LIGHT_RECALC (4) or REQ_LIGHT_PROPAGATE (5)
-fn request_light_async(idx: int, mode: int) -> int {
+fn request_light_async(idx: int, mode: int, priority: int) -> int {
     let result = 0;
     raw {
         if(global_chunks_ptr == NULL) return 0;
@@ -930,20 +991,29 @@ fn request_light_async(idx: int, mode: int) -> int {
         Chunk* c = &global_chunks_ptr[idx];
         if(c->locked) return 0; // Already busy
         
+        // Select Queue
+        RawIORequest* queue = io_queue;
+        int queue_size = 256;
+        if(priority > 0) {
+             queue = hp_queue;
+             queue_size = 64;
+        }
+        
         // Find free slot
         int slot = -1;
-        for(int i=0; i<256; i++) {
-            if(io_queue[i].status == 0) {
+        for(int i=0; i<queue_size; i++) {
+            if(queue[i].status == 0) {
                 slot = i;
                 break;
             }
         }
         
         if(slot != -1) {
-            io_queue[slot].type = mode;
-            io_queue[slot].cx = c->x;
-            io_queue[slot].cz = c->z;
-            io_queue[slot].target_idx = idx;
+            queue[slot].type = mode;
+            queue[slot].cx = c->x;
+            queue[slot].cz = c->z;
+            queue[slot].target_idx = idx;
+            queue[slot].priority = priority;
             
             // Lock Center
             c->locked = 1;
@@ -960,8 +1030,10 @@ fn request_light_async(idx: int, mode: int) -> int {
                 }
             }
             
-            io_queue[slot].status = 1; // PENDING
+            queue[slot].status = 1; // PENDING
             result = 1;
+        } else {
+            TraceLog(LOG_WARNING, "Async Light Queue Full!");
         }
     }
     return result;
@@ -971,14 +1043,8 @@ fn request_light_async(idx: int, mode: int) -> int {
 fn is_chunk_pending(cx: int, cz: int) -> int {
     let result = 0;
     raw {
-        for(int i=0; i<256; i++) {
-            if((io_queue[i].status == 1 || io_queue[i].status == 2) && 
-               io_queue[i].type == 2 &&
-               io_queue[i].cx == cx && io_queue[i].cz == cz) {
-                result = 1;
-                break;
-            }
-        }
+    // OPTIMIZED: Use zmap O(1) lookup instead of O(N) loop
+    result = pmap_check(cx, cz);
     }
     return result;
 }
@@ -1016,122 +1082,125 @@ fn poll_async_results(chunks: Chunk*, num_chunks: int) {
         int processed = 0;
         prof_prop_time = 0.0; // Reset frame counter
         
-        for(int i=0; i<256; i++) {
-             // Check time budget every iteration
-             double current_time = GetTime();
-             if ((current_time - start_time) > time_budget && processed > 0) {
-                 break;
-             }
+        RawIORequest* queues[2] = { hp_queue, io_queue };
+        int sizes[2] = { 64, 256 };
+        
+        for(int q=0; q<2; q++) {
+            RawIORequest* queue = queues[q];
+            int size = sizes[q];
 
-             
-            if(io_queue[i].status == 2) { // COMPLETED
-                int idx = io_queue[i].target_idx;
-                
-                if (io_queue[i].type == 3) { // MESH BUILT
-                     if(idx >= 0 && idx < num_chunks) {
-                         // Upload to GPU (Main Thread)
-                         upload_chunk_mesh(&chunks[idx], io_queue[i].mesh_data);
-                         upload_plant_mesh(&chunks[idx], io_queue[i].plant_mesh);
-                         
-                         // Unlock
-                         chunks[idx].locked--;
-                         if (chunks[idx].locked < 0) chunks[idx].locked = 0;
-                         
-                         // Unlock Neighbors
-                         int neighbor_offsets[8] = {-1, 0, 1, 0, 0, -1, 0, 1};
-                         Chunk* c = &chunks[idx];
-                         for(int ni = 0; ni < 4; ni++) {
-                            int ncx = c->x + neighbor_offsets[ni * 2];
-                            int ncz = c->z + neighbor_offsets[ni * 2 + 1];
-                            int nidx = get_chunk_index(ncx, ncz);
-                            
-                            if(chunks[nidx].x == ncx && chunks[nidx].z == ncz) {
-                                 chunks[nidx].locked--; 
-                                 if (chunks[nidx].locked < 0) chunks[nidx].locked = 0;
-                            }
-                         }
-                     }
-                     io_queue[i].status = 0;
-                     processed++;
-                }
-                else if (io_queue[i].type == 4 || io_queue[i].type == 5) { // LIGHT CALC/PROP DONE
-                     if(idx >= 0 && idx < num_chunks) {
-                         // Unlock
-                         chunks[idx].locked--;
-                         if (chunks[idx].locked < 0) chunks[idx].locked = 0;
-                         
-                         // Unlock Neighbors
-                         int neighbor_offsets[8] = {-1, 0, 1, 0, 0, -1, 0, 1};
-                         Chunk* c = &chunks[idx];
-                         for(int ni = 0; ni < 4; ni++) {
-                            int ncx = c->x + neighbor_offsets[ni * 2];
-                            int ncz = c->z + neighbor_offsets[ni * 2 + 1];
-                            int nidx = get_chunk_index(ncx, ncz);
-                            
-                            if(chunks[nidx].x == ncx && chunks[nidx].z == ncz) {
-                                 chunks[nidx].locked--; 
-                                 if (chunks[nidx].locked < 0) chunks[nidx].locked = 0;
-                                 
-                                 // Mark neighbor mesh dirty (lighting spilled over)
-                                 chunks[nidx].mesh_dirty = 1;
-                            }
-                         }
-                         
-                         chunks[idx].mesh_dirty = 1;
-                     }
-                     io_queue[i].status = 0;
-                     processed++;
-                }
-                else if (io_queue[i].type == 2) { // LOAD
-                    if(idx >= 0 && idx < num_chunks) {
-                         if (chunks[idx].locked > 0) {
-                            // Defer this update. Keep status as COMPLETED (2).
-                            // We will try again next frame.
-                            continue;
-                        }
+            for(int i=0; i<size; i++) {
+                 // Check time budget every iteration
+                 double current_time = GetTime();
+                 if ((current_time - start_time) > time_budget && processed > 0) {
+                     goto end_poll; // Break out of both loops
+                 }
 
-                        // Apply Data
-                        chunks[idx].x = io_queue[i].cx;
-                        chunks[idx].z = io_queue[i].cz;
-                        
-                        memcpy(chunks[idx].blocks, io_queue[i].data.blocks, sizeof(chunks[idx].blocks));
-                        memcpy(chunks[idx].light, io_queue[i].data.light, sizeof(chunks[idx].light));
-                        chunks[idx].plant_count = io_queue[i].data.plant_count;
-                        memcpy(chunks[idx].plants, io_queue[i].data.plants, sizeof(chunks[idx].plants));
-                        
-                        chunks[idx].mesh_dirty = 1;
-                        chunks[idx].mesh_built = 0;
-                        chunks[idx].plant_mesh_built = 0;
-                        chunks[idx].grass_deco_built = 0;
-                        
+                 
+                if(queue[i].status == 2) { // COMPLETED
+                    int idx = queue[i].target_idx;
+                    
+                    if (queue[i].type == 3) { // MESH BUILT
+                         if(idx >= 0 && idx < num_chunks) {
+                             // Upload to GPU (Main Thread)
+                             upload_chunk_mesh(&chunks[idx], queue[i].mesh_data);
+                             upload_plant_mesh(&chunks[idx], queue[i].plant_mesh);
+                             
+                             // Unlock
+                             chunks[idx].locked--;
+                             if (chunks[idx].locked < 0) chunks[idx].locked = 0;
+                             
+                             // Unlock Neighbors
+                             int neighbor_offsets[8] = {-1, 0, 1, 0, 0, -1, 0, 1};
+                             Chunk* c = &chunks[idx];
+                             for(int ni = 0; ni < 4; ni++) {
+                                int ncx = c->x + neighbor_offsets[ni * 2];
+                                int ncz = c->z + neighbor_offsets[ni * 2 + 1];
+                                int nidx = get_chunk_index(ncx, ncz);
+                                
+                                if(chunks[nidx].x == ncx && chunks[nidx].z == ncz) {
+                                     chunks[nidx].locked--; 
+                                     if (chunks[nidx].locked < 0) chunks[nidx].locked = 0;
+                                }
+                             }
+                         }
+                         queue[i].status = 0;
+                         processed++;
+                    }
+                    else if (queue[i].type == 4 || queue[i].type == 5) { // LIGHT CALC/PROP DONE
+                         if(idx >= 0 && idx < num_chunks) {
+                             // Unlock
+                             chunks[idx].locked--;
+                             if (chunks[idx].locked < 0) chunks[idx].locked = 0;
+                             
+                             // Unlock Neighbors
+                             int neighbor_offsets[8] = {-1, 0, 1, 0, 0, -1, 0, 1};
+                             Chunk* c = &chunks[idx];
+                             for(int ni = 0; ni < 4; ni++) {
+                                int ncx = c->x + neighbor_offsets[ni * 2];
+                                int ncz = c->z + neighbor_offsets[ni * 2 + 1];
+                                int nidx = get_chunk_index(ncx, ncz);
+                                
+                                if(chunks[nidx].x == ncx && chunks[nidx].z == ncz) {
+                                     chunks[nidx].locked--; 
+                                     if (chunks[nidx].locked < 0) chunks[nidx].locked = 0;
+                                     
+                                     // Mark neighbor mesh dirty (lighting spilled over)
+                                     chunks[nidx].mesh_dirty = 1;
+                                }
+                             }
+                             
+                             chunks[idx].mesh_dirty = 1;
+                         }
+                         queue[i].status = 0;
+                         processed++;
+                    }
+                    else if (queue[i].type == 2) { // LOAD
+                        if(idx >= 0 && idx < num_chunks) {
+                             if (chunks[idx].locked > 0) {
+                                // Defer this update. Keep status as COMPLETED (2).
+                                // We will try again next frame.
+                                continue;
+                            }
+    
+                            // Apply Data
+                            chunks[idx].x = queue[i].cx;
+                            chunks[idx].z = queue[i].cz;
+                            
+                            memcpy(chunks[idx].blocks, queue[i].data.blocks, sizeof(chunks[idx].blocks));
+                            memcpy(chunks[idx].light, queue[i].data.light, sizeof(chunks[idx].light));
+                            chunks[idx].plant_count = queue[i].data.plant_count;
+                            memcpy(chunks[idx].plants, queue[i].data.plants, sizeof(chunks[idx].plants));
+                            
+                            chunks[idx].mesh_dirty = 1;
+                            chunks[idx].mesh_built = 0;
+                            chunks[idx].plant_mesh_built = 0;
+                            chunks[idx].grass_deco_built = 0;
+                            
+                        pmap_remove(queue[i].cx, queue[i].cz);
+                        queue[i].status = 0; // Free BEFORE chaining
+                        processed++;
+    
                         // CHAIN lighting request (Async)
                         // This prevents main thread lag spike
                         int req_mode = 4; // CALC
-                        if(io_queue[i].data.light_calculated) {
+                        if(queue[i].data.light_calculated) {
                             req_mode = 5; // PROPAGATE
                         }
                         
                         // Try to schedule lighting immediate
-                        // If we fail (queue full), we have a problem: chunk is loaded but unlit.
-                        // We'll mark it dirty and let normal update cycle catch it? 
-                        // Or we can manually retry?
-                        // Better: If request_light_async fails, we DONT clear the io_queue entry logic?
-                        // But we already applied data. 
-                        // Let's just try to request. If it fails, we fall back to main thread or just skip (it will look dark until update).
-                        // Actually, if we just set mesh_dirty=1, it will eventually request mesh... 
-                        // But lighting needs to happen BEFORE mesh.
-                        
-                        // We can use a trick: If lighting request fails, we can add a flag "needs_lighting" to chunk?
-                        // Or just loop until we can push? No, that freezes.
-                        
-                        // Let's just try. queue is large.
-                        request_light_async(idx, req_mode);
+                        // Now that status=0, we can potentially reuse THIS slot if priority allows,
+                        // or find another one. 
+                        // High priority (1) would be nice, but this is background loading... 
+                        // Let's stick to 0. 
+                        // Since we freed the slot, `request_light_async` will likely pick it up instantly.
+                        request_light_async(idx, req_mode, 0); 
                     }
-                    io_queue[i].status = 0; // Free
-                    processed++;
+                    }
                 }
             }
         }
+        end_poll:;
     }
 }
 
