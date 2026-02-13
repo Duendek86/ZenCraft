@@ -17,7 +17,7 @@ import "title_generator.zc";
 import "zibi.zc";
 import "grass_deco.zc";
 
-def MAX_ZIBIS = 20;
+def MAX_ZIBIS = 10;
 def SAVE_DIR = "world";
 // Removed DRAW_DISTANCE constant, now using variable
 
@@ -313,44 +313,9 @@ fn main() {
                 p.yaw = spawn_yaw;
                 p.pitch = spawn_pitch;
                 
-                // Initialize Zibis around spawn
-                // Initialize Zibis around spawn
-                // Initialize Zibis around spawn (Avoiding Water)
+                // Zibis will be spawned dynamically
                 for i in 0..MAX_ZIBIS {
-                    // Reduce spread to keep them closer to loaded area
-                    // Use a spiral or random circle distribution
-                    let angle = (float)i * (6.28 / (float)MAX_ZIBIS);
-                    let dist = 10.0 + (float)(i % 5) * 2.0; // 10..20 blocks radius
-                    
-                    let ox = spawn_x + (float)cos(angle) * dist;
-                    let oz = spawn_z + (float)sin(angle) * dist;
-                    
-                    // Find ground height - Scan from TOP
-                    let ground_y = 0.0;
-                    let found_ground = 0;
-                    
-                    for y in 0..CHUNK_HEIGHT {
-                        let ry = (CHUNK_HEIGHT - 1) - y;
-                        let b = get_block(&chunks[0], MAX_CHUNKS, (int)ox, ry, (int)oz);
-                        if b != BLOCK_AIR && b != BLOCK_TALLGRASS && b != BLOCK_LEAVES && b != 10 {
-                            ground_y = (float)ry;
-                            found_ground = 1;
-                            break;
-                        }
-                    }
-                    
-                    if (found_ground) {
-                         let surface_block = get_block(&chunks[0], MAX_CHUNKS, (int)ox, (int)ground_y, (int)oz);
-                         if (surface_block != BLOCK_WATER) {
-                             zibis[i] = Zibi::new(ox, ground_y + 2.0, oz);
-                         } else {
-                             // Too lazy to find another spot, just put them at spawn
-                             zibis[i] = Zibi::new(spawn_x, spawn_y + 2.0, spawn_z);
-                         }
-                    } else {
-                        // Safe fallback
-                        zibis[i] = Zibi::new(spawn_x, spawn_y + 2.0, spawn_z); 
-                    }
+                    zibis[i].active = 0;
                 }
                 
                 current_state = STATE_GAME;
@@ -518,9 +483,72 @@ fn main() {
                 (&p).update(&chunks[0], MAX_CHUNKS, dt);
             }
             
-            // Update Zibis
+            // Update Zibis & Dynamic Spawning
+            let active_zibis = 0;
             for i in 0..MAX_ZIBIS {
-                zibis[i].update(&chunks[0], MAX_CHUNKS, dt);
+                if zibis[i].active {
+                    active_zibis = active_zibis + 1;
+                    if zibis[i].update(&chunks[0], MAX_CHUNKS, dt) == 0 {
+                         // Zibi despawned (unloaded chunk or void)
+                         active_zibis = active_zibis - 1;
+                    }
+                }
+            }
+            
+            // Try to spawn new Zibi if below limit (random chance)
+            if active_zibis < MAX_ZIBIS {
+                let r_spawn = 0;
+                raw { r_spawn = GetRandomValue(0, 100); }
+                
+                if r_spawn < 5 { // 5% chance per frame (~3 per second) to try spawning
+                    // Find a free slot
+                    let slot = -1;
+                    for i in 0..MAX_ZIBIS {
+                        if !zibis[i].active {
+                            slot = i;
+                            break;
+                        }
+                    }
+                    
+                    if slot != -1 {
+                        // Pick random position around player
+                        let angle = 0.0;
+                        let dist = 0.0;
+                        raw {
+                            angle = ((float)GetRandomValue(0, 360)) * 0.0174533f;
+                            dist = (float)GetRandomValue(20, 60); // 20 to 60 blocks away
+                        }
+                        
+                        let sx = p.x + (float)cos(angle) * dist;
+                        let sz = p.z + (float)sin(angle) * dist;
+                        
+                        // Check if chunk is loaded
+                        let cx = (int)floor(sx / 16.0);
+                        let cz = (int)floor(sz / 16.0);
+                        let idx = get_chunk_index(cx, cz);
+                        
+                        if chunks[idx].x == cx && chunks[idx].z == cz && chunks[idx].mesh_built == 1 {
+                             // Find ground
+                             let ground_y = -1.0;
+                             for y in 0..CHUNK_HEIGHT {
+                                 let ry = (CHUNK_HEIGHT - 1) - y;
+                                 let b = get_block(&chunks[0], MAX_CHUNKS, (int)sx, ry, (int)sz);
+                                 if b != BLOCK_AIR && b != BLOCK_TALLGRASS && b != BLOCK_LEAVES && b != 10 { // 10=Torch
+                                     ground_y = (float)ry;
+                                     break;
+                                 }
+                             }
+                             
+                             if ground_y > 0.0 {
+                                 // Check surface block (no spawn on water/leaves)
+                                 let surf = get_block(&chunks[0], MAX_CHUNKS, (int)sx, (int)ground_y, (int)sz);
+                                 if surf != BLOCK_WATER && surf != BLOCK_LEAVES {
+                                     zibis[slot] = Zibi::new(sx, ground_y + 2.0, sz);
+                                 }
+                             }
+                        }
+                    }
+                }
             }
     
             // Block selection input
@@ -880,7 +908,7 @@ fn main() {
             rl::DrawText("Zen Craft", 10, 10, 40, rl::WHITE);
             
             // Version
-            let v_text = "v0.0.1.1 alpha-dev";
+            let v_text = "v0.0.1.2 alpha-dev";
             let v_width = rl::MeasureText(v_text, 20);
             rl::DrawText(v_text, sw - v_width - 10, 10, 20, rl::WHITE);
 
