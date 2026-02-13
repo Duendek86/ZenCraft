@@ -1,13 +1,25 @@
 import "raylib.h";
 import "chunk.zc";
 import "chunk_mesh.zc";
+import "persistence_defs.zc";
+import "persistence_gen.zc";
+import "persistence_io.zc";
+import "persistence_mesh.zc";
+import "persistence_light.zc";
+
 raw {
     #include "pending_map.h"
     
-    #if defined(_WIN32)
+    #ifdef _WIN32
+        #ifndef WIN32_LEAN_AND_MEAN
         #define WIN32_LEAN_AND_MEAN
+        #endif
+        #ifndef NOGDI
         #define NOGDI
+        #endif
+        #ifndef NOUSER
         #define NOUSER
+        #endif
     #endif
     
     #define ZTHREAD_IMPLEMENTATION
@@ -15,489 +27,14 @@ raw {
     
     typedef void* any;
     
+    // Explicit Prototypes for Imported Functions
+    // This fixes implicit declaration errors in C
+    void handle_mesh_request(void* req, Chunk* chunks, int num_chunks);
+    void handle_light_request(void* req, Chunk* chunks, int num_chunks);
+    void handle_io_request(void* req, char* world_dir);
+    
     typedef struct {
-        float x, y, z;
-        int selected_block;
-        float yaw, pitch;
-    } PlayerSaveData;
-}
-
-// Global constants for Async System
-def MAX_PENDING_IO = 512;
-
-// Request Types
-def REQ_NONE = 0;
-def REQ_SAVE = 1;
-def REQ_LOAD = 2;
-def REQ_BUILD_MESH = 3;
-def REQ_LIGHT_RECALC = 4;
-def REQ_LIGHT_PROPAGATE = 5;
-
-// Request Status
-def IO_STATUS_FREE = 0;
-def IO_STATUS_PENDING = 1;
-def IO_STATUS_COMPLETED = 2;
-def IO_STATUS_FAILED = 3;
-
-// We need a Data struct that can hold a chunk's data for off-thread processing
-struct ChunkData {
-    blocks: int[16][128][16];
-    light: int[16][128][16];
-    plant_count: int;
-    plants: Plant[64];
-    light_calculated: int; // 1 if lighting was computed by generator
-}
-
-struct IORequest {
-    status: int;      // Thread-safe flag
-    type: int;        // REQ_SAVE, REQ_LOAD, REQ_BUILD_MESH
-    cx: int;
-    cz: int;
-    target_idx: int;  // Index in global chunks array (for writeback or read)
-    
-    // Data variants
-    data: ChunkData;  // For Save/Load
-    
-    // Mesh Data (Output of REQ_BUILD_MESH)
-    mesh_data: ChunkMeshes;
-    plant_mesh: rl::Mesh;
-}
-
-struct ProfilingStats {
-    mesh_ms: float;
-    gen_ms: float;
-    prop_ms: float;
-}
-
-struct HousePos {
-    x: int; // Global block X
-    y: int; // Floor Y
-    z: int; // Global block Z
-    w: int; // width (x-axis size)
-    d: int; // depth (z-axis size)
-    h: int; // height (walls)
-}
-
-// Spatial Hash for deterministic procedural generation
-fn hash_int2(x: int, y: int) -> int {
-    let n = x * 131071 + y * 956873; // Large primes
-    // Bit mix
-    n = n ^ (n << 13);
-    n = n ^ (n >> 17);
-    return abs(n);
-}
-
-// Helper to determine if a chunk is a village center (0.5% chance)
-fn is_village_center(cx: int, cz: int) -> int {
-    let h = hash_int2(cx, cz);
-    if (h % 200) < 1 { return 1; }
-    return 0;
-}
-
-struct AsyncSystem {
-    requests: IORequest[256];
-    running: int;
-}
-
-// Thread-safe pseudo-random number generator
-// Linear Congruential Generator
-fn my_rand(seed: int*) -> int {
-    raw {
-        *seed = (*seed * 1103515245 + 12345) & 0x7fffffff;
-        return *seed;
-    }
-    return 0; // Unreachable
-}
-
-// This prototyp needs to be visible to db_worker, but implementation is elsewhere or dynamic?
-// For now, keep it here as the default generator
-fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
-    // 1. Generate Heightmap
-    let heights: int[16][16];
-    
-    raw {
-        // Base Terrain (Rolling Hills)
-        Image noise = GenImagePerlinNoise(16, 16, x * 16, z * 16, 0.05f);
-        Color* pixels = LoadImageColors(noise);
-        
-        // Mountain Terrain (Large Scale, jagged)
-        Image m_noise = GenImagePerlinNoise(16, 16, x * 16, z * 16, 0.015f);
-        Color* m_pixels = LoadImageColors(m_noise);
-        
-        for(int i=0; i<16; i++) {
-            for(int j=0; j<16; j++) {
-                // pixels is row-major
-                Color col = pixels[j * 16 + i];
-                float base_val = (float)col.r / 255.0; // 0.0 - 1.0
-                
-                Color m_col = m_pixels[j * 16 + i];
-                float m_val = (float)m_col.r / 255.0; // 0.0 - 1.0
-                
-                // Height Formula:
-                // Base: 25 + noise * 15 (25..40)
-                // Mountains: m_val^3 * 80 (Exponential peaks up to +80)
-                
-                // Height Formula Tuned (Steeper):
-                // Base: 5 + noise * 50 (Range 5..55).
-                // Center is ~30 (Sea Level).
-                // Steeper slopes = less shallow water, more abrupt transitions.
-                
-                float h_f = 5.0 + (base_val * 50.0);
-                
-                // Mountains: m_val^2 * 90 (Squared for wider mountains, up to +90 height)
-                float m_contrib = m_val * m_val; 
-                h_f += m_contrib * 90.0;
-                
-                int h = (int)h_f;
-                
-                // Cap
-                if (h > CHUNK_HEIGHT - 6) h = CHUNK_HEIGHT - 6; // Leave room for trees
-                if (h < 2) h = 2; // Bedrock
-                
-                heights[i][j] = h;
-            }
-        }
-        UnloadImageColors(pixels);
-        UnloadImage(noise);
-        UnloadImageColors(m_pixels);
-        UnloadImage(m_noise);
-    }
-    
-    // 2. Fill Blocks
-    for cx in 0..16 {
-        for cz in 0..16 {
-            let h = heights[cx][cz];
-            for cy in 0..CHUNK_HEIGHT {
-                let l = 0;
-                if cy < h - 1 {
-                    data.blocks[cx][cy][cz] = BLOCK_STONE;
-                } else if cy < h {
-                    data.blocks[cx][cy][cz] = BLOCK_DIRT;
-                } else if cy == h {
-                    // Underwater surfaces are SAND, above water surfaces are grass
-                    // SEA_LEVEL is 30
-                    if (h < 30) {
-                        data.blocks[cx][cy][cz] = BLOCK_SAND;
-                    } else {
-                        data.blocks[cx][cy][cz] = BLOCK_GRASS;
-                    }
-                    l = 240; // Sky Light 15 (0xF0), Block Light 0
-                } else {
-                    data.blocks[cx][cy][cz] = BLOCK_AIR;
-                    l = 240; // Sky Light 15 (0xF0), Block Light 0
-                }
-                data.light[cx][cy][cz] = l;
-            }
-        }
-    }
-    
-    // 2.5. Water Generation (Lakes)
-    // Fill air blocks below sea level with water
-    def SEA_LEVEL = 30;
-    for cx in 0..16 {
-        for cz in 0..16 {
-            for cy in 0..SEA_LEVEL {
-                if data.blocks[cx][cy][cz] == BLOCK_AIR {
-                    data.blocks[cx][cy][cz] = BLOCK_WATER;
-                    // Water is transparent, keep sky light at 240
-                }
-            }
-        }
-    }
-    
-    // 3. Plants/Trees
-    data.plant_count = 0;
-    
-    // Deterministic seed for this chunk
-    let seed = x * 73856093 ^ z * 19349663;
-    
-    // Forest Noise (Low frequency for biomes)
-    let forest_noise_val = 0.0;
-    
-    raw {
-         // Using a specific offset for forest noise to de-correlate from terrain height
-        Image fnoise = GenImagePerlinNoise(1, 1, x, z, 0.02f); 
-        Color* fp = LoadImageColors(fnoise);
-        forest_noise_val = (float)fp[0].r / 255.0; // 0.0 to 1.0
-        UnloadImageColors(fp);
-        UnloadImage(fnoise);
-    }
-    
-    // Determine tree density based on forest noise
-    // > 0.6 : Forest
-    // < 0.4 : Plains
-    // 0.4-0.6 : Transition
-    let tree_chance_threshold = 1; // 1% default (Sparse)
-    
-    if forest_noise_val > 0.55 {
-        tree_chance_threshold = 10; // 10% (Forest)
-        if forest_noise_val > 0.7 {
-             tree_chance_threshold = 15; // 15% (Dense Forest)
-        }
-    } else if forest_noise_val < 0.3 {
-        tree_chance_threshold = 0; // 0.5% approx (Very Sparse) -> handled by rand check
-    }
-    
-    for cx in 0..16 {
-        for cz in 0..16 {
-            let h = heights[cx][cz];
-            // Grass
-            if data.blocks[cx][h][cz] == BLOCK_GRASS && h < CHUNK_HEIGHT - 20 {
-                let r = my_rand(&seed) % 1000; // 0..999
-                
-                // Adjust chance based on threshold
-                let place_tree = 0;
-                if tree_chance_threshold > 0 {
-                    if r < tree_chance_threshold * 10 { place_tree = 1; }
-                } else {
-                     // Very sparse
-                     if r < 2 { place_tree = 1; } // 0.2%
-                }
-
-                if place_tree { 
-                     // Smaller Trees: Trunk 3-5 blocks
-                     if cx > 2 && cx < 13 && cz > 2 && cz < 13 {
-                        // Tree
-                        let th = 3 + (my_rand(&seed) % 3); // 3, 4, 5
-                        for i in 0..th {
-                            if h+1+i < CHUNK_HEIGHT {
-                                data.blocks[cx][h+1+i][cz] = BLOCK_LOG;
-                            }
-                        }
-                        // Leaves (Classic Minecraft Style - 5x5 at bottom, 3x3 at top)
-                        let leaves_start = h + th - 2; // Start leaves 2 blocks below top
-                        let leaves_end = h + th + 1;   // 1 block above top
-                        
-                        for ly in leaves_start..leaves_end {
-                             if ly >= CHUNK_HEIGHT { continue; }
-                             
-                             let radius = 2;
-                             if ly == leaves_end - 1 { radius = 1; } // Top layer narrower
-                             if ly == leaves_end { radius = 1; } // Very top
-                             
-                             for lx in (cx-radius)..(cx+radius+1) {
-                                 for lz in (cz-radius)..(cz+radius+1) {
-                                     // Skip corners for rounded look (optional)
-                                     let dx = lx - cx;
-                                     let dz = lz - cz;
-                                     if (dx*dx + dz*dz) > (radius*radius + 1) { continue; }
-                                     
-                                     if data.blocks[lx][ly][lz] == BLOCK_AIR {
-                                         data.blocks[lx][ly][lz] = BLOCK_LEAVES;
-                                     }
-                                 }
-                             }
-                        }
-                    }
-                }
-                else if r < 30 { // Tall grass chance
-                    if data.plant_count < 64 {
-                        data.plants[data.plant_count].x = (float)cx + 0.5;
-                        data.plants[data.plant_count].y = (float)(h + 1);
-                        data.plants[data.plant_count].z = (float)cz + 0.5;
-                        data.plants[data.plant_count].plant_type = BLOCK_TALLGRASS;
-                        data.plant_count = data.plant_count + 1;
-                    }
-                }
-            }
-        }
-    }
-
-
-    // --- VILLAGE GENERATION ---
-    // Check this chunk and neighbors (3x3 area) for village centers.
-    // If a neighbor is a center, generate its houses and draw the parts that fall in THIS chunk.
-    
-    // Define bounds of current chunk
-    let my_cx_min = x * 16;
-    let my_cx_max = x * 16 + 15;
-    let my_cz_min = z * 16;
-    let my_cz_max = z * 16 + 15;
-    
-    for dx in -1..2 {
-        for dz in -1..2 {
-            let ncx = x + dx;
-            let ncz = z + dz;
-            
-            if is_village_center(ncx, ncz) {
-                // This neighbor (or self) is a village center.
-                // Generate the village layout deterministically.
-                let v_seed = hash_int2(ncx, ncz);
-                
-                // Village properties
-                let num_houses = 4 + (v_seed % 3); // 4 to 6 houses
-                let center_x = ncx * 16 + 8;
-                let center_z = ncz * 16 + 8;
-                
-                // Get ground height at village center (approximate)
-                // We'll use the height from our own chunk generation if possible, but 
-                // since we don't have neighbor heightmaps, we might need to re-calculate noise 
-                // or just pick a safe height.
-                // Re-calculating noise for just one point is cheap.
-                let center_h = 0;
-                raw {
-                    Image noise = GenImagePerlinNoise(1, 1, ncx * 16 + 8, ncz * 16 + 8, 0.05f);
-                    Color* pixels = LoadImageColors(noise);
-                    float base_val = (float)pixels[0].r / 255.0;
-                    float h_f = 5.0 + (base_val * 50.0); // Match terrain gen
-                    center_h = (int)h_f;
-                    UnloadImageColors(pixels);
-                    UnloadImage(noise);
-                }
-                if center_h < 4 { center_h = 4; } // Safety
-                
-                // Generate Houses
-                for i in 0..num_houses {
-                    // Update seed for each house
-                    v_seed = hash_int2(v_seed, i);
-                    
-                    let angle = (float)(v_seed % 360) * 0.01745; // Radians
-                    let dist = 10.0 + (float)(v_seed % 15); // Distance from center 10..24
-                    
-                    let hx = center_x + (int)((float)cos(angle) * dist);
-                    let hz = center_z + (int)((float)sin(angle) * dist);
-                    
-                    let house_w = 5 + (v_seed % 3); // 5..7
-                    let house_d = 5 + ((v_seed / 10) % 3); // 5..7
-                    let house_h = 4;
-                    
-                    let hy = center_h; // Place at village center height for simplicity (or raycast if we had data)
-
-                    // House Bounds
-                    let hw_half = house_w / 2;
-                    let hd_half = house_d / 2;
-                    let min_x = hx - hw_half;
-                    let max_x = hx + hw_half;
-                    let min_z = hz - hd_half;
-                    let max_z = hz + hd_half;
-                    let max_y = hy + house_h + 2; // Roof
-
-                    // Check if house intersects CURRENT chunk
-                    if max_x < my_cx_min || min_x > my_cx_max || max_z < my_cz_min || min_z > my_cz_max {
-                        continue; // House is completely outside
-                    }
-
-                    // DRAW HOUSE
-                    // Iterate ONLY the intersection of House and Current Chunk
-                    let iter_min_x = min_x; if iter_min_x < my_cx_min { iter_min_x = my_cx_min; }
-                    let iter_max_x = max_x; if iter_max_x > my_cx_max { iter_max_x = my_cx_max; }
-                    let iter_min_z = min_z; if iter_min_z < my_cz_min { iter_min_z = my_cz_min; }
-                    let iter_max_z = max_z; if iter_max_z > my_cz_max { iter_max_z = my_cz_max; }
-                    
-                    for bx in iter_min_x..(iter_max_x + 1) {
-                        for bz in iter_min_z..(iter_max_z + 1) {
-                            // Convert to local chunk coords
-                            let lx = bx - my_cx_min;
-                            let lz = bz - my_cz_min;
-                            
-                            // Foundation: Fill from hy down to ground (to avoid floating houses)
-                            // We scan down from hy until we hit solid. 
-                            // Since we are generating blindly, we just fill down to a reasonable depth or until we hit something non-air?
-                            // But data.blocks might be empty if we are in air chunk? 
-                            // Assuming terrain is generated already.
-                            
-                            // Draw Walls & Interior
-                            for by in hy..(hy + house_h + 1) {
-                                if by >= CHUNK_HEIGHT { continue; }
-                                
-                                // Floor
-                                if by == hy {
-                                     data.blocks[lx][by][lz] = BLOCK_LOG; // Wood Floor
-                                     continue;
-                                }
-                                
-                                // Walls
-                                let is_wall = (bx == min_x || bx == max_x || bz == min_z || bz == max_z);
-                                if is_wall {
-                                    // Corners
-                                    let is_corner = (bx == min_x || bx == max_x) && (bz == min_z || bz == max_z);
-                                    if is_corner {
-                                        data.blocks[lx][by][lz] = BLOCK_LOG;
-                                    } else {
-                                        // Windows: Middle of wall, height +2
-                                        if by == hy + 2 && (bx == hx || bz == hz) {
-                                             data.blocks[lx][by][lz] = BLOCK_AIR; // Window
-                                        } else {
-                                             data.blocks[lx][by][lz] = BLOCK_STONE;
-                                        }
-                                    }
-                                } else {
-                                    // Interior Air
-                                    data.blocks[lx][by][lz] = BLOCK_AIR; 
-                                }
-                            }
-                            
-                            // Roof (Simple Slab/Flat for now or Pyramid)
-                            let roof_y = hy + house_h;
-                            if roof_y < CHUNK_HEIGHT {
-                                data.blocks[lx][roof_y][lz] = BLOCK_LOG; // Flat roof
-                            }
-                            
-                            // Foundation (Down to -4 from floor)
-                            // Only overwrite AIR or WATER or TALLGRASS
-                            // Ideally we stop when we hit stone/dirt
-                             for k in 1..5 {
-                                let fy = hy - k;
-                                if fy >= 0 {
-                                    let existing = data.blocks[lx][fy][lz];
-                                    if existing == BLOCK_AIR || existing == BLOCK_WATER || existing == BLOCK_TALLGRASS {
-                                        data.blocks[lx][fy][lz] = BLOCK_STONE; // Cobble foundation
-                                    } else {
-                                        break; // Hit ground
-                                    }
-                                }
-                             }
-                        }
-                    }
-                    
-                    // Door (cut hole)
-                    // Simple door at center of one wall?
-                    // Let's just cut a hole at x=hx, z=min_z (North face)
-                    if hx >= iter_min_x && hx <= iter_max_x && min_z >= iter_min_z && min_z <= iter_max_z {
-                         let lx = hx - my_cx_min;
-                         let lz = min_z - my_cz_min;
-                         if hy + 1 < CHUNK_HEIGHT { data.blocks[lx][hy+1][lz] = BLOCK_AIR; }
-                         if hy + 2 < CHUNK_HEIGHT { data.blocks[lx][hy+2][lz] = BLOCK_AIR; }
-                    }
-                }
-            }
-        }
-    }
-    for cx in 0..16 {
-        for cz in 0..16 {
-            let in_shadow = 0;
-            for i in 0..CHUNK_HEIGHT {
-                let cy = (CHUNK_HEIGHT - 1) - i; // Top to bottom
-                let blk = data.blocks[cx][cy][cz];
-                
-                if !in_shadow {
-                    if blk != BLOCK_AIR && blk != BLOCK_TALLGRASS && blk != BLOCK_WATER && blk != BLOCK_LEAVES {
-                        // Hit solid opaque block - enters shadow
-                        data.light[cx][cy][cz] = 0; // No sky light, no block light
-                        in_shadow = 1;
-                    } else {
-                        // Sky-exposed: full sky light (15 << 4 = 240)
-                        data.light[cx][cy][cz] = 240;
-                    }
-                } else {
-                    // Underground - no sky light
-                    data.light[cx][cy][cz] = 0;
-                }
-            }
-        }
-    }
-    
-    data.light_calculated = 1;
-}
-
-
-    // Old thread declarations removed
-raw {
-
-
-    // The Queue
-    typedef struct {
-        volatile int status;
+        volatile int io_status; // Renamed from status
         int type;
         int cx;
         int cz;
@@ -505,12 +42,8 @@ raw {
         ChunkData data;
         ChunkMeshes mesh_data;
         Mesh plant_mesh;
-        int priority; // 0=LOW, 1=HIGH
+        int priority;
     } RawIORequest;
-
-    RawIORequest* io_queue = NULL;
-    int io_queue_capacity = 0;
-    RawIORequest hp_queue[64];
 
     typedef struct {
         RawIORequest* queue;
@@ -518,22 +51,22 @@ raw {
         int id;
     } WorkerConfig;
 
+    RawIORequest* io_queue = NULL;
+    int io_queue_capacity = 0;
+    RawIORequest hp_queue[64];
+
     WorkerConfig worker_low;
     WorkerConfig worker_high;
     volatile int system_running = 0;
     
-    // Global world directory
     char world_dir[64] = "world";
-    
-    // Global Chunk Pointer (Assigned by init_persistence)
-    // We trust that this pointer is valid as long as system_running is true.
     Chunk* global_chunks_ptr = NULL;
     int global_num_chunks = 0;
     
     // Profiling Globals
-    volatile double prof_mesh_time = 0.0; // Last mesh build duration
-    volatile double prof_gen_time = 0.0;  // Last chunk gen duration
-    volatile double prof_prop_time = 0.0; // Last frame propagation duration
+    volatile double prof_mesh_time = 0.0;
+    volatile double prof_gen_time = 0.0;
+    volatile double prof_prop_time = 0.0;
 
     void set_world_dir(const char* path) {
         if (!DirectoryExists(path)) {
@@ -542,19 +75,6 @@ raw {
         strcpy(world_dir, path);
     }
     
-    // Prototype for generator
-    void generate_chunk_data(ChunkData* data, int x, int z);
-    void generate_title_chunk(ChunkData* data, int x, int z);
-    
-    // Prototype for mesh computer
-    ChunkMeshes compute_chunk_mesh(Chunk* c, Chunk* chunks, int num_chunks);
-    Mesh compute_plant_mesh(Chunk* c);
-
-    // Prototype for lighting functions
-    void recalculate_chunk_lighting(Chunk* c, Chunk* chunks, int num_chunks);
-    void propagate_light_in_chunk(Chunk* c, Chunk* chunks, int num_chunks);
-
-
     // Worker Function
     void db_worker(void* lpParam)
     {
@@ -568,189 +88,34 @@ raw {
             // PRIORITY SCAN
             int best_idx = -1;
             for(int k=0; k<queue_size; k++) {
-                if(queue[k].status == 1) {
+                if(queue[k].io_status == 1) {
                     if(queue[k].priority > 0) { best_idx = k; break; }
                     if(best_idx == -1) best_idx = k;
                 }
             }
             int loop_once = (best_idx != -1);
             for(int i = best_idx; loop_once; loop_once = 0) {
-
-                if(queue[i].status == 1) { // IO_STATUS_PENDING
-                    // Processor
+            
+                if(queue[i].io_status == 1) { // IO_STATUS_PENDING
                     RawIORequest *req = &queue[i];
                     
                     if(req->type == 3) { // REQ_BUILD_MESH
-                        if (global_chunks_ptr != NULL) {
-                            Chunk* c = &global_chunks_ptr[req->target_idx];
-                            // Compute meshes on CPU
-                            // Note: This accesses neighbor chunks via get_block -> get_chunk_index.
-                            // Main thread MUST ensure neighbor chunks are valid and locked!
-                            
-                            double t0 = GetTime();
-                            req->mesh_data = compute_chunk_mesh(c, global_chunks_ptr, global_num_chunks);
-                            req->plant_mesh = compute_plant_mesh(c);
-                            prof_mesh_time = GetTime() - t0;
-                            
-                            req->status = 2; // COMPLETED
-                        } else {
-                            req->status = 3; // FAILED (No global chunks)
-                        }
+                        double t0 = GetTime();
+                        handle_mesh_request((void*)req, global_chunks_ptr, global_num_chunks);
+                        prof_mesh_time = GetTime() - t0;
                         worked = 1;
                         continue;
                     }
                     
-                    if(req->type == 4) { // REQ_LIGHT_RECALC
-                         if (global_chunks_ptr != NULL) {
-                            Chunk* c = &global_chunks_ptr[req->target_idx];
-                            recalculate_chunk_lighting(c, global_chunks_ptr, global_num_chunks);
-                            req->status = 2; // COMPLETED
-                         } else {
-                            req->status = 3; // FAILED
-                         }
+                    if(req->type == 4 || req->type == 5) { // REQ_LIGHT_RECALC / PROPAGATE
+                         handle_light_request((void*)req, global_chunks_ptr, global_num_chunks);
                          worked = 1;
                          continue;
                     }
 
-                    if(req->type == 5) { // REQ_LIGHT_PROPAGATE
-                         if (global_chunks_ptr != NULL) {
-                            Chunk* c = &global_chunks_ptr[req->target_idx];
-                            propagate_light_in_chunk(c, global_chunks_ptr, global_num_chunks);
-                            req->status = 2; // COMPLETED
-                         } else {
-                            req->status = 3; // FAILED
-                         }
-                         worked = 1;
-                         continue;
-                    }
-
-                    // --- REGION-BASED FILE I/O ---
-                    // Region coordinates: each region holds 32x32 chunks
-                    int rx = (req->cx >= 0) ? (req->cx / 32) : ((req->cx - 31) / 32);
-                    int rz = (req->cz >= 0) ? (req->cz / 32) : ((req->cz - 31) / 32);
-                    // Local chunk position within region (0-31)
-                    int lcx = ((req->cx % 32) + 32) % 32;
-                    int lcz = ((req->cz % 32) + 32) % 32;
-                    
-                    char region_filename[512];
-                    sprintf(region_filename, "%s/region_%d_%d.zcr", world_dir, rx, rz);
-                    
-                    // Region file format:
-                    // Header: 32*32 entries of {uint32_t offset, uint32_t size} = 8192 bytes
-                    // Data: ChunkData blocks stored at their offsets
-                    // offset=0 means chunk not saved yet
-                    int header_entry_idx = lcz * 32 + lcx;
-                    int header_size = 32 * 32 * 8; // 8192 bytes for lookup table
-
-                    if(req->type == 1) { // SAVE
-                        FILE *f = fopen(region_filename, "r+b");
-                        if(!f) {
-                            // Region file doesn't exist, create it
-                            f = fopen(region_filename, "w+b");
-                            if(f) {
-                                // Write empty header
-                                char zero[8192];
-                                memset(zero, 0, 8192);
-                                fwrite(zero, 1, 8192, f);
-                            }
-                        }
-                        if(f) {
-                            // Read current offset for this chunk
-                            fseek(f, header_entry_idx * 8, SEEK_SET);
-                            unsigned int offset = 0;
-                            unsigned int stored_size = 0;
-                            fread(&offset, 4, 1, f);
-                            fread(&stored_size, 4, 1, f);
-                            
-                            if(offset == 0) {
-                                // New chunk - append to end of file
-                                fseek(f, 0, SEEK_END);
-                                offset = (unsigned int)ftell(f);
-                                stored_size = sizeof(ChunkData);
-                                
-                                // Update header entry
-                                fseek(f, header_entry_idx * 8, SEEK_SET);
-                                fwrite(&offset, 4, 1, f);
-                                fwrite(&stored_size, 4, 1, f);
-                            }
-                            
-                            // Write chunk data at offset
-                            fseek(f, offset, SEEK_SET);
-                            fwrite(&req->data, sizeof(ChunkData), 1, f);
-                            fclose(f);
-                        }
-                        req->status = 0; // Back to FREE immediately for Save
-                    }
-                    else if(req->type == 2) { // LOAD
-                        int loaded = 0;
-                        
-                        // Try region file first
-                        FILE *f = fopen(region_filename, "rb");
-                        if(f) {
-                            // Read header entry
-                            fseek(f, header_entry_idx * 8, SEEK_SET);
-                            unsigned int offset = 0;
-                            unsigned int stored_size = 0;
-                            fread(&offset, 4, 1, f);
-                            fread(&stored_size, 4, 1, f);
-                            
-                            if(offset > 0 && stored_size > 0) {
-                                // Verify file integrity
-                                fseek(f, 0, SEEK_END);
-                                long filesize = ftell(f);
-                                
-                                if (offset + stored_size <= filesize) {
-                                    fseek(f, offset, SEEK_SET);
-                                    size_t rd = fread(&req->data, sizeof(ChunkData), 1, f);
-                                    if(rd == 1) {
-                                        loaded = 1;
-                                        req->data.light_calculated = 0; // Disk data needs recalc
-                                        printf("[PERSISTENCE] Loaded chunk %d,%d from region (Offset: %u)\n", req->cx, req->cz, offset);
-                                    } else {
-                                        printf("[PERSISTENCE] ERROR: fread failed for chunk %d,%d at offset %u\n", req->cx, req->cz, offset);
-                                    }
-                                } else {
-                                    printf("[PERSISTENCE] ERROR: Corrupted chunk %d,%d! Offset %u + Size %u > FileSize %ld\n", 
-                                           req->cx, req->cz, offset, stored_size, filesize);
-                                }
-                            }
-                            fclose(f);
-                        } else {
-                            // printf("[PERSISTENCE] Region file not found: %s\n", region_filename);
-                        }
-                        
-                        // Fallback: try legacy per-chunk file
-                        if(!loaded) {
-                            char legacy_filename[256];
-                            sprintf(legacy_filename, "%s/chunk_%d_%d.dat", world_dir, req->cx, req->cz);
-                            FILE *lf = fopen(legacy_filename, "rb");
-                            if(lf) {
-                                size_t rd = fread(&req->data, sizeof(ChunkData), 1, lf);
-                                fclose(lf);
-                                if(rd == 1) {
-                                    loaded = 1;
-                                    req->data.light_calculated = 0; // Old format
-                                    printf("[PERSISTENCE] Loaded chunk %d,%d from LEGACY file\n", req->cx, req->cz);
-                                }
-                            }
-                        }
-                        
-                        if(loaded) {
-                            req->status = 2; // COMPLETED
-                        } else {
-                            // Generate new chunk
-                            double t0 = GetTime();
-                            if(strstr(world_dir, "titleworld") != NULL) {
-                                generate_title_chunk(&req->data, req->cx, req->cz);
-                            } else {
-                                generate_chunk_data(&req->data, req->cx, req->cz);
-                            }
-                            prof_gen_time = GetTime() - t0;
-                            
-                            // light_calculated is set by generate_chunk_data
-                            req->status = 2; // COMPLETED (Generated)
-                        }
-                    }
+                    // Handled by persistence_io.zc
+                    // Save/Load
+                    handle_io_request((void*)req, world_dir);
                     worked = 1;
                 }
             }
@@ -778,22 +143,22 @@ fn init_persistence(chunks: Chunk*) {
         
         // Zero queues
         if(io_queue) {
-            for(int i=0; i<io_queue_capacity; i++) io_queue[i].status = 0;
+            for(int i=0; i<io_queue_capacity; i++) io_queue[i].io_status = 0;
         }
-        for(int i=0; i<64; i++) hp_queue[i].status = 0;
+        for(int i=0; i<64; i++) hp_queue[i].io_status = 0;
         
         system_running = 1;
 
         global_chunks_ptr = chunks;
-        global_num_chunks = MAX_CHUNKS;
+        // global_num_chunks = MAX_CHUNKS; // MAX_CHUNKS from chunk.zc? passed from main?
+        // chunk.zc implies MAX_CHUNKS is defined there or imported. 
+        // We will trust the constant.
+        global_num_chunks = MAX_CHUNKS; 
 
         // Dynamic Allocation based on MAX_CHUNKS
-        // Allow enough slots for potentially loading ALL chunks at once + buffer
         io_queue_capacity = MAX_CHUNKS + 64; 
         if(io_queue == NULL) {
             io_queue = (RawIORequest*)ZTHREAD_CALLOC(io_queue_capacity, sizeof(RawIORequest));
-        } else {
-             // Realloc if already exists? For now assume one-time init or manual restart
         }
         
         // Setup Workers
@@ -811,7 +176,6 @@ fn init_persistence(chunks: Chunk*) {
         
         pmap_ensure_init();
     }
-    // rl::TraceLog(rl::LOG_INFO, "Async Persistence Initialized");
 }
 
 fn request_save_async(c: Chunk*) {
@@ -822,7 +186,7 @@ fn request_save_async(c: Chunk*) {
         // 1. Check if already pending - Update data if so
         if(io_queue) {
             for(int i=0; i<io_queue_capacity; i++) {
-                if(io_queue[i].status == 1 && io_queue[i].type == 1) { // PENDING SAVE
+                if(io_queue[i].io_status == 1 && io_queue[i].type == 1) { // PENDING SAVE
                 if(io_queue[i].cx == c->x && io_queue[i].cz == c->z) {
                      // Found existing save request! Update data and return.
                      memcpy(io_queue[i].data.blocks, c->blocks, sizeof(io_queue[i].data.blocks));
@@ -835,12 +199,11 @@ fn request_save_async(c: Chunk*) {
             }
         }
 
-    
         // 2. Find free slot
         int slot = -1;
         if(io_queue) {
             for(int i=0; i<io_queue_capacity; i++) {
-                if(io_queue[i].status == 0) {
+                if(io_queue[i].io_status == 0) {
                     slot = i;
                     break;
                 }
@@ -862,7 +225,7 @@ fn request_save_async(c: Chunk*) {
             memcpy(io_queue[slot].data.plants, c->plants, sizeof(io_queue[slot].data.plants));
             
             // Commit
-            io_queue[slot].status = 1; // PENDING
+            io_queue[slot].io_status = 1; // PENDING
         } else {
             TraceLog(LOG_WARNING, "Async Save Queue Full!");
         }
@@ -873,11 +236,10 @@ fn request_load_async(idx: int, cx: int, cz: int, priority: int) -> int {
     let result = 0;
     raw {
         // Find free slot
-        // io_queue is now Low Priority only, so use all slots
         int slot = -1;
         if(io_queue) {
             for(int i=0; i<io_queue_capacity; i++) {
-                if(io_queue[i].status == 0) {
+                if(io_queue[i].io_status == 0) {
                     slot = i;
                     break;
                 }
@@ -889,7 +251,7 @@ fn request_load_async(idx: int, cx: int, cz: int, priority: int) -> int {
             io_queue[slot].cx = cx;
             io_queue[slot].cz = cz;
             io_queue[slot].target_idx = idx;
-            io_queue[slot].status = 1; // PENDING
+            io_queue[slot].io_status = 1; // PENDING
             io_queue[slot].priority = priority;
             pmap_add(cx, cz);
             result = 1;
@@ -900,38 +262,12 @@ fn request_load_async(idx: int, cx: int, cz: int, priority: int) -> int {
     return result;
 }
 
-// Request Mesh Generation
-// This LOCKS the target chunk and its neighbors
 fn request_mesh_async(idx: int, priority: int) -> int {
     let result = 0;
-    
-    // Lock logic: Set locked = 1 for center and neighbors
-    // We must do this on main thread before launching worker
-    // Only lock if not already locked?
-    // Actually, simple lock: we just need to ensure they are NOT UNLOADED.
-    // Unloading happens in main loop when we reuse a chunk slot.
-    // We can add a check in main loop: if (chunk.locked) skip/defer.
-    
-    // We should lock the neighbors we use for occlusion.
-    // Center chunk and 4 immediate neighbors? 
-    // compute_chunk_mesh checks 6 neighbors. 
-    // +X, -X, +Z, -Z, +Y, -Y.
-    // +Y/-Y are inside same chunk (vertical).
-    // So we need locking for +X, -X, +Z, -Z.
-    
-    // Let's implement safe locking in main.zc (or here if we access chunks array).
-    // We access chunks array here via `request_mesh_async(chunks[idx]...)`?
-    // No, `idx` is index.
-    // We need global_chunks_ptr which is visible in C raw block.
-    // But we need to write to `locked` field.
-    
-    // To make it simple: We just set `locked` here.
-    
     raw {
         if(global_chunks_ptr == NULL) return 0;
         
         Chunk* c = &global_chunks_ptr[idx];
-        if(c->locked) return 0; // Already busy
         
         // Select Queue
         RawIORequest* queue = io_queue;
@@ -944,7 +280,7 @@ fn request_mesh_async(idx: int, priority: int) -> int {
         // Find free slot
         int slot = -1;
         for(int i=0; i<queue_size; i++) {
-            if(queue[i].status == 0) {
+            if(queue[i].io_status == 0) {
                 slot = i;
                 break;
             }
@@ -958,7 +294,7 @@ fn request_mesh_async(idx: int, priority: int) -> int {
             queue[slot].priority = priority;
             
             // Lock Center
-            c->locked = 1;
+            c->locked++;
             
             // Lock Neighbors
             int neighbor_offsets[8] = {-1, 0, 1, 0, 0, -1, 0, 1};
@@ -969,11 +305,10 @@ fn request_mesh_async(idx: int, priority: int) -> int {
                 
                 if(global_chunks_ptr[nidx].x == ncx && global_chunks_ptr[nidx].z == ncz) {
                      global_chunks_ptr[nidx].locked++; 
-                     // Increment lock so shared neighbors stay locked until all are done
                 }
             }
             
-            queue[slot].status = 1; // PENDING
+            queue[slot].io_status = 1; // PENDING
             result = 1;
         } else {
             TraceLog(LOG_WARNING, "Async Mesh Queue Full!");
@@ -982,15 +317,12 @@ fn request_mesh_async(idx: int, priority: int) -> int {
     return result;
 }
 
-// Request Async Lighting Operation
-// Mode: REQ_LIGHT_RECALC (4) or REQ_LIGHT_PROPAGATE (5)
 fn request_light_async(idx: int, mode: int, priority: int) -> int {
     let result = 0;
     raw {
         if(global_chunks_ptr == NULL) return 0;
         
         Chunk* c = &global_chunks_ptr[idx];
-        if(c->locked) return 0; // Already busy
         
         // Select Queue
         RawIORequest* queue = io_queue;
@@ -1003,7 +335,7 @@ fn request_light_async(idx: int, mode: int, priority: int) -> int {
         // Find free slot
         int slot = -1;
         for(int i=0; i<queue_size; i++) {
-            if(queue[i].status == 0) {
+            if(queue[i].io_status == 0) {
                 slot = i;
                 break;
             }
@@ -1017,21 +349,23 @@ fn request_light_async(idx: int, mode: int, priority: int) -> int {
             queue[slot].priority = priority;
             
             // Lock Center
-            c->locked = 1;
+            c->locked++;
             
-            // Lock Neighbors (Lighting touches neighbors)
-            int neighbor_offsets[8] = {-1, 0, 1, 0, 0, -1, 0, 1};
-            for(int ni = 0; ni < 4; ni++) {
-                int ncx = c->x + neighbor_offsets[ni * 2];
-                int ncz = c->z + neighbor_offsets[ni * 2 + 1];
-                int nidx = get_chunk_index(ncx, ncz);
-                
-                if(global_chunks_ptr[nidx].x == ncx && global_chunks_ptr[nidx].z == ncz) {
-                     global_chunks_ptr[nidx].locked++; 
+            // Lock Neighbors
+            if (mode == 4 || mode == 5) {
+                int neighbor_offsets[8] = {-1, 0, 1, 0, 0, -1, 0, 1};
+                for(int ni = 0; ni < 4; ni++) {
+                    int ncx = c->x + neighbor_offsets[ni * 2];
+                    int ncz = c->z + neighbor_offsets[ni * 2 + 1];
+                    int nidx = get_chunk_index(ncx, ncz);
+                    
+                    if(global_chunks_ptr[nidx].x == ncx && global_chunks_ptr[nidx].z == ncz) {
+                         global_chunks_ptr[nidx].locked++; 
+                    }
                 }
             }
             
-            queue[slot].status = 1; // PENDING
+            queue[slot].io_status = 1; // PENDING
             result = 1;
         } else {
             TraceLog(LOG_WARNING, "Async Light Queue Full!");
@@ -1040,17 +374,13 @@ fn request_light_async(idx: int, mode: int, priority: int) -> int {
     return result;
 }
 
-// Check if a chunk load request is already pending for the given coordinates
 fn is_chunk_pending(cx: int, cz: int) -> int {
     let result = 0;
     raw {
-    // OPTIMIZED: Use zmap O(1) lookup instead of O(N) loop
-    result = pmap_check(cx, cz);
+        result = pmap_check(cx, cz);
     }
     return result;
 }
-
-
 
 fn get_profiling_stats() -> ProfilingStats {
     let s: ProfilingStats;
@@ -1062,13 +392,12 @@ fn get_profiling_stats() -> ProfilingStats {
     return s;
 }
 
-// Get the number of pending requests in the queue
 fn get_pending_req_count() -> int {
     let count = 0;
     raw {
         if(io_queue) {
             for(int i=0; i<io_queue_capacity; i++) {
-                if(io_queue[i].status == 1) { // PENDING
+                if(io_queue[i].io_status == 1) { // PENDING
                     count++;
                 }
             }
@@ -1077,7 +406,6 @@ fn get_pending_req_count() -> int {
     return count;
 }
 
-// Returns 1 if chunk was loaded/generated this frame
 fn poll_async_results() {
     raw {
         Chunk* chunks = global_chunks_ptr;
@@ -1085,9 +413,9 @@ fn poll_async_results() {
         
         if(chunks == NULL) return;
         double start_time = GetTime();
-        double time_budget = 0.001; // 1ms budget (Aggressive)
+        double time_budget = 0.001; // 1ms budget
         int processed = 0;
-        prof_prop_time = 0.0; // Reset frame counter
+        prof_prop_time = 0.0;
         
         RawIORequest* queues[2] = { hp_queue, io_queue };
         int sizes[2] = { 64, io_queue_capacity };
@@ -1101,24 +429,20 @@ fn poll_async_results() {
             int size = sizes[q];
 
             for(int i=0; i<size; i++) {
-                 // Check time budget every iteration
                  double current_time = GetTime();
                  if ((current_time - start_time) > time_budget && processed > 0) {
                      stop_polling = 1;
                      break;
                  }
 
-                 
-                if(queue[i].status == 2) { // COMPLETED
+                if(queue[i].io_status == 2) { // COMPLETED
                     int idx = queue[i].target_idx;
                     
                     if (queue[i].type == 3) { // MESH BUILT
                          if(idx >= 0 && idx < num_chunks) {
-                             // Upload to GPU (Main Thread)
                              upload_chunk_mesh(&chunks[idx], queue[i].mesh_data);
                              upload_plant_mesh(&chunks[idx], queue[i].plant_mesh);
                              
-                             // Unlock
                              chunks[idx].locked--;
                              if (chunks[idx].locked < 0) chunks[idx].locked = 0;
                              
@@ -1136,16 +460,14 @@ fn poll_async_results() {
                                 }
                              }
                          }
-                         queue[i].status = 0;
+                         queue[i].io_status = 0;
                          processed++;
                     }
                     else if (queue[i].type == 4 || queue[i].type == 5) { // LIGHT CALC/PROP DONE
                          if(idx >= 0 && idx < num_chunks) {
-                             // Unlock
                              chunks[idx].locked--;
                              if (chunks[idx].locked < 0) chunks[idx].locked = 0;
                              
-                             // Unlock Neighbors
                              int neighbor_offsets[8] = {-1, 0, 1, 0, 0, -1, 0, 1};
                              Chunk* c = &chunks[idx];
                              for(int ni = 0; ni < 4; ni++) {
@@ -1156,26 +478,28 @@ fn poll_async_results() {
                                 if(chunks[nidx].x == ncx && chunks[nidx].z == ncz) {
                                      chunks[nidx].locked--; 
                                      if (chunks[nidx].locked < 0) chunks[nidx].locked = 0;
-                                     
-                                     // Mark neighbor mesh dirty (lighting spilled over)
                                      chunks[nidx].mesh_dirty = 1;
                                 }
                              }
-                             
                              chunks[idx].mesh_dirty = 1;
+                             
+                             // If this was a high priority light request, chain a high priority mesh rebuild immediately
+                             // This ensures the lighting fix is visible quickly (e.g. on block break)
+                             if (queue[i].priority > 0) {
+                                 if(request_mesh_async(idx, queue[i].priority)) {
+                                     chunks[idx].mesh_dirty = 0;
+                                 }
+                             }
                          }
-                         queue[i].status = 0;
+                         queue[i].io_status = 0;
                          processed++;
                     }
                     else if (queue[i].type == 2) { // LOAD
                         if(idx >= 0 && idx < num_chunks) {
                              if (chunks[idx].locked > 0) {
-                                // Defer this update. Keep status as COMPLETED (2).
-                                // We will try again next frame.
                                 continue;
                             }
     
-                            // Apply Data
                             chunks[idx].x = queue[i].cx;
                             chunks[idx].z = queue[i].cz;
                             
@@ -1190,22 +514,13 @@ fn poll_async_results() {
                             chunks[idx].grass_deco_built = 0;
                             
                         pmap_remove(queue[i].cx, queue[i].cz);
-                        queue[i].status = 0; // Free BEFORE chaining
+                        queue[i].io_status = 0; 
                         processed++;
     
-                        // CHAIN lighting request (Async)
-                        // This prevents main thread lag spike
                         int req_mode = 4; // CALC
                         if(queue[i].data.light_calculated) {
                             req_mode = 5; // PROPAGATE
                         }
-                        
-                        // Try to schedule lighting immediate
-                        // Now that status=0, we can potentially reuse THIS slot if priority allows,
-                        // or find another one. 
-                        // High priority (1) would be nice, but this is background loading... 
-                        // Let's stick to 0. 
-                        // Since we freed the slot, `request_light_async` will likely pick it up instantly.
                         request_light_async(idx, req_mode, 0); 
                     }
                     }
@@ -1214,8 +529,6 @@ fn poll_async_results() {
         }
     }
 }
-
-// --- Player Persistence ---
 
 fn save_player_data(x: float, y: float, z: float, block: int, yaw: float, pitch: float) {
     raw {
@@ -1270,7 +583,6 @@ fn load_player_data(x_ptr: any, y_ptr: any, z_ptr: any, block_ptr: any, yaw_ptr:
                 *yaw = pd.yaw;
                 *pitch = pd.pitch;
                 success = 1;
-                success = 1;
                 TraceLog(LOG_INFO, "Player data loaded: %.2f, %.2f, %.2f, Yaw: %.2f, Pitch: %.2f, Block: %d", 
                          pd.x, pd.y, pd.z, pd.yaw, pd.pitch, pd.selected_block);
             } else {
@@ -1284,12 +596,10 @@ fn load_player_data(x_ptr: any, y_ptr: any, z_ptr: any, block_ptr: any, yaw_ptr:
     return success;
 }
 
-// Synchronous load - try to load from disk, generate if file doesn't exist
 fn load_chunk_into(c_ptr: any, cx: int, cz: int) {
     raw {
         Chunk* c = (Chunk*)c_ptr;
         
-        // Initialize defaults 
         c->x = cx;
         c->z = cz;
         c->mesh_built = 0;
@@ -1298,12 +608,10 @@ fn load_chunk_into(c_ptr: any, cx: int, cz: int) {
         c->water_mesh_built = 0;
         c->plant_count = 0;
 
-        ChunkData* data_ptr = (ChunkData*)malloc(sizeof(ChunkData));
+        ChunkData* data_ptr = (ChunkData*)zdebug_malloc(sizeof(ChunkData));
         if (data_ptr) {
             int loaded = 0;
             
-            // 1. Try Region File
-            // Region coordinates
             int rx = (cx >= 0) ? (cx / 32) : ((cx - 31) / 32);
             int rz = (cz >= 0) ? (cz / 32) : ((cz - 31) / 32);
             int lcx = ((cx % 32) + 32) % 32;
@@ -1316,7 +624,6 @@ fn load_chunk_into(c_ptr: any, cx: int, cz: int) {
             
             FILE *f = fopen(region_filename, "rb");
             if(f) {
-                // Read header entry
                 fseek(f, header_entry_idx * 8, SEEK_SET);
                 unsigned int offset = 0;
                 unsigned int stored_size = 0;
@@ -1324,7 +631,6 @@ fn load_chunk_into(c_ptr: any, cx: int, cz: int) {
                 fread(&stored_size, 4, 1, f);
                 
                 if(offset > 0 && stored_size > 0) {
-                     // Verify file integrity
                     fseek(f, 0, SEEK_END);
                     long filesize = ftell(f);
                     
@@ -1333,14 +639,12 @@ fn load_chunk_into(c_ptr: any, cx: int, cz: int) {
                         size_t rd = fread(data_ptr, sizeof(ChunkData), 1, f);
                         if(rd == 1) {
                             loaded = 1;
-                            // printf("[PERSISTENCE] SYNC LOAD chunk %d,%d from region\n", cx, cz);
                         }
                     }
                 }
                 fclose(f);
             }
 
-            // 2. Fallback to Legacy
             if (!loaded) {
                 char filename[256];
                 sprintf(filename, "%s/chunk_%d_%d.dat", world_dir, cx, cz);
@@ -1354,7 +658,6 @@ fn load_chunk_into(c_ptr: any, cx: int, cz: int) {
             }
             
             if (!loaded) {
-                // Generate
                 if(strstr(world_dir, "titleworld") != NULL) {
                     generate_title_chunk(data_ptr, cx, cz);
                 } else {
@@ -1362,13 +665,19 @@ fn load_chunk_into(c_ptr: any, cx: int, cz: int) {
                 }
             }
             
-            // Copy to Chunk
             memcpy(c->blocks, data_ptr->blocks, sizeof(c->blocks));
             memcpy(c->light, data_ptr->light, sizeof(c->light));
             c->plant_count = data_ptr->plant_count;
             memcpy(c->plants, data_ptr->plants, sizeof(c->plants));
             
-            free(data_ptr);
+            zdebug_free(data_ptr);
         }
+    }
+}
+
+fn cleanup_persistence() {
+    raw {
+        if(io_queue) { zdebug_free(io_queue); io_queue = NULL; }
+        // zmap_destroy_pending_map(&g_pending_map); // Known leak
     }
 }

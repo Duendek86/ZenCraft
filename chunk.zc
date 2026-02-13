@@ -230,7 +230,7 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
     let gx_base = c.x * 16;
     let gz_base = c.z * 16;
     
-    let q_ptr = (LightQueue*)malloc(sizeof(LightQueue));
+    let q_ptr = (LightQueue*)zdebug_malloc(sizeof(LightQueue));
     if (q_ptr == NULL) return; // Allocation failed
     
     (*q_ptr).head = 0;
@@ -356,7 +356,7 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
         }
     }
     
-    free(q_ptr); // Cleanup
+    zdebug_free(q_ptr); // Cleanup
 }
 
 fn propagate_light_in_chunk(c: Chunk*, chunks: Chunk*, num_chunks: int) {

@@ -1,0 +1,112 @@
+
+import "persistence_defs.zc";
+import "persistence_gen.zc"; // for generate_chunk_data
+import "raylib.h";
+raw {
+    #include <stdio.h>
+    #include <string.h>
+}
+
+// IO Handler for Save/Load Requests
+fn handle_io_request(req: any, world_dir: char*) {
+    raw {
+        IORequest* r = (IORequest*)req;
+        // --- REGION-BASED FILE I/O ---
+        // Region coordinates: each region holds 32x32 chunks
+        int rx = (r->cx >= 0) ? (r->cx / 32) : ((r->cx - 31) / 32);
+        int rz = (r->cz >= 0) ? (r->cz / 32) : ((r->cz - 31) / 32);
+        // Local chunk position within region (0-31)
+        int lcx = ((r->cx % 32) + 32) % 32;
+        int lcz = ((r->cz % 32) + 32) % 32;
+        
+        char region_filename[512];
+        sprintf(region_filename, "%s/region_%d_%d.zcr", world_dir, rx, rz);
+        
+        // Region file format:
+        // Header: 32*32 entries of {uint32_t offset, uint32_t size} = 8192 bytes
+        // Data: ChunkData blocks stored at their offsets
+        // offset=0 means chunk not saved yet
+        int header_entry_idx = lcz * 32 + lcx;
+        int header_size = 32 * 32 * 8; // 8192 bytes for lookup table
+
+        if(r->type == 1) { // SAVE
+            FILE *f = fopen(region_filename, "r+b");
+            if(!f) {
+                // Region file doesn't exist, create it
+                f = fopen(region_filename, "w+b");
+                if(f) {
+                    // Write empty header
+                    char zero[8192];
+                    memset(zero, 0, 8192);
+                    fwrite(zero, 1, 8192, f);
+                }
+            }
+            if(f) {
+                // Read current offset for this chunk
+                fseek(f, header_entry_idx * 8, SEEK_SET);
+                unsigned int offset = 0;
+                unsigned int stored_size = 0;
+                fread(&offset, 4, 1, f);
+                fread(&stored_size, 4, 1, f);
+                
+                if(offset == 0) {
+                    // New chunk - append to end of file
+                    fseek(f, 0, SEEK_END);
+                    offset = (unsigned int)ftell(f);
+                    stored_size = sizeof(ChunkData);
+                    
+                    // Update header entry
+                    fseek(f, header_entry_idx * 8, SEEK_SET);
+                    fwrite(&offset, 4, 1, f);
+                    fwrite(&stored_size, 4, 1, f);
+                }
+                
+                // Write chunk data at offset
+                fseek(f, offset, SEEK_SET);
+                fwrite(&r->data, sizeof(ChunkData), 1, f);
+                fclose(f);
+            }
+            r->io_status = 0; // Back to FREE immediately for Save
+        }
+        else if(r->type == 2) { // LOAD
+            int loaded = 0;
+            
+            // Try region file first
+            FILE *f = fopen(region_filename, "rb");
+            if(f) {
+                // Read header entry
+                fseek(f, header_entry_idx * 8, SEEK_SET);
+                unsigned int offset = 0;
+                unsigned int stored_size = 0;
+                fread(&offset, 4, 1, f);
+                fread(&stored_size, 4, 1, f);
+                
+                if(offset > 0 && stored_size > 0) {
+                    // Verify file integrity
+                    fseek(f, 0, SEEK_END);
+                    long filesize = ftell(f);
+                    
+                    if(offset + stored_size <= filesize) {
+                        fseek(f, offset, SEEK_SET);
+                        // Read into r->data
+                        size_t read = fread(&r->data, sizeof(ChunkData), 1, f);
+                        if(read == 1) loaded = 1;
+                    }
+                }
+                fclose(f);
+            }
+            
+            if (!loaded) {
+                // Generate
+                if(strstr(world_dir, "titleworld") != NULL) {
+                     // generate_title_chunk(&r->data, r->cx, r->cz);
+                     generate_chunk_data(&r->data, r->cx, r->cz);
+                } else {
+                     generate_chunk_data(&r->data, r->cx, r->cz);
+                }
+            }
+            
+            r->io_status = 2; // COMPLETED (Ready for main thread to pickup)
+        }
+    }
+}
