@@ -3,7 +3,7 @@ import "chunk.zc";
 import "chunk_mesh.zc";
 
 // Global constants for Async System
-def MAX_PENDING_IO = 64;
+def MAX_PENDING_IO = 256;
 
 // Request Types
 def REQ_NONE = 0;
@@ -49,8 +49,33 @@ struct ProfilingStats {
     prop_ms: float;
 }
 
+struct HousePos {
+    x: int; // Global block X
+    y: int; // Floor Y
+    z: int; // Global block Z
+    w: int; // width (x-axis size)
+    d: int; // depth (z-axis size)
+    h: int; // height (walls)
+}
+
+// Spatial Hash for deterministic procedural generation
+fn hash_int2(x: int, y: int) -> int {
+    let n = x * 131071 + y * 956873; // Large primes
+    // Bit mix
+    n = n ^ (n << 13);
+    n = n ^ (n >> 17);
+    return abs(n);
+}
+
+// Helper to determine if a chunk is a village center (0.5% chance)
+fn is_village_center(cx: int, cz: int) -> int {
+    let h = hash_int2(cx, cz);
+    if (h % 200) < 1 { return 1; }
+    return 0;
+}
+
 struct AsyncSystem {
-    requests: IORequest[64];
+    requests: IORequest[256];
     running: int;
 }
 
@@ -257,10 +282,167 @@ fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
             }
         }
     }
+
+
+    // --- VILLAGE GENERATION ---
+    // Check this chunk and neighbors (3x3 area) for village centers.
+    // If a neighbor is a center, generate its houses and draw the parts that fall in THIS chunk.
     
-    // --- Self-contained sunlight column pass (worker thread safe) ---
-    // This computes proper sunlight without needing the global chunks array.
-    // Shadows from trees, leaves etc. are handled correctly.
+    // Define bounds of current chunk
+    let my_cx_min = x * 16;
+    let my_cx_max = x * 16 + 15;
+    let my_cz_min = z * 16;
+    let my_cz_max = z * 16 + 15;
+    
+    for dx in -1..2 {
+        for dz in -1..2 {
+            let ncx = x + dx;
+            let ncz = z + dz;
+            
+            if is_village_center(ncx, ncz) {
+                // This neighbor (or self) is a village center.
+                // Generate the village layout deterministically.
+                let v_seed = hash_int2(ncx, ncz);
+                
+                // Village properties
+                let num_houses = 4 + (v_seed % 3); // 4 to 6 houses
+                let center_x = ncx * 16 + 8;
+                let center_z = ncz * 16 + 8;
+                
+                // Get ground height at village center (approximate)
+                // We'll use the height from our own chunk generation if possible, but 
+                // since we don't have neighbor heightmaps, we might need to re-calculate noise 
+                // or just pick a safe height.
+                // Re-calculating noise for just one point is cheap.
+                let center_h = 0;
+                raw {
+                    Image noise = GenImagePerlinNoise(1, 1, ncx * 16 + 8, ncz * 16 + 8, 0.05f);
+                    Color* pixels = LoadImageColors(noise);
+                    float base_val = (float)pixels[0].r / 255.0;
+                    float h_f = 5.0 + (base_val * 50.0); // Match terrain gen
+                    center_h = (int)h_f;
+                    UnloadImageColors(pixels);
+                    UnloadImage(noise);
+                }
+                if center_h < 4 { center_h = 4; } // Safety
+                
+                // Generate Houses
+                for i in 0..num_houses {
+                    // Update seed for each house
+                    v_seed = hash_int2(v_seed, i);
+                    
+                    let angle = (float)(v_seed % 360) * 0.01745; // Radians
+                    let dist = 10.0 + (float)(v_seed % 15); // Distance from center 10..24
+                    
+                    let hx = center_x + (int)((float)cos(angle) * dist);
+                    let hz = center_z + (int)((float)sin(angle) * dist);
+                    
+                    let house_w = 5 + (v_seed % 3); // 5..7
+                    let house_d = 5 + ((v_seed / 10) % 3); // 5..7
+                    let house_h = 4;
+                    
+                    let hy = center_h; // Place at village center height for simplicity (or raycast if we had data)
+
+                    // House Bounds
+                    let hw_half = house_w / 2;
+                    let hd_half = house_d / 2;
+                    let min_x = hx - hw_half;
+                    let max_x = hx + hw_half;
+                    let min_z = hz - hd_half;
+                    let max_z = hz + hd_half;
+                    let max_y = hy + house_h + 2; // Roof
+
+                    // Check if house intersects CURRENT chunk
+                    if max_x < my_cx_min || min_x > my_cx_max || max_z < my_cz_min || min_z > my_cz_max {
+                        continue; // House is completely outside
+                    }
+
+                    // DRAW HOUSE
+                    // Iterate ONLY the intersection of House and Current Chunk
+                    let iter_min_x = min_x; if iter_min_x < my_cx_min { iter_min_x = my_cx_min; }
+                    let iter_max_x = max_x; if iter_max_x > my_cx_max { iter_max_x = my_cx_max; }
+                    let iter_min_z = min_z; if iter_min_z < my_cz_min { iter_min_z = my_cz_min; }
+                    let iter_max_z = max_z; if iter_max_z > my_cz_max { iter_max_z = my_cz_max; }
+                    
+                    for bx in iter_min_x..(iter_max_x + 1) {
+                        for bz in iter_min_z..(iter_max_z + 1) {
+                            // Convert to local chunk coords
+                            let lx = bx - my_cx_min;
+                            let lz = bz - my_cz_min;
+                            
+                            // Foundation: Fill from hy down to ground (to avoid floating houses)
+                            // We scan down from hy until we hit solid. 
+                            // Since we are generating blindly, we just fill down to a reasonable depth or until we hit something non-air?
+                            // But data.blocks might be empty if we are in air chunk? 
+                            // Assuming terrain is generated already.
+                            
+                            // Draw Walls & Interior
+                            for by in hy..(hy + house_h + 1) {
+                                if by >= CHUNK_HEIGHT { continue; }
+                                
+                                // Floor
+                                if by == hy {
+                                     data.blocks[lx][by][lz] = BLOCK_LOG; // Wood Floor
+                                     continue;
+                                }
+                                
+                                // Walls
+                                let is_wall = (bx == min_x || bx == max_x || bz == min_z || bz == max_z);
+                                if is_wall {
+                                    // Corners
+                                    let is_corner = (bx == min_x || bx == max_x) && (bz == min_z || bz == max_z);
+                                    if is_corner {
+                                        data.blocks[lx][by][lz] = BLOCK_LOG;
+                                    } else {
+                                        // Windows: Middle of wall, height +2
+                                        if by == hy + 2 && (bx == hx || bz == hz) {
+                                             data.blocks[lx][by][lz] = BLOCK_AIR; // Window
+                                        } else {
+                                             data.blocks[lx][by][lz] = BLOCK_STONE;
+                                        }
+                                    }
+                                } else {
+                                    // Interior Air
+                                    data.blocks[lx][by][lz] = BLOCK_AIR; 
+                                }
+                            }
+                            
+                            // Roof (Simple Slab/Flat for now or Pyramid)
+                            let roof_y = hy + house_h;
+                            if roof_y < CHUNK_HEIGHT {
+                                data.blocks[lx][roof_y][lz] = BLOCK_LOG; // Flat roof
+                            }
+                            
+                            // Foundation (Down to -4 from floor)
+                            // Only overwrite AIR or WATER or TALLGRASS
+                            // Ideally we stop when we hit stone/dirt
+                             for k in 1..5 {
+                                let fy = hy - k;
+                                if fy >= 0 {
+                                    let existing = data.blocks[lx][fy][lz];
+                                    if existing == BLOCK_AIR || existing == BLOCK_WATER || existing == BLOCK_TALLGRASS {
+                                        data.blocks[lx][fy][lz] = BLOCK_STONE; // Cobble foundation
+                                    } else {
+                                        break; // Hit ground
+                                    }
+                                }
+                             }
+                        }
+                    }
+                    
+                    // Door (cut hole)
+                    // Simple door at center of one wall?
+                    // Let's just cut a hole at x=hx, z=min_z (North face)
+                    if hx >= iter_min_x && hx <= iter_max_x && min_z >= iter_min_z && min_z <= iter_max_z {
+                         let lx = hx - my_cx_min;
+                         let lz = min_z - my_cz_min;
+                         if hy + 1 < CHUNK_HEIGHT { data.blocks[lx][hy+1][lz] = BLOCK_AIR; }
+                         if hy + 2 < CHUNK_HEIGHT { data.blocks[lx][hy+2][lz] = BLOCK_AIR; }
+                    }
+                }
+            }
+        }
+    }
     for cx in 0..16 {
         for cz in 0..16 {
             let in_shadow = 0;

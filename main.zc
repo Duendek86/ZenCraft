@@ -170,6 +170,7 @@ fn main() {
             rl::EndMode3D();
 
             rl::DrawText("ZEN CRAFT", 100, 100, 60, rl::WHITE);
+            rl::DrawText("v0.0.1 alpha", 100, 160, 20, rl::WHITE);
             rl::DrawText("Press ENTER to Play", 150, 400, 30, rl::LIGHTGRAY);
             
             rl::EndDrawing();
@@ -231,25 +232,6 @@ fn main() {
                     }
                 }
                 
-                // Find safe spawn if new game
-                if(!loaded_save) {
-                    for(int h = 0; h < CHUNK_HEIGHT; h++) {
-                        int y = (CHUNK_HEIGHT - 1) - h;
-                        int blk = get_block(&chunks[0], MAX_CHUNKS, (int)start_x, y, (int)start_z);
-                        if(blk != BLOCK_AIR && blk != 10) { // Not air, not tallgrass
-                            int above1 = get_block(&chunks[0], MAX_CHUNKS, (int)start_x, y + 1, (int)start_z);
-                            int above2 = get_block(&chunks[0], MAX_CHUNKS, (int)start_x, y + 2, (int)start_z);
-                            
-                            if((above1 == BLOCK_AIR || above1 == 10) && (above2 == BLOCK_AIR || above2 == 10)) {
-                                start_y = (float)(y + 1) + 0.1f;
-                            } else {
-                                start_y = (float)(y + 3) + 0.1f;
-                            }
-                            break;
-                        }
-                    }
-                }
-                
                 // Check if all chunks ready
                 int all_ready = 1;
                 for(int dx = -draw_distance; dx < range_limit; dx++) {
@@ -264,8 +246,42 @@ fn main() {
                     }
                     if(!all_ready) break;
                 }
-                
+
                 if(all_ready && !loading_done) {
+                    
+                    // Find safe spawn if new game
+                    if(!loaded_save) {
+                        // Center on block
+                        start_x = (float)((int)start_x) + 0.5;
+                        start_z = (float)((int)start_z) + 0.5;
+                        
+                        // Default to high air if scanning fails
+                        // Scan down from top
+                        for(int h = 0; h < CHUNK_HEIGHT; h++) {
+                            int y = (CHUNK_HEIGHT - 1) - h;
+                            int blk = get_block(&chunks[0], MAX_CHUNKS, (int)start_x, y, (int)start_z);
+                            
+                            // Treat leaves as solid ground too (avoid falling through trees)
+                            if(blk != BLOCK_AIR && blk != 10) { // Found something solid
+                                
+                                // Start checking ABOVE the solid block
+                                float test_y = (float)(y + 1) + 0.1f;
+                                
+                                // Find clear spot
+                                for(int k=0; k<10; k++) {
+                                    // box 0.6 x 1.8
+                                    if(check_collision(&chunks[0], MAX_CHUNKS, start_x, test_y, start_z, 0.6, 1.8)) {
+                                        test_y += 1.0; // Move up if stuck
+                                    } else {
+                                        start_y = test_y;
+                                        break;
+                                    }
+                                }
+                                break; 
+                            }
+                        }
+                    }
+
                     loading_done = 1;
                 }
             }
@@ -854,6 +870,12 @@ fn main() {
             rl::DrawRectangle(sw/2 - 1, sh/2 - 5, 2, 10, rl::RED);
     
             rl::DrawText("Zen Craft", 10, 10, 40, rl::WHITE);
+            
+            // Version
+            let v_text = "v0.0.1 alpha";
+            let v_width = rl::MeasureText(v_text, 20);
+            rl::DrawText(v_text, sw - v_width - 10, 10, 20, rl::WHITE);
+
             rl::DrawText("Select: 1-7", 10, 60, 20, rl::WHITE);
             rl::DrawText(rl::TextFormat("Block: %d", selected_block), 10, 90, 20, rl::WHITE);
             // Debug Info
@@ -863,17 +885,18 @@ fn main() {
                     if(chunks[i].x != -9999) loaded_chunks = loaded_chunks + 1;
                 }
                 
-                rl::DrawFPS(10, 120);
-                rl::DrawText(rl::TextFormat("Chunks: %d / %d (Rendered: %d)", loaded_chunks, MAX_CHUNKS, rendered_chunks), 10, 140, 20, rl::LIME);
-                rl::DrawText(rl::TextFormat("Zibis: %d", MAX_ZIBIS), 10, 160, 20, rl::LIME);
-                rl::DrawText(rl::TextFormat("XYZ: %.2f, %.2f, %.2f", p.x, p.y, p.z), 10, 180, 20, rl::LIME);
+                let dy = 120;
+                rl::DrawFPS(10, dy); dy += 25;
+                rl::DrawText(rl::TextFormat("Chunks: %d / %d (Rendered: %d)", loaded_chunks, MAX_CHUNKS, rendered_chunks), 10, dy, 20, rl::LIME); dy += 25;
+                rl::DrawText(rl::TextFormat("Zibis: %d", MAX_ZIBIS), 10, dy, 20, rl::LIME); dy += 25;
+                rl::DrawText(rl::TextFormat("XYZ: %.2f, %.2f, %.2f", p.x, p.y, p.z), 10, dy, 20, rl::LIME); dy += 25;
                 
                 // Advanced Stats
                 let frame_time_ms = dt * 1000.0;
                 let pending_io = get_pending_req_count();
-                rl::DrawText(rl::TextFormat("Frame: %.2f ms", frame_time_ms), 10, 200, 20, rl::YELLOW);
-                rl::DrawText(rl::TextFormat("Async Q: %d", pending_io), 10, 220, 20, rl::YELLOW);
-                rl::DrawText(rl::TextFormat("Draw Dist: %d", draw_distance), 10, 240, 20, rl::YELLOW);
+                rl::DrawText(rl::TextFormat("Frame: %.2f ms", frame_time_ms), 10, dy, 20, rl::YELLOW); dy += 25;
+                rl::DrawText(rl::TextFormat("Async Q: %d", pending_io), 10, dy, 20, rl::YELLOW); dy += 25;
+                rl::DrawText(rl::TextFormat("Draw Dist: %d", draw_distance), 10, dy, 20, rl::YELLOW); dy += 30;
                 
                 // Clock
                 let hour_float = (day_time * 24.0) + 6.0;
@@ -882,22 +905,22 @@ fn main() {
                 let hour = (int)hour_float;
                 let minute = (int)((hour_float - (float)hour) * 60.0);
                 
-                // Simple AM/PM logic (string literals in ZenC might be tricky with ternary)
-                // Using explicit if/else for safety
+                // Time
                 if (hour == 0) {
-                     rl::DrawText(rl::TextFormat("Time: 12:%02d AM", minute), 10, 265, 20, rl::WHITE);
+                     rl::DrawText(rl::TextFormat("Time: 12:%02d AM", minute), 10, dy, 20, rl::WHITE);
                 } else if (hour < 12) {
-                     rl::DrawText(rl::TextFormat("Time: %d:%02d AM", hour, minute), 10, 265, 20, rl::WHITE);
+                     rl::DrawText(rl::TextFormat("Time: %d:%02d AM", hour, minute), 10, dy, 20, rl::WHITE);
                 } else if (hour == 12) {
-                     rl::DrawText(rl::TextFormat("Time: 12:%02d PM", minute), 10, 265, 20, rl::WHITE);
+                     rl::DrawText(rl::TextFormat("Time: 12:%02d PM", minute), 10, dy, 20, rl::WHITE);
                 } else {
-                     rl::DrawText(rl::TextFormat("Time: %d:%02d PM", hour - 12, minute), 10, 265, 20, rl::WHITE);
+                     rl::DrawText(rl::TextFormat("Time: %d:%02d PM", hour - 12, minute), 10, dy, 20, rl::WHITE);
                 }
+                dy += 30;
 
                 // Profiling (Async/Sync)
                 let prof = get_profiling_stats();
-                rl::DrawText("Profiling (Last Op):", 10, 290, 20, rl::ORANGE);
-                rl::DrawText(rl::TextFormat("Mesh Gen: %.2f ms", prof.mesh_ms), 20, 290, 20, rl::ORANGE);
+                rl::DrawText("Profiling (Last Op):", 10, dy, 20, rl::ORANGE); dy += 25;
+                rl::DrawText(rl::TextFormat("Mesh Gen: %.2f ms", prof.mesh_ms), 20, dy, 20, rl::ORANGE);
                 rl::DrawText(rl::TextFormat("World Gen: %.2f ms", prof.gen_ms), 20, 310, 20, rl::ORANGE);
                 rl::DrawText(rl::TextFormat("Light Prop (Main): %.2f ms", prof.prop_ms), 20, 330, 20, rl::ORANGE);
             }

@@ -20,6 +20,11 @@ struct Player {
     yaw: float;
     pitch: float;
     camera: rl::Camera3D;
+    
+    // Movement State
+    is_flying: int;
+    last_jump_time: double;
+    is_crouching: int;
 }
 
 fn check_collision(chunks: Chunk*, num_chunks: int, x: float, y: float, z: float, w: float, h: float) -> int {
@@ -54,7 +59,12 @@ impl Player {
         p.vy = 0.0;
         p.vz = 0.0;
         p.yaw = 0.0;
+        p.yaw = 0.0;
         p.pitch = 0.0;
+        
+        p.is_flying = 0;
+        p.last_jump_time = 0.0;
+        p.is_crouching = 0;
 
         p.camera = rl::Camera3D{
             position: rl::Vector3{x: x, y: y, z: z},
@@ -104,9 +114,40 @@ impl Player {
             let player_block = get_block(chunks, num_chunks, (int)floor(self.x), (int)floor(self.y + 0.9), (int)floor(self.z));
             let in_water = (player_block == BLOCK_WATER);
             
+            // Input Detection
+            
+            // 1. Crouch / Fly Cancel
+            self.is_crouching = 0;
+            if rl::IsKeyDown(rl::KEY_LEFT_CONTROL) {
+                if self.is_flying {
+                    self.is_flying = 0; // Cancel flight
+                } else {
+                    self.is_crouching = 1;
+                }
+            }
+
+            // 2. Double Jump (Fly Toggle)
+            if rl::IsKeyPressed(rl::KEY_SPACE) {
+                let time = rl::GetTime();
+                if time - self.last_jump_time < 0.3 {
+                    self.is_flying = !self.is_flying;
+                    self.vy = 0.0; // Reset velocity on toggle
+                }
+                self.last_jump_time = time;
+                
+                // Jump if walking
+                if !self.is_flying && check_collision(chunks, num_chunks, self.x, self.y - 0.1, self.z, 0.6, 1.8) {
+                     self.vy = JUMP_FORCE;
+                }
+            }
+            
             // Movement speed modifier
             let speed_mult = 1.0;
-            if in_water {
+            if self.is_flying { 
+                speed_mult = 2.0; 
+            } else if self.is_crouching {
+                speed_mult = 0.3;
+            } else if in_water {
                 speed_mult = 0.5; // Slower in water
             }
 
@@ -121,23 +162,27 @@ impl Player {
                 self.vz = 0.0;
             }
 
-            // Gravity and jump (reduced gravity in water for buoyancy)
-            let gravity_mult = 1.0;
-            if in_water {
-                gravity_mult = 0.3; // Buoyancy effect
-            }
-            self.vy -= (float)GRAVITY * dt * gravity_mult;
-
-            if rl::IsKeyPressed(rl::KEY_SPACE) {
-                 // Only jump if on ground (check slightly below)
-                 if check_collision(chunks, num_chunks, self.x, self.y - 0.1, self.z, 0.6, 1.8) {
-                     self.vy = JUMP_FORCE;
-                 }
+            // Vertical Movement & Gravity
+            if self.is_flying {
+                // Flying Physics
+                self.vy = 0.0; // No gravity
+                if rl::IsKeyDown(rl::KEY_SPACE) { self.vy = MOVE_SPEED * speed_mult; }
+                if rl::IsKeyDown(rl::KEY_LEFT_SHIFT) { self.vy = -MOVE_SPEED * speed_mult; }
+                
+                // Apply friction/drag to horizontal? (Already set directly above)
+            } else {
+                // Walking Physics
+                let gravity_mult = 1.0;
+                if in_water {
+                    gravity_mult = 0.3; // Buoyancy effect
+                }
+                self.vy -= (float)GRAVITY * dt * gravity_mult;
             }
 
             // Physics integration (Separate Axes)
             let box_w = 0.6;
             let box_h = 1.8;
+
 
             // X axis
             self.x += self.vx * dt;
@@ -178,7 +223,12 @@ impl Player {
         let view_y = -sin(self.pitch);
 
         self.camera.position.x = self.x;
-        self.camera.position.y = self.y + 1.6;
+        
+        // Camera Height
+        let eye_height = 1.6;
+        if self.is_crouching { eye_height = 1.3; }
+        
+        self.camera.position.y = self.y + eye_height;
         self.camera.position.z = self.z;
 
         self.camera.target.x = self.camera.position.x + view_x;
