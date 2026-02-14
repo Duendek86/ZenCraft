@@ -59,6 +59,10 @@ raw {
     WorkerConfig worker_high;
     volatile int system_running = 0;
     
+    // Thread handles (stored globally for proper cleanup)
+    zthread_t worker_thread_low;
+    zthread_t worker_thread_high;
+    
     char world_dir[64] = "world";
     Chunk* global_chunks_ptr = NULL;
     int global_num_chunks = 0;
@@ -170,9 +174,8 @@ fn init_persistence(chunks: Chunk*) {
         worker_high.size = 64;
         worker_high.id = 1;
 
-        zthread_t t1, t2;
-        zthread_create(&t1, db_worker, &worker_low);
-        zthread_create(&t2, db_worker, &worker_high);
+        zthread_create(&worker_thread_low, db_worker, &worker_low);
+        zthread_create(&worker_thread_high, db_worker, &worker_high);
         
         pmap_ensure_init();
     }
@@ -413,7 +416,7 @@ fn poll_async_results() {
         
         if(chunks == NULL) return;
         double start_time = GetTime();
-        double time_budget = 0.001; // 1ms budget
+        double time_budget = 0.002; // 2ms budget
         int processed = 0;
         prof_prop_time = 0.0;
         
@@ -440,21 +443,27 @@ fn poll_async_results() {
                     
                     if (queue[i].type == 3) { // MESH BUILT
                          if(idx >= 0 && idx < num_chunks) {
-                             upload_chunk_mesh(&chunks[idx], queue[i].mesh_data);
-                             upload_plant_mesh(&chunks[idx], queue[i].plant_mesh);
+                             // CRITICAL: Check if chunk was recycled (ID changed)
+                             // If recycled, we must NOT upload or unlock the NEW chunk.
+                             if (chunks[idx].x == queue[i].cx && chunks[idx].z == queue[i].cz) {
+                                 upload_chunk_mesh(&chunks[idx], queue[i].mesh_data);
+                                 upload_plant_mesh(&chunks[idx], queue[i].plant_mesh);
+                                 
+                                 chunks[idx].locked--;
+                                 if (chunks[idx].locked < 0) chunks[idx].locked = 0;
+                             }
+                             // Note: If mismatched, we really should free the mesh data in queue[i].mesh_data to avoid leak.
+                             // But we lack a clean API for that here right now. Priorities: Stability first.
                              
-                             chunks[idx].locked--;
-                             if (chunks[idx].locked < 0) chunks[idx].locked = 0;
-                             
-                             // Unlock Neighbors
+                             // Unlock Neighbors using REQUEST coordinates (always valid for the request context)
                              int neighbor_offsets[8] = {-1, 0, 1, 0, 0, -1, 0, 1};
-                             Chunk* c = &chunks[idx];
                              for(int ni = 0; ni < 4; ni++) {
-                                int ncx = c->x + neighbor_offsets[ni * 2];
-                                int ncz = c->z + neighbor_offsets[ni * 2 + 1];
+                                int ncx = queue[i].cx + neighbor_offsets[ni * 2];
+                                int ncz = queue[i].cz + neighbor_offsets[ni * 2 + 1];
                                 int nidx = get_chunk_index(ncx, ncz);
                                 
-                                if(chunks[nidx].x == ncx && chunks[nidx].z == ncz) {
+                                // Safely checked index and coordinate match
+                                if(nidx >= 0 && nidx < num_chunks && chunks[nidx].x == ncx && chunks[nidx].z == ncz) {
                                      chunks[nidx].locked--; 
                                      if (chunks[nidx].locked < 0) chunks[nidx].locked = 0;
                                 }
@@ -465,29 +474,34 @@ fn poll_async_results() {
                     }
                     else if (queue[i].type == 4 || queue[i].type == 5) { // LIGHT CALC/PROP DONE
                          if(idx >= 0 && idx < num_chunks) {
-                             chunks[idx].locked--;
-                             if (chunks[idx].locked < 0) chunks[idx].locked = 0;
+                             // Center Lock
+                             if (chunks[idx].x == queue[i].cx && chunks[idx].z == queue[i].cz) {
+                                 chunks[idx].locked--;
+                                 if (chunks[idx].locked < 0) chunks[idx].locked = 0;
+                                 chunks[idx].mesh_dirty = 1;
+                             }
                              
+                             // Neighbors Lock
                              int neighbor_offsets[8] = {-1, 0, 1, 0, 0, -1, 0, 1};
-                             Chunk* c = &chunks[idx];
                              for(int ni = 0; ni < 4; ni++) {
-                                int ncx = c->x + neighbor_offsets[ni * 2];
-                                int ncz = c->z + neighbor_offsets[ni * 2 + 1];
+                                int ncx = queue[i].cx + neighbor_offsets[ni * 2];
+                                int ncz = queue[i].cz + neighbor_offsets[ni * 2 + 1];
                                 int nidx = get_chunk_index(ncx, ncz);
                                 
-                                if(chunks[nidx].x == ncx && chunks[nidx].z == ncz) {
+                                if(nidx >= 0 && nidx < num_chunks && chunks[nidx].x == ncx && chunks[nidx].z == ncz) {
                                      chunks[nidx].locked--; 
                                      if (chunks[nidx].locked < 0) chunks[nidx].locked = 0;
                                      chunks[nidx].mesh_dirty = 1;
                                 }
                              }
-                             chunks[idx].mesh_dirty = 1;
                              
                              // If this was a high priority light request, chain a high priority mesh rebuild immediately
-                             // This ensures the lighting fix is visible quickly (e.g. on block break)
                              if (queue[i].priority > 0) {
-                                 if(request_mesh_async(idx, queue[i].priority)) {
-                                     chunks[idx].mesh_dirty = 0;
+                                 // Only chain if center chunk still matches!
+                                 if (chunks[idx].x == queue[i].cx && chunks[idx].z == queue[i].cz) {
+                                     if(request_mesh_async(idx, queue[i].priority)) {
+                                         chunks[idx].mesh_dirty = 0;
+                                     }
                                  }
                              }
                          }
@@ -508,8 +522,25 @@ fn poll_async_results() {
                             chunks[idx].plant_count = queue[i].data.plant_count;
                             memcpy(chunks[idx].plants, queue[i].data.plants, sizeof(chunks[idx].plants));
                             
+                            // CRITICAL: Unload OLD models before recycling slot
+                            // This prevents stale DrawModel calls and GPU leaks
+                            if (chunks[idx].mesh_built == 1) {
+                                UnloadModel(chunks[idx].chunk_model);
+                            }
+                            if (chunks[idx].water_mesh_built == 1) {
+                                UnloadModel(chunks[idx].water_model);
+                            }
+                            if (chunks[idx].plant_mesh_built == 1) {
+                                UnloadModel(chunks[idx].plant_model);
+                            }
+                            if (chunks[idx].grass_deco_built != 0) {
+                                UnloadModel(chunks[idx].grass_deco_model);
+                            }
+                            
                             chunks[idx].mesh_dirty = 1;
                             chunks[idx].mesh_built = 0;
+                            chunks[idx].water_mesh_built = 0; // FIX: Was missing! Caused SIGSEGV
+                            chunks[idx].locked = 0;
                             chunks[idx].plant_mesh_built = 0;
                             chunks[idx].grass_deco_built = 0;
                             
@@ -677,7 +708,14 @@ fn load_chunk_into(c_ptr: any, cx: int, cz: int) {
 
 fn cleanup_persistence() {
     raw {
+        // 1. Tell threads to stop
+        system_running = 0;
+        
+        // 2. Wait for threads to fully exit (proper join)
+        zthread_join(worker_thread_low);
+        zthread_join(worker_thread_high);
+        
+        // 3. NOW it is safe to free
         if(io_queue) { zdebug_free(io_queue); io_queue = NULL; }
-        // zmap_destroy_pending_map(&g_pending_map); // Known leak
     }
 }

@@ -16,3 +16,7 @@ def BLOCK_TORCH_N = 11; // Wall North (Z+)
 def BLOCK_TORCH_S = 12; // Wall South (Z-)
 def BLOCK_TORCH_E = 13; // Wall East (X+)
 def BLOCK_TORCH_W = 14; // Wall West (X-)
+
+// Water Levels (Diminishing height)
+def BLOCK_WATER_2 = 15; // 2/3 Height
+def BLOCK_WATER_1 = 16; // 1/3 Height

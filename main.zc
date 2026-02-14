@@ -407,6 +407,15 @@ fn main() {
                 }
             }
 
+
+
+            // --- SIMULATION STEP (Random Ticks) ---
+            for i in 0..MAX_CHUNKS {
+                if chunks[i].x != -9999 && chunks[i].locked == 0 {
+                    tick_chunk(&chunks[i], &chunks[0], MAX_CHUNKS);
+                }
+            }
+
             let requests_this_frame = 0;
             def MAX_REQUESTS_PER_FRAME = 4;
             
@@ -945,7 +954,7 @@ fn main() {
             rl::DrawText("Zen Craft", 10, 10, 40, rl::WHITE);
             
             // Version
-            let v_text = "v0.0.1.3 alpha-dev";
+            let v_text = "v0.0.1.4 alpha-dev";
             let v_width = rl::MeasureText(v_text, 20);
             rl::DrawText(v_text, sw - v_width - 10, 10, 20, rl::WHITE);
 
@@ -1093,4 +1102,7 @@ fn main() {
         rl::EndDrawing();
         rl::WaitTime(0.01);
     }
+    
+    // IMPORTANT: Shutdown persistence threads safely
+    cleanup_persistence();
 }
