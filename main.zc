@@ -33,7 +33,7 @@ import "title_generator.zc";
 import "zibi.zc";
 import "grass_deco.zc";
 
-def VERSION_TEXT = "v0.0.1.5 alpha-dev";
+def VERSION_TEXT = "v0.0.1.6 alpha-dev";
 def MAX_ZIBIS = 10;
 def SAVE_DIR = "world";
 // Removed DRAW_DISTANCE constant, now using variable
@@ -768,7 +768,25 @@ fn main() {
                     rl::DrawCubeWires(rl::Vector3{x: hx + 0.5, y: hy + 0.5, z: hz + 0.5}, 1.01, 1.01, 1.01, rl::BLACK);
         
                     if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_LEFT) {
-                        set_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z, BLOCK_AIR);
+                        // Check if we should fill with water (Underwater breaking)
+                        let fill_block = BLOCK_AIR;
+                        
+                        // Check neighbors for water adjacency (Instant fill)
+                        let n_up = get_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
+                        let n_n = get_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z + 1);
+                        let n_s = get_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z - 1);
+                        let n_e = get_block(&chunks[0], MAX_CHUNKS, hit.x + 1, hit.y, hit.z);
+                        let n_w = get_block(&chunks[0], MAX_CHUNKS, hit.x - 1, hit.y, hit.z);
+                        
+                        if (n_up == BLOCK_WATER || n_up == BLOCK_WATER_1 || n_up == BLOCK_WATER_2 ||
+                            n_n == BLOCK_WATER || n_n == BLOCK_WATER_1 || n_n == BLOCK_WATER_2 ||
+                            n_s == BLOCK_WATER || n_s == BLOCK_WATER_1 || n_s == BLOCK_WATER_2 ||
+                            n_e == BLOCK_WATER || n_e == BLOCK_WATER_1 || n_e == BLOCK_WATER_2 ||
+                            n_w == BLOCK_WATER || n_w == BLOCK_WATER_1 || n_w == BLOCK_WATER_2) {
+                            fill_block = BLOCK_WATER;
+                        }
+
+                        set_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z, fill_block);
                         
                         // Remove plant entities above this block
                         remove_plant_at(&chunks[0], MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
