@@ -33,6 +33,7 @@ import "title_generator.zc";
 import "zibi.zc";
 import "grass_deco.zc";
 
+def VERSION_TEXT = "v0.0.1.5 alpha-dev";
 def MAX_ZIBIS = 10;
 def SAVE_DIR = "world";
 // Removed DRAW_DISTANCE constant, now using variable
@@ -195,9 +196,8 @@ fn main() {
                 }
             }
             rl::EndMode3D();
-
             rl::DrawText("ZEN CRAFT", 100, 100, 60, rl::WHITE);
-            rl::DrawText("v0.0.1 alpha", 100, 160, 20, rl::WHITE);
+            rl::DrawText(VERSION_TEXT, 100, 160, 20, rl::WHITE);
             rl::DrawText("Press ENTER to Play", 150, 400, 30, rl::LIGHTGRAY);
             
             rl::EndDrawing();
@@ -954,9 +954,8 @@ fn main() {
             rl::DrawText("Zen Craft", 10, 10, 40, rl::WHITE);
             
             // Version
-            let v_text = "v0.0.1.4 alpha-dev";
-            let v_width = rl::MeasureText(v_text, 20);
-            rl::DrawText(v_text, sw - v_width - 10, 10, 20, rl::WHITE);
+            let v_width = rl::MeasureText(VERSION_TEXT, 20);
+            rl::DrawText(VERSION_TEXT, sw - v_width - 10, 10, 20, rl::WHITE);
 
             rl::DrawText("Select: 1-7", 10, 60, 20, rl::WHITE);
             rl::DrawText(rl::TextFormat("Block: %d", selected_block), 10, 90, 20, rl::WHITE);

@@ -147,7 +147,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
             q_u[q_idx] = u; \
             q_v[q_idx] = v; \
             q_light[q_idx] = light_val; \
-            if (IS_WATER) q_flag[q_idx] = 255; else q_flag[q_idx] = current_flag; \
+            if (IS_WATER) q_flag[q_idx] = (IS_WATER); else q_flag[q_idx] = current_flag; \
             q_idx++;
 
         // Helper macro to emit one final vertex from buffer
@@ -164,7 +164,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                     w_texcoords[w_v_idx * 2 + 1] = q_v[idx]; \
                     w_colors[w_v_idx * 4 + 0] = ((q_light[idx] & 0xF) * 17); \
                     w_colors[w_v_idx * 4 + 1] = (((q_light[idx] >> 4) & 0xF) * 17); \
-                    w_colors[w_v_idx * 4 + 2] = 255; \
+                    w_colors[w_v_idx * 4 + 2] = q_flag[idx]; \
                     w_colors[w_v_idx * 4 + 3] = 255; \
                     w_v_idx++; \
                 } \
@@ -330,6 +330,9 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         if (n11 > 0) h11 /= (float)n11;
                         if (n01 > 0) h01 /= (float)n01;
                         
+                        // Set water flag: 255 = static water, 192 = moving/expanding water
+                        int water_flag = (btype == BLOCK_WATER) ? 255 : 192;
+
                         // FIX: If water above, force full height to prevent vertical gaps
                         int neighbor_above = get_block(chunks, num_chunks, b_gx, y + 1, b_gz);
                         int water_above = (neighbor_above == BLOCK_WATER || neighbor_above == BLOCK_WATER_2 || neighbor_above == BLOCK_WATER_1);
@@ -341,10 +344,10 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         if (neighbor_above != BLOCK_WATER && neighbor_above != BLOCK_WATER_2 && neighbor_above != BLOCK_WATER_1 && IS_TRANSPARENT_MESH(neighbor_above)) {
                             int light_val; CALC_LIGHT(b_gx, y + 1, b_gz, light_val);
                             SET_UV(0, 0); 
-                            ADD_VERTEX_GENERIC(px, py+h00, pz,     0,1,0, u_min, v_min, light_val, 1);
-                            ADD_VERTEX_GENERIC(px+1, py+h10, pz,   0,1,0, u_max, v_min, light_val, 1);
-                            ADD_VERTEX_GENERIC(px+1, py+h11, pz+1, 0,1,0, u_max, v_max, light_val, 1);
-                            ADD_VERTEX_GENERIC(px, py+h01, pz+1,   0,1,0, u_min, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px, py+h00, pz,     0,1,0, u_min, v_min, light_val, water_flag);
+                            ADD_VERTEX_GENERIC(px+1, py+h10, pz,   0,1,0, u_max, v_min, light_val, water_flag);
+                            ADD_VERTEX_GENERIC(px+1, py+h11, pz+1, 0,1,0, u_max, v_max, light_val, water_flag);
+                            ADD_VERTEX_GENERIC(px, py+h01, pz+1,   0,1,0, u_min, v_max, light_val, water_flag);
                             ADD_QUAD_INDICES(1);
                         }
                         
@@ -357,40 +360,40 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         side_nb = get_block(chunks, num_chunks, b_gx + 1, y, b_gz);
                         if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && WATER_LEVEL(btype) > WATER_LEVEL(side_nb))) {
                              int light_val; CALC_LIGHT(b_gx + 1, y, b_gz, light_val);
-                             ADD_VERTEX_GENERIC(px+1, py, pz,     1,0,0, u_min, v_max, light_val, 1);
-                             ADD_VERTEX_GENERIC(px+1, py+h10, pz,   1,0,0, u_min, v_min, light_val, 1);
-                             ADD_VERTEX_GENERIC(px+1, py+h11, pz+1, 1,0,0, u_max, v_min, light_val, 1);
-                             ADD_VERTEX_GENERIC(px+1, py, pz+1,   1,0,0, u_max, v_max, light_val, 1);
+                             ADD_VERTEX_GENERIC(px+1, py, pz,     1,0,0, u_min, v_max, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px+1, py+h10, pz,   1,0,0, u_min, v_min, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px+1, py+h11, pz+1, 1,0,0, u_max, v_min, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px+1, py, pz+1,   1,0,0, u_max, v_max, light_val, water_flag);
                              ADD_QUAD_INDICES(1);
                         }
                         // -X Side
                         side_nb = get_block(chunks, num_chunks, b_gx - 1, y, b_gz);
                         if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && WATER_LEVEL(btype) > WATER_LEVEL(side_nb))) {
                              int light_val; CALC_LIGHT(b_gx - 1, y, b_gz, light_val);
-                             ADD_VERTEX_GENERIC(px, py, pz,     -1,0,0, u_min, v_max, light_val, 1);
-                             ADD_VERTEX_GENERIC(px, py+h00, pz,   -1,0,0, u_min, v_min, light_val, 1);
-                             ADD_VERTEX_GENERIC(px, py+h01, pz+1, -1,0,0, u_max, v_min, light_val, 1);
-                             ADD_VERTEX_GENERIC(px, py, pz+1,   -1,0,0, u_max, v_max, light_val, 1);
+                             ADD_VERTEX_GENERIC(px, py, pz,     -1,0,0, u_min, v_max, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px, py+h00, pz,   -1,0,0, u_min, v_min, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px, py+h01, pz+1, -1,0,0, u_max, v_min, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px, py, pz+1,   -1,0,0, u_max, v_max, light_val, water_flag);
                              ADD_QUAD_INDICES(1);
                         }
                         // +Z Side
                         side_nb = get_block(chunks, num_chunks, b_gx, y, b_gz + 1);
                         if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && WATER_LEVEL(btype) > WATER_LEVEL(side_nb))) {
                              int light_val; CALC_LIGHT(b_gx, y, b_gz + 1, light_val);
-                             ADD_VERTEX_GENERIC(px, py, pz+1,     0,0,1, u_min, v_max, light_val, 1);
-                             ADD_VERTEX_GENERIC(px+1, py, pz+1,   0,0,1, u_max, v_max, light_val, 1);
-                             ADD_VERTEX_GENERIC(px+1, py+h11, pz+1, 0,0,1, u_max, v_min, light_val, 1);
-                             ADD_VERTEX_GENERIC(px, py+h01, pz+1,   0,0,1, u_min, v_min, light_val, 1);
+                             ADD_VERTEX_GENERIC(px, py, pz+1,     0,0,1, u_min, v_max, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px+1, py, pz+1,   0,0,1, u_max, v_max, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px+1, py+h11, pz+1, 0,0,1, u_max, v_min, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px, py+h01, pz+1,   0,0,1, u_min, v_min, light_val, water_flag);
                              ADD_QUAD_INDICES(1);
                         }
                         // -Z Side
                         side_nb = get_block(chunks, num_chunks, b_gx, y, b_gz - 1);
                         if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && WATER_LEVEL(btype) > WATER_LEVEL(side_nb))) {
                              int light_val; CALC_LIGHT(b_gx, y, b_gz - 1, light_val);
-                             ADD_VERTEX_GENERIC(px, py, pz,     0,0,-1, u_min, v_max, light_val, 1);
-                             ADD_VERTEX_GENERIC(px+1, py, pz,   0,0,-1, u_max, v_max, light_val, 1);
-                             ADD_VERTEX_GENERIC(px+1, py+h10, pz, 0,0,-1, u_max, v_min, light_val, 1);
-                             ADD_VERTEX_GENERIC(px, py+h00, pz,   0,0,-1, u_min, v_min, light_val, 1);
+                             ADD_VERTEX_GENERIC(px, py, pz,     0,0,-1, u_min, v_max, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px+1, py, pz,   0,0,-1, u_max, v_max, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px+1, py+h10, pz, 0,0,-1, u_max, v_min, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px, py+h00, pz,   0,0,-1, u_min, v_min, light_val, water_flag);
                              ADD_QUAD_INDICES(1);
                         }
                         // Bottom face (for waterfalls - close bottom when air below)
@@ -398,10 +401,10 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                             int below = get_block(chunks, num_chunks, b_gx, y - 1, b_gz);
                             if (!IS_WATER_TYPE(below) && IS_TRANSPARENT_MESH(below)) {
                                 int light_val; CALC_LIGHT(b_gx, y - 1, b_gz, light_val);
-                                ADD_VERTEX_GENERIC(px, py, pz+1,     0,-1,0, u_min, v_max, light_val, 1);
-                                ADD_VERTEX_GENERIC(px+1, py, pz+1,   0,-1,0, u_max, v_max, light_val, 1);
-                                ADD_VERTEX_GENERIC(px+1, py, pz,     0,-1,0, u_max, v_min, light_val, 1);
-                                ADD_VERTEX_GENERIC(px, py, pz,       0,-1,0, u_min, v_min, light_val, 1);
+                                ADD_VERTEX_GENERIC(px, py, pz+1,     0,-1,0, u_min, v_max, light_val, water_flag);
+                                ADD_VERTEX_GENERIC(px+1, py, pz+1,   0,-1,0, u_max, v_max, light_val, water_flag);
+                                ADD_VERTEX_GENERIC(px+1, py, pz,     0,-1,0, u_max, v_min, light_val, water_flag);
+                                ADD_VERTEX_GENERIC(px, py, pz,       0,-1,0, u_min, v_min, light_val, water_flag);
                                 ADD_QUAD_INDICES(1);
                             }
                         }
