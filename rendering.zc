@@ -168,6 +168,29 @@ fn init_textures() {
             ImageDraw(&atlas, img_sand, (Rectangle){0,0,img_sand.width,img_sand.height}, (Rectangle){0,h*2,w,h}, WHITE);
             UnloadImage(img_sand);
         }
+
+        // (1,2) Glass Texture (Procedural)
+        {
+            int gx = w;     // Col 1
+            int gy = h * 2; // Row 2
+            
+            // 1. Semi-transparent base
+            ImageDrawRectangle(&atlas, gx, gy, w, h, (Color){200, 230, 255, 40}); // Very light blue tint
+            
+            // 2. Border (Frame)
+            ImageDrawRectangle(&atlas, gx, gy, w, 1, (Color){220, 240, 255, 180}); // Top
+            ImageDrawRectangle(&atlas, gx, gy + h - 1, w, 1, (Color){220, 240, 255, 180}); // Bottom
+            ImageDrawRectangle(&atlas, gx, gy, 1, h, (Color){220, 240, 255, 180}); // Left
+            ImageDrawRectangle(&atlas, gx + w - 1, gy, 1, h, (Color){220, 240, 255, 180}); // Right
+
+            // 3. Streaks / Highlights
+            // streak 1
+            ImageDrawLine(&atlas, gx + 3, gy + 3, gx + 6, gy + 6, (Color){240, 250, 255, 160});
+            ImageDrawLine(&atlas, gx + 4, gy + 3, gx + 7, gy + 6, (Color){240, 250, 255, 100});
+            
+            // streak 2
+            ImageDrawLine(&atlas, gx + 10, gy + 8, gx + 13, gy + 11, (Color){240, 250, 255, 160});
+        }
         
         tex_atlas = LoadTextureFromImage(atlas);
         SetTextureFilter(tex_atlas, TEXTURE_FILTER_POINT);

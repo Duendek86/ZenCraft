@@ -7,7 +7,7 @@ import "chunk.zc";
 import "rendering.zc";
 
 // Use a local macro to be 100% sure BLOCK_WATER (8) is included and no import issues occur
-#define IS_TRANSPARENT_MESH(b) ((b) == 0 || ((b) >= 10 && (b) <= 14) || (b) == 4 || (b) == 6 || (b) == 8 || (b) == 15 || (b) == 16)
+#define IS_TRANSPARENT_MESH(b) ((b) == 0 || ((b) >= 10 && (b) <= 14) || (b) == 17 || (b) == 4 || (b) == 6 || (b) == 8 || (b) == 15 || (b) == 16)
 
 // --- Compute Functions (Thread Safe - CPU Only) ---
 
@@ -46,6 +46,12 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                     if (btype >= 10 && btype <= 14) {
                         // Torches: Always count 6 faces (safe estimate)
                         face_count = face_count + 6;
+                        continue;
+                    }
+
+                    if (btype == BLOCK_GLASS_PANE) {
+                        // Glass Pane: Count as water faces (transparent mesh)
+                        water_face_count = water_face_count + 24; // Generous estimate (post + 4 panes)
                         continue;
                     }
                     
@@ -282,6 +288,207 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                          ADD_VERTEX_GENERIC(top_bx+tw_x, by+th, top_bz+tw_z, 0,1,0, tu_max, tv_max, t_light, 0);
                          ADD_VERTEX_GENERIC(top_bx+tw_x, by+th, top_bz, 0,1,0, tu_max, tv_min, t_light, 0);
                          ADD_QUAD_INDICES(0);
+
+                         continue;
+                    }
+
+
+                    // --- GLASS PANE HANDLING ---
+                    if (btype == BLOCK_GLASS_PANE) {
+                         float tu_min = 0.25f; 
+                         float tu_max = 0.5f; 
+                         // Check alignment for UVs, assuming row 2 (0-indexed) = y 0.666
+                         float tv_min = 0.666666f; 
+                         float tv_max = 1.0f;
+                         
+                         int t_light = 255;
+                         CALC_LIGHT(b_gx, y, b_gz, t_light);
+
+                         // Center Post (Thin) - 10% Thickness
+                         float post_size = 0.10f; // 10%
+                         float post_min = 0.5f - post_size/2.0f;
+                         float post_max = 0.5f + post_size/2.0f;
+                         
+                         // Connections
+                         int c_n = 0; int c_s = 0; int c_e = 0; int c_w = 0;
+                         int nb;
+                         
+                         // Helper: Connects to solid or glass pane
+                         #define CONNECTS(b) (!IS_TRANSPARENT_MESH(b) || (b) == BLOCK_GLASS_PANE)
+                         
+                         nb = get_block(chunks, num_chunks, b_gx, y, b_gz + 1); if(CONNECTS(nb)) c_n = 1;
+                         nb = get_block(chunks, num_chunks, b_gx, y, b_gz - 1); if(CONNECTS(nb)) c_s = 1;
+                         nb = get_block(chunks, num_chunks, b_gx + 1, y, b_gz); if(CONNECTS(nb)) c_e = 1;
+                         nb = get_block(chunks, num_chunks, b_gx - 1, y, b_gz); if(CONNECTS(nb)) c_w = 1;
+
+                         #undef CONNECTS
+                         
+                         // NOTE: Passing '1' as last argument to ADD_VERTEX_GENERIC / ADD_QUAD_INDICES
+                         // sends vertices to 'water_mesh' (transparent mesh).
+
+                         // Draw Center Post
+                         // Top
+                         ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_max, 0,1,0, tu_min, tv_max, t_light, 1); 
+                         ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_max, 0,1,0, tu_max, tv_max, t_light, 1);
+                         ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_min, 0,1,0, tu_max, tv_min, t_light, 1);
+                         ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_min, 0,1,0, tu_min, tv_min, t_light, 1);
+                         ADD_QUAD_INDICES(1);
+                         // Bottom
+                         ADD_VERTEX_GENERIC(px+post_min, py, pz+post_min, 0,-1,0, tu_min, tv_min, t_light, 1); 
+                         ADD_VERTEX_GENERIC(px+post_max, py, pz+post_min, 0,-1,0, tu_max, tv_min, t_light, 1);
+                         ADD_VERTEX_GENERIC(px+post_max, py, pz+post_max, 0,-1,0, tu_max, tv_max, t_light, 1);
+                         ADD_VERTEX_GENERIC(px+post_min, py, pz+post_max, 0,-1,0, tu_min, tv_max, t_light, 1);
+                         ADD_QUAD_INDICES(1);
+                         
+                         // Post Faces (only if not connected to avoid z-fighting or redundant draws)
+                         if(!c_e) { // East Face of Post
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_max, 1,0,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_max, 1,0,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_min, 1,0,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_min, 1,0,0, tu_max, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
+                         if(!c_w) { // West Face
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_min, -1,0,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_min, -1,0,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_max, -1,0,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_max, -1,0,0, tu_max, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
+                         if(!c_n) { // North Face (Z+)
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_max, 0,0,1, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_max, 0,0,1, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_max, 0,0,1, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_max, 0,0,1, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
+                         if(!c_s) { // South Face (Z-)
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_min, 0,0,-1, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_min, 0,0,-1, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_min, 0,0,-1, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_min, 0,0,-1, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
+
+                         // North Pane (Z+)
+                         if(c_n) {
+                             // Top
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+1.0, 0,1,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+1.0, 0,1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_max, 0,1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_max, 0,1,0, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             // Bottom
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_max, 0,-1,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_max, 0,-1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+1.0, 0,-1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+1.0, 0,-1,0, tu_min, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             
+                             // East Side of Pane
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+1.0, 1,0,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+1.0, 1,0,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_max, 1,0,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_max, 1,0,0, tu_max, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             
+                             // West Side of Pane
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_max, -1,0,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_max, -1,0,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+1.0, -1,0,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+1.0, -1,0,0, tu_max, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
+                         
+                         // South Pane (Z-)
+                         if(c_s) {
+                             // Top
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_min, 0,1,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_min, 0,1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+0.0, 0,1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+0.0, 0,1,0, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             // Bottom
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+0.0, 0,-1,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+0.0, 0,-1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_min, 0,-1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_min, 0,-1,0, tu_min, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             
+                             // East Side
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_min, 1,0,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_min, 1,0,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+0.0, 1,0,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+0.0, 1,0,0, tu_max, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             
+                             // West Side
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+0.0, -1,0,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+0.0, -1,0,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_min, -1,0,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_min, -1,0,0, tu_max, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
+                         
+                         // East Pane (X+)
+                         if(c_e) {
+                             // Top
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_max, 0,1,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+1.0, py+1, pz+post_max, 0,1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+1.0, py+1, pz+post_min, 0,1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_min, 0,1,0, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             // Bottom
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_min, 0,-1,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+1.0, py, pz+post_min, 0,-1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+1.0, py, pz+post_max, 0,-1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_max, 0,-1,0, tu_min, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             
+                             // North Side (Z+)
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_max, 0,0,1, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+1.0, py, pz+post_max, 0,0,1, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+1.0, py+1, pz+post_max, 0,0,1, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_max, 0,0,1, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             
+                             // South Side (Z-)
+                             ADD_VERTEX_GENERIC(px+1.0, py, pz+post_min, 0,0,-1, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_min, 0,0,-1, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_min, 0,0,-1, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+1.0, py+1, pz+post_min, 0,0,-1, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
+                         
+                         // West Pane (X-)
+                         if(c_w) {
+                             // Top
+                             ADD_VERTEX_GENERIC(px+0.0, py+1, pz+post_max, 0,1,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_max, 0,1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_min, 0,1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+0.0, py+1, pz+post_min, 0,1,0, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             // Bottom
+                             ADD_VERTEX_GENERIC(px+0.0, py, pz+post_min, 0,-1,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_min, 0,-1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_max, 0,-1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+0.0, py, pz+post_max, 0,-1,0, tu_min, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             
+                             // North Side (Z+)
+                             ADD_VERTEX_GENERIC(px+0.0, py, pz+post_max, 0,0,1, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_max, 0,0,1, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_max, 0,0,1, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+0.0, py+1, pz+post_max, 0,0,1, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             
+                             // South Side (Z-)
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_min, 0,0,-1, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+0.0, py, pz+post_min, 0,0,-1, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+0.0, py+1, pz+post_min, 0,0,-1, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_min, 0,0,-1, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
 
                          continue;
                     }

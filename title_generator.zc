@@ -1,15 +1,18 @@
-//> Title Screen Chunk Generator
+//> Title Screen Generator - Zen Island Edition
 import "raylib.h" as rl;
 import "chunk.zc";
 import "persistence.zc";
-import "blocks.zc";
+import "blocks.zc"; // [cite: 1]
+
+let title_tick_accum: float = 0.0;
 
 // Helper to set block in raw ChunkData
 fn set_block_raw(data: ChunkData*, x: int, y: int, z: int, type: int) {
     if x >= 0 && x < 16 && y >= 0 && y < CHUNK_HEIGHT && z >= 0 && z < 16 {
         data.blocks[x][y][z] = type;
-        if type == BLOCK_AIR {
-            data.light[x][y][z] = 15; // Assume skylight for simplicity in air
+        // Simple lighting logic: Air and Water let light through
+        if type == 0 || type == 8 || type == 6 { // Air, Water, Leaves let light in
+            data.light[x][y][z] = 15; 
         } else {
             data.light[x][y][z] = 0;
         }
@@ -17,17 +20,24 @@ fn set_block_raw(data: ChunkData*, x: int, y: int, z: int, type: int) {
 }
 
     raw {
-    // Define constants for C-scope
-    #define TITLE_BLOCK_AIR 0
-    #define TITLE_BLOCK_DIRT 1
-    #define TITLE_BLOCK_GRASS 2
-    #define TITLE_BLOCK_STONE 3
-    #define TITLE_BLOCK_TALLGRASS 4
-    #define TITLE_BLOCK_LOG 5
-    #define TITLE_BLOCK_LEAVES 6
-    #define TITLE_BLOCK_GOLD_ORE 7
+    // Forward declare helper
+    void set_block_raw(ChunkData* data, int x, int y, int z, int type);
 
-    // Simple pseudo-random noise
+    // --- MAPPING CONSTANTS TO BLOCKS.ZC ---
+    // Using definitions from your uploaded file
+    #define T_AIR 0
+    #define T_DIRT 1      // [cite: 1]
+    #define T_GRASS 2     // [cite: 2]
+    #define T_STONE 3     // [cite: 2]
+    #define T_TALLGRASS 4 // [cite: 2]
+    #define T_LOG 5       // [cite: 2]
+    #define T_LEAVES 6    // [cite: 3]
+    #define T_GOLD_ORE 7  // [cite: 3]
+    #define T_WATER 8     // [cite: 3]
+    #define T_SAND 9      // [cite: 3]
+    #define T_TORCH 10    // [cite: 4]
+
+    // --- NOISE HELPERS ---
     float noise2(int x, int z) {
         int n = x + z * 57;
         n = (n << 13) ^ n;
@@ -51,184 +61,250 @@ fn set_block_raw(data: ChunkData*, x: int, y: int, z: int, type: int) {
         return i1*(1-fz) + i2*fz;
     }
 
-    void draw_letter(ChunkData* data, int start_x, int y_base, int z_pos, char letter, int block_type);
-    
-    void generate_title_chunk(ChunkData* data, int x, int z) {
-        // Procedural Terrain Generation
-        for(int cx=0; cx<16; cx++) {
-            for(int cz=0; cz<16; cz++) {
-                 // Global coordinates
-                 int gx = x * 16 + cx;
-                 int gz = z * 16 + cz;
-                 
-                 // Noise for height
-                 float n = smooth_noise(gx * 0.1, gz * 0.1);
-                 int h = 4 + (int)(n * 4.0); // Height 2 to 6?
-                 if (h < 2) h = 2;
-                 
-                 // Water Level at y=3
-                 
-                 for(int cy=0; cy<CHUNK_HEIGHT; cy++) {
-                     int type = TITLE_BLOCK_AIR;
-                     
-                     if (cy <= h) {
-                         if (cy < 3) {
-                             type = TITLE_BLOCK_STONE; // Base
-                         } else if (cy == h) {
-                             // Surface
-                             if (h <= 3) type = 9; // SAND (using raw ID 9 as TITLE_BLOCK_SAND not defined?)
-                             // Wait, blocks.zc defines BLOCK_SAND = 9.
-                             // I should define TITLE_BLOCK_SAND 9 in raw block
-                             else type = TITLE_BLOCK_GRASS;
-                         } else {
-                             type = TITLE_BLOCK_DIRT;
-                         }
-                     }
-                     else if (cy <= 3) {
-                         type = 8; // BLOCK_WATER
-                     }
-                     
-                     data->blocks[cx][cy][cz] = type;
-                     
-                     if (type == TITLE_BLOCK_AIR || type == 8 || type == 6 || type == 4) { // Transparent
-                         data->light[cx][cy][cz] = 15;
-                     } else {
-                         data->light[cx][cy][cz] = 0;
-                     }
-                 }
-                 
-                 // Trees?
-                 if (data->blocks[cx][h][cz] == TITLE_BLOCK_GRASS && cx > 1 && cx < 14 && cz > 1 && cz < 14) {
-                     // Random tree
-                     int seed = gx * 123 + gz * 432;
-                     seed = (seed << 13) ^ seed;
-                     if ((seed % 100) < 5) { // 5% chance
-                         // Draw Simple Tree
-                         int th = 4 + (seed % 3);
-                         // Trunk
-                         for(int i=1; i<=th; i++) {
-                             if(h+i < 32) data->blocks[cx][h+i][cz] = TITLE_BLOCK_LOG;
-                         }
-                         // Leaves
-                         int lh = h + th;
-                         for(int lx=-2; lx<=2; lx++) {
-                             for(int lz=-2; lz<=2; lz++) {
-                                 for(int ly=0; ly<2; ly++) {
-                                     if (abs(lx)+abs(lz) <= 2) { // Diamond shape
-                                          int tx = cx+lx;
-                                          int tz = cz+lz;
-                                          int ty = lh+ly - 1;
-                                          if(tx>=0 && tx<16 && tz>=0 && tz<16 && ty<32) {
-                                              if(data->blocks[tx][ty][tz] == TITLE_BLOCK_AIR)
-                                                  data->blocks[tx][ty][tz] = TITLE_BLOCK_LEAVES;
-                                          }
-                                     }
-                                 }
-                             }
-                         }
-                     }
-                 }
+    // --- TREE GENERATION ---
+    void draw_classic_tree(ChunkData* data, int x, int y, int z) {
+        int height = 5 + (x % 2); 
+        // Trunk
+        for(int i=0; i<height; i++) {
+            if(y+i < CHUNK_HEIGHT) set_block_raw(data, x, y+i, z, T_LOG);
+        }
+        
+        // Leaves
+        int top = y + height;
+        for(int ly=0; ly<=1; ly++) {
+            for(int lx=-2; lx<=2; lx++) {
+                for(int lz=-2; lz<=2; lz++) {
+                    if (abs(lx) + abs(lz) <= 3)
+                         set_block_raw(data, x+lx, top-ly, z+lz, T_LEAVES);
+                }
             }
         }
-        
-        data->plant_count = 0;
-        
-        // "ZEN" (Gold) at Top (y=16)
-        // Centered in Chunk 0
-        int z_pos = 8;
-        
-        if (x == 0 && z == 0) {
-            int y_base = 16;
-            int b = TITLE_BLOCK_GOLD_ORE;
-            
-            draw_letter(data, 1, y_base, z_pos, 'Z', b);
-            draw_letter(data, 6, y_base, z_pos, 'E', b);
-            draw_letter(data, 11, y_base, z_pos, 'N', b);
-        }
-        
-        // "CRAFT" (Log/Stone) at Bottom (y=9)
-        int y_craft = 9;
-        int b_craft = TITLE_BLOCK_LOG;
-        
-        // C: Start -4. (cx=12 in Chunk -1)
-        if (x == -1 && z == 0) {
-            draw_letter(data, 12, y_craft, z_pos, 'C', b_craft);
-        }
-        
-        if (x == 0 && z == 0) {
-             draw_letter(data, 1, y_craft, z_pos, 'R', b_craft);
-             draw_letter(data, 6, y_craft, z_pos, 'A', b_craft);
-             draw_letter(data, 11, y_craft, z_pos, 'F', b_craft);
-        }
-        
-        if (x == 1 && z == 0) {
-            draw_letter(data, 0, y_craft, z_pos, 'T', b_craft);
-        }
-    }
-    
-    void draw_vertical_line(ChunkData* data, int x, int y, int z, int h, int b) {
-        for(int i=0; i<h; i++) {
-            if(x>=0 && x<16) data->blocks[x][y+i][z] = b;
-        }
-    }
-    
-    void draw_horizontal_line(ChunkData* data, int x, int y, int z, int w, int b) {
-        for(int i=0; i<w; i++) {
-            if((x+i)>=0 && (x+i)<16) data->blocks[x+i][y][z] = b;
-        }
+        // Top cap
+        set_block_raw(data, x, top+1, z, T_LEAVES);
+        set_block_raw(data, x+1, top+1, z, T_LEAVES);
+        set_block_raw(data, x-1, top+1, z, T_LEAVES);
+        set_block_raw(data, x, top+1, z+1, T_LEAVES);
+        set_block_raw(data, x, top+1, z-1, T_LEAVES);
     }
 
-    void draw_letter(ChunkData* data, int x, int y, int z, char letter, int b) {
-        // 4x5 Font
+    // --- TEXT GENERATION ---
+    int get_text_block(int gx, int gy, int gz) {
+        // Center text on the island
+        int z_plane = 8; 
+        if (gz != z_plane) return 0;
+
+        // Position adjusted for new island height
+        int y_zen = 16;   // High up
+        int y_craft = 10; // Slightly lower
         
-        if (letter == 'Z') {
-            draw_horizontal_line(data, x, y+4, z, 4, b); // Top
-            draw_horizontal_line(data, x, y, z, 4, b);   // Bottom
-            // Diagonal
-            if(x+3 < 16) data->blocks[x+3][y+4][z] = b;
-            if(x+2 < 16) data->blocks[x+2][y+3][z] = b;
-            if(x+1 < 16) data->blocks[x+1][y+2][z] = b;
-            if(x < 16) data->blocks[x][y+1][z] = b;
+        // --- ZEN --- (Gold)
+        if (gy >= y_zen && gy < y_zen + 5) {
+            int ly = gy - y_zen;
+            // Z (Starts at x = -6)
+            int lx = gx - (-6); 
+            if (lx >= 0 && lx < 4) {
+                 if (ly==0 || ly==4) return T_GOLD_ORE;
+                 if (lx == (4-1-ly) ) return T_GOLD_ORE; 
+            }
+            // E (Starts at x = -1)
+            lx = gx - (-1);
+            if (lx >= 0 && lx < 4) {
+                if (lx==0) return T_GOLD_ORE;
+                if (ly==0 || ly==2 || ly==4) return T_GOLD_ORE;
+            }
+            // N (Starts at x = 4)
+            lx = gx - (4);
+            if (lx >= 0 && lx < 4) {
+                if (lx==0 || lx==3) return T_GOLD_ORE;
+                if (lx == ly && lx < 3) return T_GOLD_ORE;
+            }
         }
-        else if (letter == 'E') {
-            draw_vertical_line(data, x, y, z, 5, b);
-            draw_horizontal_line(data, x, y+4, z, 4, b);
-            draw_horizontal_line(data, x, y+2, z, 3, b);
-            draw_horizontal_line(data, x, y, z, 4, b);
+
+        // --- CRAFT --- (Log/Stone)
+        if (gy >= y_craft && gy < y_craft + 5) {
+            int ly = gy - y_craft;
+            int mat = T_LOG;
+            
+            // C (x = -10)
+            int lx = gx - (-10);
+            if (lx >= 0 && lx < 4) {
+                if (ly>0 && ly<4 && lx==0) return mat;
+                if ((ly==0 || ly==4) && lx>0) return mat;
+            }
+            // R (x = -5)
+            lx = gx - (-5);
+            if (lx >= 0 && lx < 4) {
+                if (lx==0) return mat;
+                if ((ly==2 || ly==4) && lx<3) return mat;
+                if (ly==3 && lx==3) return mat;
+                if (ly>1 && lx==3 && ly!=3) return 0; 
+                if (ly==1 && lx==3) return mat; 
+            }
+            // A (x = 0)
+            lx = gx - (0);
+            if (lx >= 0 && lx < 4) {
+                 if (ly!=4 && (lx==0 || lx==3)) return mat;
+                 if (ly==4 && (lx>0 && lx<3)) return mat;
+                 if (ly==2) return mat;
+            }
+            // F (x = 5)
+            lx = gx - (5);
+            if (lx >= 0 && lx < 4) {
+                if (lx==0) return mat;
+                if (ly==4 || ly==2) return mat;
+            }
+            // T (x = 9)
+            lx = gx - (9);
+            if (lx >= 0 && lx < 3) {
+                if (lx==1) return mat;
+                if (ly==4) return mat;
+            }
         }
-        else if (letter == 'N') {
-            draw_vertical_line(data, x, y, z, 5, b);
-            draw_vertical_line(data, x+3, y, z, 5, b);
-            if(x+1 < 16) data->blocks[x+1][y+3][z] = b;
-            if(x+2 < 16) data->blocks[x+2][y+2][z] = b;
+        return 0;
+    }
+
+    // --- MAIN GENERATOR ---
+    void generate_title_chunk(ChunkData* data, int chunk_x, int chunk_z) {
+        int WATER_LEVEL = 4;
+        
+        for(int cx=0; cx<16; cx++) {
+            for(int cz=0; cz<16; cz++) {
+                int gx = chunk_x * 16 + cx;
+                int gz = chunk_z * 16 + cz;
+                
+                // --- INVERTED SHAPE: ISLAND ---
+                float dist = sqrt(gx*gx + gz*gz);
+                
+                // Base Noise
+                float n_terrain = smooth_noise(gx * 0.04, gz * 0.04);
+                
+                // Island Formula: Max Height minus Distance
+                // Starts high at center (approx 12-14), drops to negative
+                float island_base = 14.0 - (dist * 0.6); 
+                
+                int h = (int)(island_base + (n_terrain * 4.0));
+                
+                // Clamp limits
+                if (h < 2) h = 2; // Ocean floor minimum
+                if (h > 30) h = 30;
+
+                // Block Loop
+                for(int cy=0; cy<CHUNK_HEIGHT; cy++) {
+                    int type = T_AIR;
+                    
+                    // Terrain
+                    if (cy <= h) {
+                        if (cy == 0) type = T_STONE; // Bedrock placeholder
+                        else if (cy < h - 3) type = T_STONE;
+                        else {
+                            // Surface Layer
+                            if (h <= WATER_LEVEL + 1) type = T_SAND; // Beach level
+                            else type = T_GRASS; // High ground
+                        }
+                    }
+                    // Water
+                    else if (cy <= WATER_LEVEL) {
+                        type = T_WATER;
+                    }
+
+                    // Text Overlay
+                    int text_b = get_text_block(gx, cy, gz);
+                    if (text_b != 0) type = text_b;
+
+                    data->blocks[cx][cy][cz] = type;
+
+                    // Light
+                    if (type == T_AIR || type == T_WATER || type == T_LEAVES || type == T_TALLGRASS) {
+                        data->light[cx][cy][cz] = 15;
+                    } else {
+                        data->light[cx][cy][cz] = 0;
+                    }
+                }
+                
+                // Vegetation (Only on Grass, above water)
+                if (h > WATER_LEVEL + 1 && data->blocks[cx][h][cz] == T_GRASS) {
+                    // Avoid putting trees inside the text
+                    if (gz < 7 || gz > 9) {
+                        float n_veg = smooth_noise(gx * 0.5, gz * 0.5);
+                        
+                        // Tallgrass [cite: 2]
+                        if (n_veg > 0.2 && (gx+gz)%3 != 0) { 
+                             if(h+1 < CHUNK_HEIGHT) set_block_raw(data, cx, h+1, cz, T_TALLGRASS);
+                        }
+                        
+                        // Trees
+                        if (n_veg > 0.7) {
+                            // Spacing check
+                            if (cx > 2 && cx < 13 && cz > 2 && cz < 13) {
+                                draw_classic_tree(data, cx, h+1, cz);
+                            }
+                        }
+                    }
+                }
+                
+                // Torches (Front of Text)
+                // Text is approx z=8. Focus on z=10 area.
+                if (gz == 10 && (gx % 5 == 0) && gx >= -5 && gx <= 5) {
+                    // Place torch at x=-5, 0, 5 at z=10
+                     if (h > WATER_LEVEL && h < CHUNK_HEIGHT - 1) {
+                         if (data->blocks[cx][h+1][cz] == T_AIR) {
+                             set_block_raw(data, cx, h+1, cz, T_TORCH);
+                         }
+                     }
+                }
+            }
         }
-        else if (letter == 'C') {
-             draw_vertical_line(data, x, y+1, z, 3, b);
-             draw_horizontal_line(data, x+1, y, z, 3, b);
-             draw_horizontal_line(data, x+1, y+4, z, 3, b);
+    }
+}
+
+// Standard Update Function (No changes needed here usually, just calls generator)
+fn update_title_screen(chunks: Chunk*, num_chunks: int, dt: float) {
+    for x in -1..1 {
+         for z in -1..1 {
+             let idx = get_chunk_index(x, z);
+             if idx >= 0 && idx < num_chunks {
+                 if chunks[idx].x != x || chunks[idx].z != z {
+                     chunks[idx].x = x;
+                     chunks[idx].z = z;
+                     chunks[idx].mesh_built = 0;
+                     
+                     raw {
+                         ChunkData d;
+                         void generate_title_chunk(ChunkData* data, int x, int z);
+                         
+                         memset(d.blocks, 0, sizeof(d.blocks));
+                         memset(d.light, 0, sizeof(d.light));
+                         d.plant_count = 0;
+                         
+                         generate_title_chunk(&d, x, z);
+                         
+                         memcpy(chunks[idx].blocks, d.blocks, sizeof(chunks[idx].blocks));
+                         // Allow lighting engine to set light later.
+                         // But we copy 0/15 initial values for now.
+                         memcpy(chunks[idx].light, d.light, sizeof(chunks[idx].light));
+                     }
+                     
+                     // Enable Full Lighting Calculation!
+                     // This fixes flat lighting by adding shadows and torch light.
+                     recalculate_chunk_lighting(&chunks[idx], chunks, num_chunks);
+                     
+                     chunks[idx].plant_count = 0;
+                     chunks[idx].mesh_dirty = 1;
+                 }
+             }
+         }
+    }
+    
+    title_tick_accum = title_tick_accum + dt;
+    while title_tick_accum >= 0.05 {
+        for x in -1..1 {
+             for z in -1..1 {
+                 let idx = get_chunk_index(x, z);
+                 if idx >= 0 && idx < num_chunks && chunks[idx].x != -9999 {
+                     tick_chunk(&chunks[idx], chunks, num_chunks);
+                 }
+             }
         }
-         else if (letter == 'R') {
-            draw_vertical_line(data, x, y, z, 5, b);
-            draw_horizontal_line(data, x, y+4, z, 3, b);
-            draw_horizontal_line(data, x, y+2, z, 3, b);
-            if(x+3<16) data->blocks[x+3][y+3][z] = b;
-            if(x+3<16) data->blocks[x+3][y][z] = b;
-            if(x+2<16) data->blocks[x+2][y+1][z] = b;
-        }
-        else if (letter == 'A') {
-             draw_vertical_line(data, x, y, z, 4, b);
-             draw_vertical_line(data, x+3, y, z, 4, b);
-             draw_horizontal_line(data, x+1, y+4, z, 2, b);
-             draw_horizontal_line(data, x, y+2, z, 4, b);
-        }
-        else if (letter == 'F') {
-            draw_vertical_line(data, x, y, z, 5, b);
-            draw_horizontal_line(data, x, y+4, z, 4, b);
-            draw_horizontal_line(data, x, y+2, z, 3, b);
-        }
-         else if (letter == 'T') {
-            draw_vertical_line(data, x+2, y, z, 5, b);
-            draw_horizontal_line(data, x, y+4, z, 5, b);
-        }
+        title_tick_accum = title_tick_accum - 0.05;
     }
 }

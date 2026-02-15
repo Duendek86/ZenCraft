@@ -8,7 +8,7 @@ import "lighting.zc";
 import "rendering.zc";
 import "grass_deco.zc";
 
-#define IS_TRANSPARENT(b) ((b) == BLOCK_AIR || ((b) >= 10 && (b) <= 14) || (b) == BLOCK_TALLGRASS || (b) == BLOCK_LEAVES || (b) == BLOCK_WATER || (b) == BLOCK_WATER_2 || (b) == BLOCK_WATER_1)
+#define IS_TRANSPARENT(b) ((b) == BLOCK_AIR || ((b) >= 10 && (b) <= 14) || (b) == BLOCK_GLASS_PANE || (b) == BLOCK_TALLGRASS || (b) == BLOCK_LEAVES || (b) == BLOCK_WATER || (b) == BLOCK_WATER_2 || (b) == BLOCK_WATER_1)
 
 // Externs
 extern fn rand() -> int;

@@ -6,6 +6,7 @@ import "persistence_gen.zc";
 import "persistence_io.zc";
 import "persistence_mesh.zc";
 import "persistence_light.zc";
+import "title_generator.zc";
 
 raw {
     #include "pending_map.h"
