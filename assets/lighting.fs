@@ -187,10 +187,12 @@ void main()
     if (length(fogColor) < 0.1) fogColor = vec3(0.01, 0.01, 0.02);
     resultColor = mix(fogColor, resultColor, vVisibility);
 
-    // Tone Mapping (Aces Film approximation simple para mejor contraste)
-    resultColor = resultColor / (resultColor + vec3(1.0));
-    // Gamma
-    resultColor = pow(resultColor, vec3(1.0/2.2));
+    // Tone Mapping & Gamma REMOVED for vibrant colors
+    // resultColor = resultColor / (resultColor + vec3(1.0));
+    // resultColor = pow(resultColor, vec3(1.0/2.2));
+    
+    // Clamp to avoid artifacts
+    resultColor = clamp(resultColor, 0.0, 1.0);
     
     finalColor = vec4(resultColor, finalAlpha);
 }

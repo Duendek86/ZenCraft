@@ -300,7 +300,7 @@ fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
                                 
                                 // Floor
                                 if by == hy {
-                                     data.blocks[lx][by][lz] = BLOCK_LOG; // Wood Floor
+                                     data.blocks[lx][by][lz] = BLOCK_COBBLESTONE; // Cobble Floor (or Planks)
                                      continue;
                                 }
                                 
@@ -314,9 +314,9 @@ fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
                                     } else {
                                         // Windows: Middle of wall, height +2
                                         if by == hy + 2 && (bx == hx || bz == hz) {
-                                             data.blocks[lx][by][lz] = BLOCK_AIR; // Window
+                                             data.blocks[lx][by][lz] = BLOCK_GLASS_PANE; // Window
                                         } else {
-                                             data.blocks[lx][by][lz] = BLOCK_STONE;
+                                             data.blocks[lx][by][lz] = BLOCK_PLANKS; // Plank Walls
                                         }
                                     }
                                 } else {
@@ -327,8 +327,14 @@ fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
                             
                             // Roof (Simple Slab/Flat for now or Pyramid)
                             let roof_y = hy + house_h;
+
                             if roof_y < CHUNK_HEIGHT {
-                                data.blocks[lx][roof_y][lz] = BLOCK_LOG; // Flat roof
+                                data.blocks[lx][roof_y][lz] = BLOCK_COBBLESTONE; // Flat roof
+                                
+                                // Decorative Crystal on center of roof
+                                if bx == hx && bz == hz && (roof_y + 1) < CHUNK_HEIGHT {
+                                    data.blocks[lx][roof_y + 1][lz] = BLOCK_CRYSTAL;
+                                }
                             }
                             
                             // Foundation (Down to -4 from floor)
@@ -337,7 +343,7 @@ fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
                                 if fy >= 0 {
                                     let existing = data.blocks[lx][fy][lz];
                                     if existing == BLOCK_AIR || existing == BLOCK_WATER || existing == BLOCK_TALLGRASS {
-                                        data.blocks[lx][fy][lz] = BLOCK_STONE; // Cobble foundation
+                                        data.blocks[lx][fy][lz] = BLOCK_COBBLESTONE; // Cobble foundation
                                     } else {
                                         break; // Hit ground
                                     }

@@ -104,7 +104,7 @@ fn set_block_raw(data: ChunkData*, x: int, y: int, z: int, type: int) {
             int lx = gx - (-6); 
             if (lx >= 0 && lx < 4) {
                  if (ly==0 || ly==4) return T_GOLD_ORE;
-                 if (lx == (4-1-ly) ) return T_GOLD_ORE; 
+                 if (lx == ly ) return T_GOLD_ORE; 
             }
             // E (Starts at x = -1)
             lx = gx - (-1);

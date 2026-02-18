@@ -7,7 +7,7 @@ import "chunk.zc";
 import "rendering.zc";
 
 // Use a local macro to be 100% sure BLOCK_WATER (8) is included and no import issues occur
-#define IS_TRANSPARENT_MESH(b) ((b) == 0 || ((b) >= 10 && (b) <= 14) || (b) == 17 || (b) == 4 || (b) == 6 || (b) == 8 || (b) == 15 || (b) == 16)
+#define IS_TRANSPARENT_MESH(b) ((b) == 0 || ((b) >= 10 && (b) <= 14) || (b) == 17 || (b) == 4 || (b) == 6 || (b) == 8 || (b) == 15 || (b) == 16 || (b) == 18)
 
 // --- Compute Functions (Thread Safe - CPU Only) ---
 
@@ -49,10 +49,24 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         continue;
                     }
 
+
                     if (btype == BLOCK_GLASS_PANE) {
                         // Glass Pane: Count as water faces (transparent mesh)
                         water_face_count = water_face_count + 24; // Generous estimate (post + 4 panes)
                         continue;
+                    }
+
+                    // Crystal: Count as water faces (transparent mesh)
+                    if (btype == BLOCK_CRYSTAL) {
+                         // Full block count (6 faces max)
+                         int neighbor;
+                         neighbor = get_block(chunks, num_chunks, b_gx + 1, y, b_gz); if (IS_TRANSPARENT_MESH(neighbor) && neighbor != BLOCK_CRYSTAL) water_face_count++;
+                         neighbor = get_block(chunks, num_chunks, b_gx - 1, y, b_gz); if (IS_TRANSPARENT_MESH(neighbor) && neighbor != BLOCK_CRYSTAL) water_face_count++;
+                         neighbor = get_block(chunks, num_chunks, b_gx, y + 1, b_gz); if (IS_TRANSPARENT_MESH(neighbor) && neighbor != BLOCK_CRYSTAL) water_face_count++;
+                         neighbor = get_block(chunks, num_chunks, b_gx, y - 1, b_gz); if (IS_TRANSPARENT_MESH(neighbor) && neighbor != BLOCK_CRYSTAL) water_face_count++;
+                         neighbor = get_block(chunks, num_chunks, b_gx, y, b_gz + 1); if (IS_TRANSPARENT_MESH(neighbor) && neighbor != BLOCK_CRYSTAL) water_face_count++;
+                         neighbor = get_block(chunks, num_chunks, b_gx, y, b_gz - 1); if (IS_TRANSPARENT_MESH(neighbor) && neighbor != BLOCK_CRYSTAL) water_face_count++;
+                         continue;
                     }
                     
                     // Count water faces separately
@@ -226,9 +240,9 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                     
                     #define SET_UV(c, r) \
                         u_min = (float)(c) * 0.25f; \
-                        v_min = (float)(r) * 0.333333f; \
+                        v_min = (float)(r) * 0.25f; \
                         u_max = u_min + 0.25f; \
-                        v_max = v_min + 0.333333f;
+                        v_max = v_min + 0.25f;
 
                     #define CALC_LIGHT(gx, gy, gz, v) (v) = get_light_levels(chunks, num_chunks, (gx), (gy), (gz))
 
@@ -236,9 +250,9 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                     if (btype >= 10 && btype <= 14) {
                          float tu_min = 0.75; 
                          float tu_max = 1.0; 
-                         // 3-row atlas: 0.3333 to 0.6666
-                         float tv_min = 0.333333; 
-                         float tv_max = 0.666666;
+                         // 4-row atlas: 0.25 to 0.50
+                         float tv_min = 0.25; 
+                         float tv_max = 0.50;
                          
                          int t_light = 255; 
                          float tw_x = 0.125; float tw_z = 0.125; float th = 0.5;
@@ -297,9 +311,9 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                     if (btype == BLOCK_GLASS_PANE) {
                          float tu_min = 0.25f; 
                          float tu_max = 0.5f; 
-                         // Check alignment for UVs, assuming row 2 (0-indexed) = y 0.666
-                         float tv_min = 0.666666f; 
-                         float tv_max = 1.0f;
+                         // Row 2 (0-indexed) = y 0.5 to 0.75 in 4-row atlas
+                         float tv_min = 0.5f; 
+                         float tv_max = 0.75f;
                          
                          int t_light = 255;
                          CALC_LIGHT(b_gx, y, b_gz, t_light);
@@ -621,10 +635,78 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         continue; 
                     }
 
+                    // CRYSTAL SPECIAL CASE (Transparent logic but full block)
+                    if (btype == BLOCK_CRYSTAL) {
+                        SET_UV(0, 3); // Col 0, Row 3
+                        
+                        // Render faces if neighbor is transparent (but not Crystal, to avoid internal faces if desired, or allow them)
+                        // Let's hide internal faces for now
+                        #define CHECK_CRYSTAL_FACE(nb) (IS_TRANSPARENT_MESH(nb) && (nb) != BLOCK_CRYSTAL)
+
+                        if (CHECK_CRYSTAL_FACE(get_block(chunks, num_chunks, b_gx, y + 1, b_gz))) {
+                            int light_val; CALC_LIGHT(b_gx, y + 1, b_gz, light_val);
+                            ADD_VERTEX_GENERIC(px, py+1, pz,     0,1,0, u_min, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py+1, pz,   0,1,0, u_max, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py+1, pz+1, 0,1,0, u_max, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px, py+1, pz+1,   0,1,0, u_min, v_max, light_val, 1);
+                            ADD_QUAD_INDICES(1);
+                        }
+                        if (CHECK_CRYSTAL_FACE(get_block(chunks, num_chunks, b_gx, y - 1, b_gz))) {
+                             int light_val; CALC_LIGHT(b_gx, y - 1, b_gz, light_val);
+                            ADD_VERTEX_GENERIC(px, py, pz,     0,-1,0, u_min, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py, pz,   0,-1,0, u_max, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py, pz+1, 0,-1,0, u_max, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px, py, pz+1,   0,-1,0, u_min, v_max, light_val, 1);
+                            ADD_QUAD_INDICES(1);
+                        }
+                        if (CHECK_CRYSTAL_FACE(get_block(chunks, num_chunks, b_gx + 1, y, b_gz))) {
+                             int light_val; CALC_LIGHT(b_gx + 1, y, b_gz, light_val);
+                            ADD_VERTEX_GENERIC(px+1, py, pz,     1,0,0, u_min, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py+1, pz,   1,0,0, u_min, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py+1, pz+1, 1,0,0, u_max, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py, pz+1,   1,0,0, u_max, v_max, light_val, 1);
+                            ADD_QUAD_INDICES(1);
+                        }
+                        if (CHECK_CRYSTAL_FACE(get_block(chunks, num_chunks, b_gx - 1, y, b_gz))) {
+                             int light_val; CALC_LIGHT(b_gx - 1, y, b_gz, light_val);
+                            ADD_VERTEX_GENERIC(px, py, pz,     -1,0,0, u_min, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px, py+1, pz,   -1,0,0, u_min, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px, py+1, pz+1, -1,0,0, u_max, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px, py, pz+1,   -1,0,0, u_max, v_max, light_val, 1);
+                            ADD_QUAD_INDICES(1);
+                        }
+                        if (CHECK_CRYSTAL_FACE(get_block(chunks, num_chunks, b_gx, y, b_gz + 1))) {
+                             int light_val; CALC_LIGHT(b_gx, y, b_gz + 1, light_val);
+                            ADD_VERTEX_GENERIC(px, py, pz+1,     0,0,1, u_min, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py, pz+1,   0,0,1, u_max, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py+1, pz+1, 0,0,1, u_max, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px, py+1, pz+1,   0,0,1, u_min, v_min, light_val, 1);
+                            ADD_QUAD_INDICES(1);
+                        }
+                        if (CHECK_CRYSTAL_FACE(get_block(chunks, num_chunks, b_gx, y, b_gz - 1))) {
+                             int light_val; CALC_LIGHT(b_gx, y, b_gz - 1, light_val);
+                            ADD_VERTEX_GENERIC(px, py, pz,     0,0,-1, u_min, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py, pz,   0,0,-1, u_max, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py+1, pz, 0,0,-1, u_max, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px, py+1, pz,   0,0,-1, u_min, v_min, light_val, 1);
+                            ADD_QUAD_INDICES(1);
+                        }
+                        #undef CHECK_CRYSTAL_FACE
+                        continue;
+                    }
+
                     // Normal Block Rendering
                     if (SHOULD_RENDER_FACE(get_block(chunks, num_chunks, b_gx, y + 1, b_gz))) {
                         int light_val; CALC_LIGHT(b_gx, y + 1, b_gz, light_val);
-                        if (btype == BLOCK_GRASS) { SET_UV(1, 0); } else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } else if (btype == BLOCK_STONE) { SET_UV(1, 1); } else if (btype == BLOCK_LOG) { SET_UV(3, 0); } else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } else if (btype == BLOCK_SAND) { SET_UV(0, 2); } else { SET_UV(0, 0); }
+                        if (btype == BLOCK_GRASS) { SET_UV(1, 0); } 
+                        else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } 
+                        else if (btype == BLOCK_STONE) { SET_UV(1, 1); } 
+                        else if (btype == BLOCK_LOG) { SET_UV(3, 0); } 
+                        else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } 
+                        else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
+                        else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
+                        else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px, py+1, pz,     0,1,0, u_min, v_min, light_val, 0);
                         ADD_VERTEX_GENERIC(px+1, py+1, pz,   0,1,0, u_max, v_min, light_val, 0);
@@ -634,7 +716,15 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                     }
                     if (SHOULD_RENDER_FACE(get_block(chunks, num_chunks, b_gx, y - 1, b_gz))) {
                          int light_val; CALC_LIGHT(b_gx, y - 1, b_gz, light_val);
-                        if (btype == BLOCK_GRASS) { SET_UV(0, 0); } else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } else if (btype == BLOCK_STONE) { SET_UV(1, 1); } else if (btype == BLOCK_LOG) { SET_UV(3, 0); } else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } else if (btype == BLOCK_SAND) { SET_UV(0, 2); } else { SET_UV(0, 0); }
+                        if (btype == BLOCK_GRASS) { SET_UV(0, 0); } 
+                        else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } 
+                        else if (btype == BLOCK_STONE) { SET_UV(1, 1); } 
+                        else if (btype == BLOCK_LOG) { SET_UV(3, 0); } 
+                        else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } 
+                        else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
+                        else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
+                        else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px, py, pz,     0,-1,0, u_min, v_min, light_val, 0);
                         ADD_VERTEX_GENERIC(px+1, py, pz,   0,-1,0, u_max, v_min, light_val, 0);
@@ -644,7 +734,15 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                     }
                     if (SHOULD_RENDER_FACE(get_block(chunks, num_chunks, b_gx + 1, y, b_gz))) {
                          int light_val; CALC_LIGHT(b_gx + 1, y, b_gz, light_val);
-                        if (btype == BLOCK_GRASS) { SET_UV(0, 1); } else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } else if (btype == BLOCK_STONE) { SET_UV(1, 1); } else if (btype == BLOCK_LOG) { SET_UV(2, 0); } else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } else if (btype == BLOCK_SAND) { SET_UV(0, 2); } else { SET_UV(0, 0); }
+                        if (btype == BLOCK_GRASS) { SET_UV(0, 1); } 
+                        else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } 
+                        else if (btype == BLOCK_STONE) { SET_UV(1, 1); } 
+                        else if (btype == BLOCK_LOG) { SET_UV(2, 0); } 
+                        else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } 
+                        else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
+                        else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
+                        else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px+1, py, pz,     1,0,0, u_min, v_max, light_val, 0);
                         ADD_VERTEX_GENERIC(px+1, py+1, pz,   1,0,0, u_min, v_min, light_val, 0);
@@ -654,7 +752,15 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                     }
                     if (SHOULD_RENDER_FACE(get_block(chunks, num_chunks, b_gx - 1, y, b_gz))) {
                          int light_val; CALC_LIGHT(b_gx - 1, y, b_gz, light_val);
-                        if (btype == BLOCK_GRASS) { SET_UV(0, 1); } else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } else if (btype == BLOCK_STONE) { SET_UV(1, 1); } else if (btype == BLOCK_LOG) { SET_UV(2, 0); } else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } else if (btype == BLOCK_SAND) { SET_UV(0, 2); } else { SET_UV(0, 0); }
+                        if (btype == BLOCK_GRASS) { SET_UV(0, 1); } 
+                        else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } 
+                        else if (btype == BLOCK_STONE) { SET_UV(1, 1); } 
+                        else if (btype == BLOCK_LOG) { SET_UV(2, 0); } 
+                        else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } 
+                        else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
+                        else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
+                        else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px, py, pz,     -1,0,0, u_min, v_max, light_val, 0);
                         ADD_VERTEX_GENERIC(px, py+1, pz,   -1,0,0, u_min, v_min, light_val, 0);
@@ -664,7 +770,15 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                     }
                     if (SHOULD_RENDER_FACE(get_block(chunks, num_chunks, b_gx, y, b_gz + 1))) {
                          int light_val; CALC_LIGHT(b_gx, y, b_gz + 1, light_val);
-                        if (btype == BLOCK_GRASS) { SET_UV(0, 1); } else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } else if (btype == BLOCK_STONE) { SET_UV(1, 1); } else if (btype == BLOCK_LOG) { SET_UV(2, 0); } else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } else if (btype == BLOCK_SAND) { SET_UV(0, 2); } else { SET_UV(0, 0); }
+                        if (btype == BLOCK_GRASS) { SET_UV(0, 1); } 
+                        else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } 
+                        else if (btype == BLOCK_STONE) { SET_UV(1, 1); } 
+                        else if (btype == BLOCK_LOG) { SET_UV(2, 0); } 
+                        else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } 
+                        else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
+                        else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
+                        else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px, py, pz+1,     0,0,1, u_min, v_max, light_val, 0);
                         ADD_VERTEX_GENERIC(px+1, py, pz+1,   0,0,1, u_max, v_max, light_val, 0);
@@ -674,7 +788,15 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                     }
                     if (SHOULD_RENDER_FACE(get_block(chunks, num_chunks, b_gx, y, b_gz - 1))) {
                          int light_val; CALC_LIGHT(b_gx, y, b_gz - 1, light_val);
-                        if (btype == BLOCK_GRASS) { SET_UV(0, 1); } else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } else if (btype == BLOCK_STONE) { SET_UV(1, 1); } else if (btype == BLOCK_LOG) { SET_UV(2, 0); } else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } else if (btype == BLOCK_SAND) { SET_UV(0, 2); } else { SET_UV(0, 0); }
+                        if (btype == BLOCK_GRASS) { SET_UV(0, 1); } 
+                        else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } 
+                        else if (btype == BLOCK_STONE) { SET_UV(1, 1); } 
+                        else if (btype == BLOCK_LOG) { SET_UV(2, 0); } 
+                        else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } 
+                        else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
+                        else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
+                        else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px, py, pz,     0,0,-1, u_min, v_max, light_val, 0);
                         ADD_VERTEX_GENERIC(px+1, py, pz,   0,0,-1, u_max, v_max, light_val, 0);

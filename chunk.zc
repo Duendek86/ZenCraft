@@ -288,9 +288,13 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
                             c.light[x][y][z] = (old_val & 0x0F) | (((max_n - 1) & 0xF) << 4);
                         } else {
                             // Block Light -> Lower 4 bits (preserve upper 4 bits)
+                            // Block Light -> Lower 4 bits (preserve upper 4 bits)
                             c.light[x][y][z] = (old_val & 0xF0) | ((max_n - 1) & 0xF);
                         }
                         
+                        // IMPORTANT: Mark mesh as dirty so plants rebuild with new lighting!
+                        c.mesh_dirty = 1;
+
                         queue_push(q_ptr, gx, y, gz);
                     }
                 }
@@ -308,12 +312,20 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
         // Try to propagate to 6 neighbors
         // Helper macro or inline
         let nx = 0; let ny = 0; let nz = 0;
+        let cx_n = 0; let cz_n = 0; let idx_n = 0;
         
         // +X
         nx = node.x + 1; ny = node.y; nz = node.z;
         if IS_TRANSPARENT(get_block(chunks, num_chunks, nx, ny, nz)) {
              if get_light_global(chunks, num_chunks, nx, ny, nz, channel) < light - 1 {
                  set_light_global(chunks, num_chunks, nx, ny, nz, light - 1, channel);
+                 
+                 // Mark neighbor dirty
+                 cx_n = (int)floor((float)nx / 16.0);
+                 cz_n = (int)floor((float)nz / 16.0);
+                 idx_n = get_chunk_index(cx_n, cz_n);
+                 if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                 
                  queue_push(q_ptr, nx, ny, nz);
              }
         }
@@ -322,6 +334,13 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
         if IS_TRANSPARENT(get_block(chunks, num_chunks, nx, ny, nz)) {
              if get_light_global(chunks, num_chunks, nx, ny, nz, channel) < light - 1 {
                  set_light_global(chunks, num_chunks, nx, ny, nz, light - 1, channel);
+                 
+                 // Mark neighbor dirty
+                 cx_n = (int)floor((float)nx / 16.0);
+                 cz_n = (int)floor((float)nz / 16.0);
+                 idx_n = get_chunk_index(cx_n, cz_n);
+                 if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                 
                  queue_push(q_ptr, nx, ny, nz);
              }
         }
@@ -330,6 +349,13 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
         if IS_TRANSPARENT(get_block(chunks, num_chunks, nx, ny, nz)) {
              if get_light_global(chunks, num_chunks, nx, ny, nz, channel) < light - 1 {
                  set_light_global(chunks, num_chunks, nx, ny, nz, light - 1, channel);
+                 
+                 // Mark neighbor dirty
+                 cx_n = (int)floor((float)nx / 16.0);
+                 cz_n = (int)floor((float)nz / 16.0);
+                 idx_n = get_chunk_index(cx_n, cz_n);
+                 if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                 
                  queue_push(q_ptr, nx, ny, nz);
              }
         }
@@ -338,6 +364,13 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
         if IS_TRANSPARENT(get_block(chunks, num_chunks, nx, ny, nz)) {
              if get_light_global(chunks, num_chunks, nx, ny, nz, channel) < light - 1 {
                  set_light_global(chunks, num_chunks, nx, ny, nz, light - 1, channel);
+                 
+                 // Mark neighbor dirty
+                 cx_n = (int)floor((float)nx / 16.0);
+                 cz_n = (int)floor((float)nz / 16.0);
+                 idx_n = get_chunk_index(cx_n, cz_n);
+                 if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                 
                  queue_push(q_ptr, nx, ny, nz);
              }
         }
@@ -346,6 +379,13 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
         if IS_TRANSPARENT(get_block(chunks, num_chunks, nx, ny, nz)) {
              if get_light_global(chunks, num_chunks, nx, ny, nz, channel) < light - 1 {
                  set_light_global(chunks, num_chunks, nx, ny, nz, light - 1, channel);
+                 
+                 // Mark neighbor dirty
+                 cx_n = (int)floor((float)nx / 16.0);
+                 cz_n = (int)floor((float)nz / 16.0);
+                 idx_n = get_chunk_index(cx_n, cz_n);
+                 if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                 
                  queue_push(q_ptr, nx, ny, nz);
              }
         }
@@ -354,6 +394,13 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
         if IS_TRANSPARENT(get_block(chunks, num_chunks, nx, ny, nz)) {
              if get_light_global(chunks, num_chunks, nx, ny, nz, channel) < light - 1 {
                  set_light_global(chunks, num_chunks, nx, ny, nz, light - 1, channel);
+                 
+                 // Mark neighbor dirty
+                 cx_n = (int)floor((float)nx / 16.0);
+                 cz_n = (int)floor((float)nz / 16.0);
+                 idx_n = get_chunk_index(cx_n, cz_n);
+                 if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                 
                  queue_push(q_ptr, nx, ny, nz);
              }
         }
@@ -739,6 +786,7 @@ impl Chunk {
         
         // 2. Plants (Alpha Cutout)
         if self.plant_mesh_built != 0 {
+            set_grass_use_tex(1); // Enable Texture
             DrawModel(self.plant_model, offset, 1.0, WHITE);
         }
         
@@ -756,6 +804,7 @@ impl Chunk {
                 }
                 
                 if self.grass_deco_built != 0 {
+                    set_grass_use_tex(0); // Disable Texture (Use Gradient)
                     DrawModel(self.grass_deco_model, offset, 1.0, WHITE);
                 }
             }

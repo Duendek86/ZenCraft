@@ -14,6 +14,7 @@ uniform vec3 uLightCol;
 uniform vec3 uAmbient;
 uniform vec3 viewPos;
 uniform float time;
+uniform int uUseTex; // 1 = Use Texture (Plants), 0 = Use Gradient (Grass Deco)
 
 void main()
 {
@@ -23,18 +24,25 @@ void main()
     // Alpha Test
     if (texelColor.a < 0.5) discard;
     
-    // Two-tone Gradient (User Request)
-    // Map V coord (0.01 top -> 0.32 bottom) to 0..1
-    float t = clamp((fragTexCoord.y - 0.01) / 0.30, 0.0, 1.0);
+    vec3 grassColor;
     
-    vec3 topColor = vec3(0.5, 0.9, 0.2); // Lime/Yellow Green
-    vec3 bottomColor = vec3(0.1, 0.6, 0.1); // Darker Green
-    
-    vec3 grassColor = mix(topColor, bottomColor, t);
+    if (uUseTex == 1) {
+        // Use Texture Color (Plants / Tall Grass)
+        grassColor = texelColor.rgb;
+    } else {
+        // Use Two-tone Gradient (Grass Decorations)
+        // Map V coord (0.01 top -> 0.32 bottom) to 0..1
+        float t = clamp((fragTexCoord.y - 0.01) / 0.30, 0.0, 1.0);
+        
+        vec3 topColor = vec3(0.5, 0.9, 0.2); // Lime/Yellow Green
+        vec3 bottomColor = vec3(0.1, 0.6, 0.1); // Darker Green
+        
+        grassColor = mix(topColor, bottomColor, t);
+    }
     
     // --- LIGHTING (Copied from lighting.fs for consistency) ---
     
-    // In chunk_mesh.zc we swapped channels for plants:
+    // In chunk_mesh.zc we swapped channels for plants/deco:
     // R = Block Light
     // G = Sky Light
     float blockLightLevel = fragColor.r;
