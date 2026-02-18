@@ -1,6 +1,7 @@
 //> This file contains player-related structures and physics
 
 import "raylib.h" as rl;
+import "rlgl.h";
 import "math.h";
 import "chunk.zc";
 import "blocks.zc";
@@ -39,8 +40,8 @@ fn check_collision(chunks: Chunk*, num_chunks: int, x: float, y: float, z: float
         for iy in min_y..max_y+1 {
             for iz in min_z..max_z+1 {
                 let block = get_block(chunks, num_chunks, ix, iy, iz);
-                // Tall grass, torches, and water are non-solid
-                if block != BLOCK_AIR && block != BLOCK_TALLGRASS && !(block >= 10 && block <= 14) && block != BLOCK_WATER {
+                // Tall grass, torches, and all water levels are non-solid
+                if block != BLOCK_AIR && block != BLOCK_TALLGRASS && !(block >= 10 && block <= 14) && block != BLOCK_WATER && block != BLOCK_WATER_2 && block != BLOCK_WATER_1 {
                     return 1;
                 }
             }
@@ -234,5 +235,79 @@ impl Player {
         self.camera.target.x = self.camera.position.x + view_x;
         self.camera.target.y = self.camera.position.y + view_y;
         self.camera.target.z = self.camera.position.z + view_z;
+    }
+    
+    fn draw_arm(self, time: float) {
+        // Use a separate 3D camera pass for the weapon (standard FPS technique)
+        // This camera sits at origin and looks forward, with the arm placed relative to it.
+        
+        let bob_y: float = 0.0;
+        let bob_x: float = 0.0;
+        let v_len = sqrt(self.vx * self.vx + self.vz * self.vz);
+        if v_len > 0.1 {
+            bob_y = (float)sin(time * 10.0) * 0.03;
+            bob_x = (float)cos(time * 10.0) * 0.02;
+        }
+        
+        // Create a dedicated "weapon camera" at origin looking down -Z
+        let arm_cam = rl::Camera3D{
+            position: rl::Vector3{x: 0.0, y: 0.0, z: 0.0},
+            target: rl::Vector3{x: 0.0, y: 0.0, z: -1.0},
+            up: rl::Vector3{x: 0.0, y: 1.0, z: 0.0},
+            fovy: 70.0,
+            projection: rl::CAMERA_PERSPECTIVE
+        };
+        
+        // Clear depth buffer so arm always draws on top of world
+        raw { rlDisableDepthTest(); }
+        
+        rl::BeginMode3D(arm_cam);
+        
+        raw {
+            // Arm offset: Right, Down, Forward (-Z)
+            // Adjusted for vertical hold
+            float ax = 0.5f + bob_x;   // Further right
+            float ay = -0.4f + bob_y;  // Lower down
+            float az = -0.6f;          // Close to camera
+            
+            // --- DRAW ARM (Skin) ---
+            // Forearm (angled slightly up/forward)
+            // We'll simplify to just a hand holding it for now or a simple arm extending from bottom-right
+            
+            // Arm Mesh (angled from bottom right corner)
+            // Use a rotated cube or just a sequence of cubes to approximate angle
+            rlPushMatrix();
+            rlTranslatef(ax + 0.2f, ay - 0.2f, az + 0.2f);
+            rlRotatef(-45.0f, 0, 0, 1); // Tilt arm
+            rlRotatef(20.0f, 1, 0, 0);  // Pitch arm
+            DrawCube((Vector3){0, 0, 0}, 0.12f, 0.6f, 0.12f, (Color){220, 180, 150, 255}); // Forearm
+            rlPopMatrix();
+            
+            // Hand (holding scepter)
+            DrawCube((Vector3){ax, ay, az}, 0.1f, 0.1f, 0.1f, (Color){220, 180, 150, 255});
+            
+            // --- DRAW SCEPTER (Vertical) ---
+            // Handle (Dark Wood) - Vertical Y axis
+            // Base at hand height, extending up
+            DrawCube((Vector3){ax, ay + 0.3f, az}, 0.04f, 0.7f, 0.04f, (Color){80, 50, 25, 255});
+            
+            // Handle Rings
+            DrawCube((Vector3){ax, ay + 0.15f, az}, 0.05f, 0.02f, 0.05f, (Color){180, 150, 50, 255});
+            DrawCube((Vector3){ax, ay + 0.55f, az}, 0.05f, 0.02f, 0.05f, (Color){180, 150, 50, 255});
+            
+            // Head Mount (Gold) - Top of handle
+            DrawCube((Vector3){ax, ay + 0.68f, az}, 0.12f, 0.12f, 0.12f, (Color){255, 215, 0, 255});
+            
+            // Gem (Glowing Crystal) - Floating/Mounted on top
+            float pulse = 0.7f + 0.3f * sin(time * 3.0f);
+            unsigned char gem_alpha = (unsigned char)(180.0f + 75.0f * pulse);
+            float gem_size = 0.08f + 0.01f * pulse;
+            DrawCube((Vector3){ax, ay + 0.68f, az}, gem_size, gem_size + 0.05f, gem_size, (Color){0, (unsigned char)(200 * pulse), 255, gem_alpha});
+        }
+        
+        rl::EndMode3D();
+        // Depth test is standard, no need to re-enable explicit if we didn't disable it.
+        // But main loop expects it enabled.
+        raw { rlEnableDepthTest(); }
     }
 }

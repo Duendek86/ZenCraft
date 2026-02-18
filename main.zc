@@ -1,6 +1,25 @@
 //> link: -lraylib -lm
 
+raw {
+    #define ZALLOC_IMPLEMENTATION
+    #define ZALLOC_ENABLE_DEBUG
+    
+    // Define global memory overrides for z-libs (zthread, zmap, etc.)
+    // This ensures zmap and zthread use zdebug functions.
+    #define Z_MALLOC(sz)      zdebug_malloc_loc(sz, __FILE__, __LINE__)
+    #define Z_CALLOC(n,sz)    zdebug_calloc_loc(n, sz, __FILE__, __LINE__)
+    #define Z_REALLOC(p,sz)   zdebug_realloc_loc(p, sz, __FILE__, __LINE__)
+    #define Z_FREE(p)         zdebug_free(p)
+    
+    #include "zalloc.h"
+    
+    #include <stdio.h> // for printf
+    #include <string.h> // for memset, memcpy
+    #include <stdlib.h> // for rand
+}
+
 import "raylib.h" as rl;
+import "rlgl.h";
 import "rlgl.h";
 import "math.h";
 
@@ -16,8 +35,10 @@ import "persistence.zc";
 import "title_generator.zc";
 import "zibi.zc";
 import "grass_deco.zc";
+import "particles.zc";
 
-def MAX_ZIBIS = 20;
+def VERSION_TEXT = "v0.0.1.7 alpha-dev";
+def MAX_ZIBIS = 10;
 def SAVE_DIR = "world";
 // Removed DRAW_DISTANCE constant, now using variable
 
@@ -29,10 +50,12 @@ fn main() {
     rl::SetTraceLogLevel(rl::LOG_WARNING);
     rl::InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, TITLE);
     rl::SetWindowState(rl::FLAG_WINDOW_RESIZABLE | rl::FLAG_VSYNC_HINT);
+    // User Fix: Force window to always run to avoid focus/lighting issues
+    rl::SetWindowState(rl::FLAG_WINDOW_ALWAYS_RUN);
     rl::ToggleFullscreen(); // Start in fullscreen
-    defer { rl::CloseWindow(); }
+    // defer { rl::CloseWindow(); } // Moved below
 
-    rl::SetTargetFPS(60);
+    rl::SetTargetFPS(120);
 
     // Load Assets
     init_textures();
@@ -40,22 +63,34 @@ fn main() {
     // Declare chunks early for persistence init
     let chunks: Chunk*;
     raw {
-        chunks = (Chunk*)MemAlloc(sizeof(Chunk) * MAX_CHUNKS);
+        chunks = (Chunk*)zdebug_malloc(sizeof(Chunk) * MAX_CHUNKS);
+        if (!chunks) {
+            printf("[FATAL] Failed to allocate chunks array!\n");
+            exit(1);
+        }
+        zdebug_register_atexit();
     }
     // Pass chunks array to persistence for async thread access
     init_persistence(&chunks[0]);
 
     // Loop Variables
     let current_state = STATE_TITLE;
-    let show_debug_info = 0;
+    let show_debug_info = 1; // Changed from 0 to 1
+    let first_frame = 1;
     
     // --- SETTINGS STATE ---
     let show_settings = 0;
     let draw_distance = 6;
-    let grass_dist: float = 24.0;
+    let grass_dist = 64.0; // Changed from 24.0 and type removed
+    
+    // Scepter Destruction State
+    let destroy_timer = 0.0;
+    let destroy_target_x = -999;
+    let destroy_target_y = -999;
+    let destroy_target_z = -999;
     
     // --- TITLE STATE SETUP ---
-    set_game_world_dir("titleworld_forests");
+    set_game_world_dir("titleworld");
     let title_cam = rl::Camera3D{
         position: rl::Vector3{x: 8.0, y: 15.0, z: 25.0}, // Positive Z looking back at 0
         target: rl::Vector3{x: 8.0, y: 12.0, z: 0.0},
@@ -70,7 +105,13 @@ fn main() {
     let zibis: Zibi[MAX_ZIBIS]; // Declare here for scope visibility
     
     // Cleanup on exit
-    // defer { raw { MemFree(chunks); } } // defer raw not fully supported?
+    defer { 
+        cleanup_persistence();
+        raw { 
+            if(chunks) zdebug_free(chunks); 
+        } 
+        rl::CloseWindow(); 
+    }
 
     // Initialize empty chunks
     for i in 0..MAX_CHUNKS {
@@ -80,18 +121,32 @@ fn main() {
     }
     
     let day_time = 0.2; // Start at morning (0.2) or noon (0.25)
+    let tick_accum: float = 0.0;
 
-    rl::DisableCursor(); // Capture mouse
+    
+    // rl::DisableCursor(); // Moved to Game Start to avoid focus issues on init
     
     let title_start_time = rl::GetTime();
 
     while !rl::WindowShouldClose() {
+        // User Fix: Recapture cursor if left click detected (focus regain)
+        if (rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_LEFT)) {
+            rl::DisableCursor();
+        }
+
         let dt: float = rl::GetFrameTime();
         // Clamp dt to prevent physics explosion during lag spikes (e.g., chunk loading)
         if dt > 0.1 { dt = 0.1; }
         
         // --- TITLE SCREEN LOOP ---
         if current_state == STATE_TITLE {
+            // Update Lighting for Title (Fixes "Warm Light" issue)
+            // User Request: angled lighting. 
+            // 0.2 was close to noon. 0.15 is mid-morning (more angled).
+            // 0.1 is sunrise (red/orange).
+            // Let's try 0.12 (early morning, golden hour) or 0.15.
+            update_day_night_cycle(0.12); // fixed time for title
+            
             // Logic
             if rl::IsKeyPressed(rl::KEY_ENTER) {
                 // TRANSITION TO LOADING
@@ -118,22 +173,18 @@ fn main() {
 
             // Chunk Loading for Title (We need to load the sign chunks)
             // Load chunks -2..3 in X, and 0 in Z
-            for x in -2..4 {
-                 let id_x = x + 3; // 0..6
-                 if chunks[id_x].x != x || chunks[id_x].z != 0 {
-                     chunks[id_x].x = x;
-                     chunks[id_x].z = 0;
-                     chunks[id_x].mesh_built = 0;
-                     raw { memset(chunks[id_x].blocks, 0, sizeof(chunks[id_x].blocks)); }
-                     request_load_async(id_x, x, 0);
-                 }
-            }
-            poll_async_results(&chunks[0], MAX_CHUNKS);
+            // Chunk Loading for Title (Hardcoded Generation)
+            // Chunk Loading for Title (Hardcoded Generation)
+            // Use refactored update logic in title_generator.zc
+            update_title_screen(chunks, MAX_CHUNKS, dt);
+            
+            // Poll usually handles I/O, here it's fine to keep empty or remove.
+            poll_async_results();
 
             // Async Mesh Build for Title
             for i in 0..MAX_CHUNKS {
                 if chunks[i].x != -9999 && chunks[i].mesh_dirty != 0 && chunks[i].locked == 0 {
-                     request_mesh_async(i);
+                     request_mesh_async(i, 0);
                 }
             }
 
@@ -148,6 +199,9 @@ fn main() {
             title_cam.position.z = (float)cos(time * speed - 1.57) * radius;
             title_cam.position.y = 14.0 + (float)sin(time * 0.1) * 2.0;
             title_cam.target = rl::Vector3{x: 8.0, y: 12.0, z: 0.0};
+            
+            // Update Uniforms
+            update_frame_uniforms(title_cam.position, time);
             
             rl::BeginMode3D(title_cam);
             raw { rlDisableBackfaceCulling(); }
@@ -168,9 +222,8 @@ fn main() {
                 }
             }
             rl::EndMode3D();
-
             rl::DrawText("ZEN CRAFT", 100, 100, 60, rl::WHITE);
-            rl::DrawText("v0.0.1 alpha", 100, 160, 20, rl::WHITE);
+            rl::DrawText(VERSION_TEXT, 100, 160, 20, rl::WHITE);
             rl::DrawText("Press ENTER to Play", 150, 400, 30, rl::LIGHTGRAY);
             
             rl::EndDrawing();
@@ -192,6 +245,7 @@ fn main() {
                 if(!player_loaded) {
                     player_loaded = 1;
                     loaded_save = load_player_data(&start_x, &start_y, &start_z, &selected_block, &start_yaw, &start_pitch);
+                    DisableCursor(); // Capture mouse when game actually starts
                 }
                 
                 // GENERATE/LOAD all chunks in render distance
@@ -313,44 +367,9 @@ fn main() {
                 p.yaw = spawn_yaw;
                 p.pitch = spawn_pitch;
                 
-                // Initialize Zibis around spawn
-                // Initialize Zibis around spawn
-                // Initialize Zibis around spawn (Avoiding Water)
+                // Zibis will be spawned dynamically
                 for i in 0..MAX_ZIBIS {
-                    // Reduce spread to keep them closer to loaded area
-                    // Use a spiral or random circle distribution
-                    let angle = (float)i * (6.28 / (float)MAX_ZIBIS);
-                    let dist = 10.0 + (float)(i % 5) * 2.0; // 10..20 blocks radius
-                    
-                    let ox = spawn_x + (float)cos(angle) * dist;
-                    let oz = spawn_z + (float)sin(angle) * dist;
-                    
-                    // Find ground height - Scan from TOP
-                    let ground_y = 0.0;
-                    let found_ground = 0;
-                    
-                    for y in 0..CHUNK_HEIGHT {
-                        let ry = (CHUNK_HEIGHT - 1) - y;
-                        let b = get_block(&chunks[0], MAX_CHUNKS, (int)ox, ry, (int)oz);
-                        if b != BLOCK_AIR && b != BLOCK_TALLGRASS && b != BLOCK_LEAVES && b != 10 {
-                            ground_y = (float)ry;
-                            found_ground = 1;
-                            break;
-                        }
-                    }
-                    
-                    if (found_ground) {
-                         let surface_block = get_block(&chunks[0], MAX_CHUNKS, (int)ox, (int)ground_y, (int)oz);
-                         if (surface_block != BLOCK_WATER) {
-                             zibis[i] = Zibi::new(ox, ground_y + 2.0, oz);
-                         } else {
-                             // Too lazy to find another spot, just put them at spawn
-                             zibis[i] = Zibi::new(spawn_x, spawn_y + 2.0, spawn_z);
-                         }
-                    } else {
-                        // Safe fallback
-                        zibis[i] = Zibi::new(spawn_x, spawn_y + 2.0, spawn_z); 
-                    }
+                    zibis[i].active = 0;
                 }
                 
                 current_state = STATE_GAME;
@@ -415,6 +434,15 @@ fn main() {
                 }
             }
 
+
+
+            // --- SIMULATION STEP (Random Ticks) ---
+            for i in 0..MAX_CHUNKS {
+                if chunks[i].x != -9999 && chunks[i].locked == 0 {
+                    tick_chunk(&chunks[i], &chunks[0], MAX_CHUNKS);
+                }
+            }
+
             let requests_this_frame = 0;
             def MAX_REQUESTS_PER_FRAME = 4;
             
@@ -432,9 +460,9 @@ fn main() {
                             if chunks[idx].x != -9999 {
                                 request_save_async(&chunks[idx]);
                             }
-                            chunks[idx].x = -9999; // Mark as loading
-                            request_load_async(idx, pcx, pcz);
-                            requests_this_frame = requests_this_frame + 1;
+                                chunks[idx].x = -9999; // Mark as loading
+                                request_load_async(idx, pcx, pcz, 0); // Low Priority
+                                requests_this_frame = requests_this_frame + 1;
                         }
                     }
                     continue;
@@ -473,7 +501,7 @@ fn main() {
                                     request_save_async(&chunks[idx]);
                                 }
                                 chunks[idx].x = -9999; // Mark slot as loading
-                                request_load_async(idx, cx, cz);
+                                request_load_async(idx, cx, cz, 0); // Low Priority
                                 requests_this_frame = requests_this_frame + 1;
                             }
                         }
@@ -481,8 +509,15 @@ fn main() {
                 }
             }
             
+            if first_frame {
+                init_particles();
+                first_frame = 0;
+            }
+            
             // Poll completed async loads (applies data, recalculates lighting, marks dirty)
-            poll_async_results(&chunks[0], MAX_CHUNKS);
+            poll_async_results();
+            
+            update_particles(dt);
             
             // --- MESH UPDATE LOOP (ASYNC) ---
             let mesh_requests = 0;
@@ -491,7 +526,15 @@ fn main() {
             for i in 0..MAX_CHUNKS {
                 if mesh_requests >= MAX_MESH_REQ { break; }
                 if chunks[i].x != -9999 && chunks[i].mesh_dirty != 0 && chunks[i].locked == 0 {
-                    if(request_mesh_async(i)) {
+                    // Check if close to player for priority
+                    // (Simplification: mesh rebuilds are high priority to avoid holes? 
+                    // Actually, background mesh builds should be low. 
+                    // But if triggered by block break, we want high.
+                    // We can check distance or just default to low for general loop, 
+                    // and manual trigger will be high).
+                    
+                    // Priority 0 for general loop.
+                    if(request_mesh_async(i, 0)) {
                         mesh_requests = mesh_requests + 1;
                     }
                 }
@@ -510,9 +553,72 @@ fn main() {
                 (&p).update(&chunks[0], MAX_CHUNKS, dt);
             }
             
-            // Update Zibis
+            // Update Zibis & Dynamic Spawning
+            let active_zibis = 0;
             for i in 0..MAX_ZIBIS {
-                zibis[i].update(&chunks[0], MAX_CHUNKS, dt);
+                if zibis[i].active {
+                    active_zibis = active_zibis + 1;
+                    if zibis[i].update(&chunks[0], MAX_CHUNKS, dt) == 0 {
+                         // Zibi despawned (unloaded chunk or void)
+                         active_zibis = active_zibis - 1;
+                    }
+                }
+            }
+            
+            // Try to spawn new Zibi if below limit (random chance)
+            if active_zibis < MAX_ZIBIS {
+                let r_spawn = 0;
+                raw { r_spawn = GetRandomValue(0, 100); }
+                
+                if r_spawn < 5 { // 5% chance per frame (~3 per second) to try spawning
+                    // Find a free slot
+                    let slot = -1;
+                    for i in 0..MAX_ZIBIS {
+                        if !zibis[i].active {
+                            slot = i;
+                            break;
+                        }
+                    }
+                    
+                    if slot != -1 {
+                        // Pick random position around player
+                        let angle = 0.0;
+                        let dist = 0.0;
+                        raw {
+                            angle = ((float)GetRandomValue(0, 360)) * 0.0174533f;
+                            dist = (float)GetRandomValue(20, 60); // 20 to 60 blocks away
+                        }
+                        
+                        let sx = p.x + (float)cos(angle) * dist;
+                        let sz = p.z + (float)sin(angle) * dist;
+                        
+                        // Check if chunk is loaded
+                        let cx = (int)floor(sx / 16.0);
+                        let cz = (int)floor(sz / 16.0);
+                        let idx = get_chunk_index(cx, cz);
+                        
+                        if chunks[idx].x == cx && chunks[idx].z == cz && chunks[idx].mesh_built == 1 {
+                             // Find ground
+                             let ground_y = -1.0;
+                             for y in 0..CHUNK_HEIGHT {
+                                 let ry = (CHUNK_HEIGHT - 1) - y;
+                                 let b = get_block(&chunks[0], MAX_CHUNKS, (int)sx, ry, (int)sz);
+                                 if b != BLOCK_AIR && b != BLOCK_TALLGRASS && b != BLOCK_LEAVES && b != 10 { // 10=Torch
+                                     ground_y = (float)ry;
+                                     break;
+                                 }
+                             }
+                             
+                             if ground_y > 0.0 {
+                                 // Check surface block (no spawn on water/leaves)
+                                 let surf = get_block(&chunks[0], MAX_CHUNKS, (int)sx, (int)ground_y, (int)sz);
+                                 if surf != BLOCK_WATER && surf != BLOCK_LEAVES {
+                                     zibis[slot] = Zibi::new(sx, ground_y + 2.0, sz);
+                                 }
+                             }
+                        }
+                    }
+                }
             }
     
             // Block selection input
@@ -523,6 +629,7 @@ fn main() {
             if rl::IsKeyPressed(rl::KEY_FIVE) { selected_block = BLOCK_LEAVES; }
             if rl::IsKeyPressed(rl::KEY_SIX) { selected_block = BLOCK_TORCH; }
             if rl::IsKeyPressed(rl::KEY_SEVEN) { selected_block = BLOCK_WATER; }
+            if rl::IsKeyPressed(rl::KEY_EIGHT) { selected_block = BLOCK_GLASS_PANE; }
             
             if rl::IsKeyPressed(rl::KEY_F3) { show_debug_info = !show_debug_info; }
             if rl::IsKeyPressed(rl::KEY_F11) { rl::ToggleFullscreen(); }
@@ -536,8 +643,8 @@ fn main() {
             }
     
             
-            // Configurable cycle duration
-            let day_duration = 120.0; // 2 minutes for testing (eventually 1200.0 for 20 mins)
+            // Configurable cycle duration (20m day + 20m night = 40m total = 2400s)
+            let day_duration = 2400.0;
             day_time = day_time + (dt / day_duration);
             if day_time > 1.0 { day_time = day_time - 1.0; }
             
@@ -677,6 +784,8 @@ fn main() {
             for i in 0..MAX_ZIBIS {
                 zibis[i].draw(&chunks[0], MAX_CHUNKS, day_time);
             }
+            
+            draw_particles();
     
             // Block interaction
             if !show_settings {
@@ -687,7 +796,7 @@ fn main() {
                 let pick_ray = rl::GetScreenToWorldRay(screen_center, p.camera);
         
                 let hit = raycast(&chunks[0], MAX_CHUNKS, pick_ray.position.x, pick_ray.position.y, pick_ray.position.z, 
-                                  pick_ray.direction.x, pick_ray.direction.y, pick_ray.direction.z, 5.0);
+                                  pick_ray.direction.x, pick_ray.direction.y, pick_ray.direction.z, 12.0);
         
                 if hit.hit != 0 {
                     let hx = (float)hit.x;
@@ -695,76 +804,306 @@ fn main() {
                     let hz = (float)hit.z;
                     rl::DrawCubeWires(rl::Vector3{x: hx + 0.5, y: hy + 0.5, z: hz + 0.5}, 1.01, 1.01, 1.01, rl::BLACK);
         
-                    if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_LEFT) {
-                        set_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z, BLOCK_AIR);
-                        
-                        // Remove plant entities above this block
-                        remove_plant_at(&chunks[0], MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
-                        
-                        // Auto-destroy attached torches, tallgrass, AND leaves (if resting on this block)
-                        // Check block above for floor torches, tallgrass, or leaves
-                        let above = get_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
-                        if above == BLOCK_TALLGRASS || above == 10 || above == BLOCK_LEAVES { // 10 = floor torch
-                            set_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y + 1, hit.z, BLOCK_AIR);
-                            // Also remove plant entity if it was tallgrass/flower
-                            remove_plant_at(&chunks[0], MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
+                    if rl::IsMouseButtonDown(rl::MOUSE_BUTTON_LEFT) {
+                        // Check if hitting same block
+                        if (hit.x == destroy_target_x && hit.y == destroy_target_y && hit.z == destroy_target_z) {
+                            destroy_timer = destroy_timer + dt;
+                        } else {
+                            // New target
+                            destroy_target_x = hit.x;
+                            destroy_target_y = hit.y;
+                            destroy_target_z = hit.z;
+                            destroy_timer = 0.0;
                         }
                         
-                        // Check all 4 sides for wall torches attached to this block
-                        let north = get_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z + 1);
-                        if north == 11 { // North wall torch
-                            set_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z + 1, BLOCK_AIR);
+                        // Visual Effects
+                        raw {
+                             // Beam Start Calculation (World Space from Camera Basis)
+                             Vector3 cam_origin = p.camera.position;
+                             Vector3 start = cam_origin;
+                             
+                             // Calculate Camera Basis Vectors
+                             float cy = cos(p.yaw);
+                             float sy = sin(p.yaw);
+                             float cp = cos(p.pitch);
+                             float sp = sin(p.pitch);
+                             
+                             float fx = cy * cp;
+                             float fz = sy * cp;
+                             float fy = -sp;
+                             
+                             float rx = -fz;
+                             float ry = 0.0f; 
+                             float rz = fx;
+                             
+                             float ux = -fx * fy;
+                             float uy = fx * fx + fz * fz;
+                             float uz = -fz * fy;
+                             
+                             // Scepter Tip Offset (Relative to Camera)
+                             float off_r = 0.5f;
+                             float off_u = 0.28f; 
+                             float off_f = 0.6f;
+                             
+                             float time = (float)GetTime();
+                             if (p.vx != 0 || p.vz != 0) {
+                                 off_r += cos(time * 10.0f) * 0.02f;
+                                 off_u += sin(time * 10.0f) * 0.03f;
+                             }
+                             
+                             start.x += rx * off_r + ux * off_u + fx * off_f;
+                             start.y += ry * off_r + uy * off_u + fy * off_f;
+                             start.z += rz * off_r + uz * off_u + fz * off_f;
+
+                             // Beam End Position: Exact Hit Point (From Camera!)
+                             Vector3 end;
+                             if (hit.hit) {
+                                  end.x = cam_origin.x + fx * hit.distance;
+                                  end.y = cam_origin.y + fy * hit.distance;
+                                  end.z = cam_origin.z + fz * hit.distance;
+                             } else {
+                                  // Max distance if no hit
+                                  float max_reach = 8.0f; // Matches raycast length
+                                  end.x = cam_origin.x + fx * max_reach;
+                                  end.y = cam_origin.y + fy * max_reach;
+                                  end.z = cam_origin.z + fz * max_reach;
+                             }
+
+                             // --- Spiraling Beam Animation ---
+                             float pulse = sin(time * 20.0f);
+                             Color core_col = (Color){ 0, 255, 255, (unsigned char)(150 + 50 * pulse) };
+                             Color outer_col = (Color){ 0, 100, 255, 100 };
+                             
+                             // Draw Core Beam (Volumetric Shader)
+                             // Draw Core Beam (Volumetric Shader)
+                             Shader sh_beam = get_shader_beam();
+                             
+                             BeginShaderMode(sh_beam);
+                                 // Set Time Uniform
+                                 int loc_time = GetShaderLocation(sh_beam, "time");
+                                 float t = (float)GetTime();
+                                 SetShaderValue(sh_beam, loc_time, &t, SHADER_UNIFORM_FLOAT);
+                                 
+                                 // Additive Blending for Glow
+                                 rlSetBlendMode(BLEND_ADDITIVE);
+                                 rlDisableDepthMask(); 
+                                 rlDisableBackfaceCulling(); // FIX: Make visible from all angles
+                                 
+                                 // Draw Cylinder from Start to End
+                                 DrawCylinderEx(start, end, 0.05f, 0.25f, 16, core_col);
+                                 
+                                 // Inner hotter core
+                                 DrawCylinderEx(start, end, 0.02f, 0.10f, 8, WHITE);
+                                 
+                                 rlEnableBackfaceCulling(); // Restore
+                                 rlEnableDepthMask();
+                                 rlSetBlendMode(BLEND_ALPHA); // Restore
+                             EndShaderMode();
+                             
+                             // Draw Spiral (Sparkles)
+                             rlSetBlendMode(BLEND_ADDITIVE);
+                             
+                             Vector3 dir = (Vector3){ end.x - start.x, end.y - start.y, end.z - start.z };
+                             float len = sqrt(dir.x*dir.x + dir.y*dir.y + dir.z*dir.z);
+                             if (len > 0.001f) {
+                                 dir.x /= len; dir.y /= len; dir.z /= len;
+                                 
+                                 // Construct arbitrary basis for spiral (Perpendicular to dir)
+                                 Vector3 perp1;
+                                 if (abs(dir.y) < 0.9f) { perp1 = (Vector3){-dir.z, 0, dir.x}; }
+                                 else { perp1 = (Vector3){1, 0, 0}; } // Fallback if Dir is vertical
+                                 
+                                 // Normalize perp1
+                                 float p1l = sqrt(perp1.x*perp1.x + perp1.y*perp1.y + perp1.z*perp1.z);
+                                 if(p1l > 0.001) { perp1.x /= p1l; perp1.y /= p1l; perp1.z /= p1l; }
+                                 
+                                 // Perp2 = Cross(Dir, Perp1)
+                                 Vector3 perp2 = (Vector3){
+                                     dir.y * perp1.z - dir.z * perp1.y,
+                                     dir.z * perp1.x - dir.x * perp1.z,
+                                     dir.x * perp1.y - dir.y * perp1.x
+                                 };
+                                 
+                                 int segments = (int)(len * 5.0f); // 5 segs per block
+                                 if (segments < 2) segments = 2;
+                                 
+                                 Vector3 prev_p = start;
+                                 float spiral_speed = -15.0f * time;
+                                 float radius = 0.3f * (1.0f + 0.2f * pulse); // Pulsing radius (Wider for volumetric beam)
+                                 
+                                 for (int i = 0; i <= segments; i++) {
+                                     float t = (float)i / (float)segments;
+                                     float ang = t * 20.0f + spiral_speed; // Twist factor
+                                     
+                                     // radius tapers at ends
+                                     float r = radius * sin(t * 3.14159f);
+                                     
+                                     float ca = cos(ang);
+                                     float sa = sin(ang);
+                                     
+                                     Vector3 cur_p;
+                                     cur_p.x = start.x + dir.x * (t * len) + (perp1.x * ca + perp2.x * sa) * r;
+                                     cur_p.y = start.y + dir.y * (t * len) + (perp1.y * ca + perp2.y * sa) * r;
+                                     cur_p.z = start.z + dir.z * (t * len) + (perp1.z * ca + perp2.z * sa) * r;
+                                     
+                                     if (i > 0) DrawLine3D(prev_p, cur_p, outer_col);
+                                     prev_p = cur_p;
+                                 }
+                             }
+                             rlSetBlendMode(BLEND_ALPHA);
+                             
+                             // --- Enhanced Block Feedback ---
+                             float progress = destroy_timer / 3.0f;
+                             if (progress > 1.0f) progress = 1.0f;
+                             
+                             // 1. Shaking (Random offset)
+                             float shake_amp = 0.02f * progress;
+                             float shake_x = ((float)(rand() % 100) / 100.0f - 0.5f) * shake_amp;
+                             float shake_y = ((float)(rand() % 100) / 100.0f - 0.5f) * shake_amp;
+                             float shake_z = ((float)(rand() % 100) / 100.0f - 0.5f) * shake_amp;
+                             
+                             // 2. Pulsating Limit Scale
+                             float p_scale = 1.0f + 0.15f * sin(time * 30.0f) * progress; // Expands/contracts violently
+                             
+                             // 3. Inner Shrinking Core
+                             float inner_scale = 1.005f - (progress * 0.9f); // Shrinks to dot
+                             
+                             rlPushMatrix();
+                             // Translate to center of block (hit.x+0.5, etc.) + shake
+                             rlTranslatef((float)hit.x + 0.5f + shake_x, (float)hit.y + 0.5f + shake_y, (float)hit.z + 0.5f + shake_z);
+                             
+                                 // Draw Outer Glow/Overlay
+                                 // Color shifts from Blue (Start) to Red/White (Critical)
+                                 Color overlay_col = (Color){ 
+                                     (unsigned char)(progress * 255), 
+                                     (unsigned char)(100 * (1.0f - progress)), 
+                                     (unsigned char)(255 * (1.0f - progress)), 
+                                     (unsigned char)(100 + 100 * progress) 
+                                 };
+                                 
+                                 rlPushMatrix();
+                                 rlScalef(p_scale, p_scale, p_scale);
+                                 DrawCube((Vector3){0,0,0}, 1.05f, 1.05f, 1.05f, overlay_col);
+                                 rlPopMatrix();
+
+                                 // Draw Inner Destabilized Core
+                                 if ((int)(time * 20.0f) % 2 == 0) {
+                                     rlScalef(inner_scale, inner_scale, inner_scale);
+                                     DrawCube((Vector3){0,0,0}, 1.0f, 1.0f, 1.0f, (Color){255, 255, 255, 180});
+                                 }
+                                 
+                             rlPopMatrix();
+                             
+                             // Spawn particles occasionally while destroying
+                             if ((rand() % 10) == 0) {
+                                 spawn_particle((float)hit.x + 0.5f + (float)hit.face_x * 0.55f, (float)hit.y + 0.5f + (float)hit.face_y * 0.55f, (float)hit.z + 0.5f + (float)hit.face_z * 0.55f, (Color){100, 100, 100, 150});
+                             }
                         }
                         
-                        let south = get_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z - 1);
-                        if south == 12 { // South wall torch
-                            set_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z - 1, BLOCK_AIR);
+                        if (destroy_timer > 3.0) {
+                            spawn_explosion((float)hit.x + 0.5f, (float)hit.y + 0.5f, (float)hit.z + 0.5f, 20, rl::Color{r: 150, g: 150, b: 150, a: 200});
+
+                            // --- DESTRUCTION LOGIC ---
+                             let fill_block = BLOCK_AIR;
+                             
+                             // Check neighbors for water adjacency (Instant fill)
+                             let n_up = get_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
+                             let n_n = get_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z + 1);
+                             let n_s = get_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z - 1);
+                             let n_e = get_block(&chunks[0], MAX_CHUNKS, hit.x + 1, hit.y, hit.z);
+                             let n_w = get_block(&chunks[0], MAX_CHUNKS, hit.x - 1, hit.y, hit.z);
+                             
+                             if (n_up == BLOCK_WATER || n_up == BLOCK_WATER_1 || n_up == BLOCK_WATER_2 ||
+                                 n_n == BLOCK_WATER || n_n == BLOCK_WATER_1 || n_n == BLOCK_WATER_2 ||
+                                 n_s == BLOCK_WATER || n_s == BLOCK_WATER_1 || n_s == BLOCK_WATER_2 ||
+                                 n_e == BLOCK_WATER || n_e == BLOCK_WATER_1 || n_e == BLOCK_WATER_2 ||
+                                 n_w == BLOCK_WATER || n_w == BLOCK_WATER_1 || n_w == BLOCK_WATER_2) {
+                                 fill_block = BLOCK_WATER;
+                             }
+     
+                             set_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z, fill_block);
+                             
+                             // Remove plant entities above this block
+                             remove_plant_at(&chunks[0], MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
+                             
+                             // Auto-destroy attached torches, tallgrass, AND leaves (if resting on this block)
+                             let above = get_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
+                             if above == BLOCK_TALLGRASS || above == 10 || above == BLOCK_LEAVES { // 10 = floor torch
+                                 set_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y + 1, hit.z, BLOCK_AIR);
+                                 remove_plant_at(&chunks[0], MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
+                             }
+                             
+                             // Check all 4 sides for wall torches attached to this block
+                             let north = get_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z + 1);
+                             if north == 11 { // North wall torch
+                                 set_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z + 1, BLOCK_AIR);
+                             }
+                             
+                             let south = get_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z - 1);
+                             if south == 12 { // South wall torch
+                                 set_block(&chunks[0], MAX_CHUNKS, hit.x, hit.y, hit.z - 1, BLOCK_AIR);
+                             }
+                             
+                             let east = get_block(&chunks[0], MAX_CHUNKS, hit.x + 1, hit.y, hit.z);
+                             if east == 13 { // East wall torch
+                                 set_block(&chunks[0], MAX_CHUNKS, hit.x + 1, hit.y, hit.z, BLOCK_AIR);
+                             }
+                             
+                             let west = get_block(&chunks[0], MAX_CHUNKS, hit.x - 1, hit.y, hit.z);
+                             if west == 14 { // West wall torch
+                                 set_block(&chunks[0], MAX_CHUNKS, hit.x - 1, hit.y, hit.z, BLOCK_AIR);
+                             }
+                             
+                             let cx = (int)floor((float)hit.x / 16.0);
+                             let cz = (int)floor((float)hit.z / 16.0);
+                             let idx = get_chunk_index(cx, cz);
+                             
+                             // Full recalc on this chunk AND neighbors (ASYNC)
+                             request_mesh_async(idx, 1); // INSTANT VISUAL FEEDBACK (Geometry first)
+                             request_light_async(idx, 4, 1); // REQ_LIGHT_RECALC, High
+                             // chunks[idx].mesh_dirty = 1; // Will be set by async result
+                             chunks[idx].grass_deco_built = 0; // Force grass deco rebuild
+                             request_save_async(&chunks[idx]);
+                             
+                             // Also recalculate neighbor chunks lighting
+                             let idx_xm = get_chunk_index(cx - 1, cz);
+                             let idx_xp = get_chunk_index(cx + 1, cz);
+                             let idx_zm = get_chunk_index(cx, cz - 1);
+                             let idx_zp = get_chunk_index(cx, cz + 1);
+                             
+                             if chunks[idx_xm].x == cx - 1 && chunks[idx_xm].z == cz {
+                                 request_mesh_async(idx_xm, 1);
+                                 request_light_async(idx_xm, 4, 1);
+                                 chunks[idx_xm].grass_deco_built = 0;
+                             }
+                             if chunks[idx_xp].x == cx + 1 && chunks[idx_xp].z == cz {
+                                 request_mesh_async(idx_xp, 1);
+                                 request_light_async(idx_xp, 4, 1);
+                                 chunks[idx_xp].grass_deco_built = 0;
+                             }
+                             if chunks[idx_zm].x == cx && chunks[idx_zm].z == cz - 1 {
+                                 request_mesh_async(idx_zm, 1);
+                                 request_light_async(idx_zm, 4, 1);
+                                 chunks[idx_zm].grass_deco_built = 0;
+                             }
+                             if chunks[idx_zp].x == cx && chunks[idx_zp].z == cz + 1 {
+                                 request_mesh_async(idx_zp, 1);
+                                 request_light_async(idx_zp, 4, 1);
+                                 chunks[idx_zp].grass_deco_built = 0;
+                             }
+                             
+                             // Reset after destroy
+                             destroy_timer = 0.0;
+                             destroy_target_x = -999;
                         }
-                        
-                        let east = get_block(&chunks[0], MAX_CHUNKS, hit.x + 1, hit.y, hit.z);
-                        if east == 13 { // East wall torch
-                            set_block(&chunks[0], MAX_CHUNKS, hit.x + 1, hit.y, hit.z, BLOCK_AIR);
-                        }
-                        
-                        let west = get_block(&chunks[0], MAX_CHUNKS, hit.x - 1, hit.y, hit.z);
-                        if west == 14 { // West wall torch
-                            set_block(&chunks[0], MAX_CHUNKS, hit.x - 1, hit.y, hit.z, BLOCK_AIR);
-                        }
-                        
-                        let cx = (int)floor((float)hit.x / 16.0);
-                        let cz = (int)floor((float)hit.z / 16.0);
-                        let idx = get_chunk_index(cx, cz);
-                        
-                        // Full recalc on this chunk AND neighbors (ASYNC)
-                        request_light_async(idx, 4); // REQ_LIGHT_RECALC
-                        // chunks[idx].mesh_dirty = 1; // Will be set by async result
-                        chunks[idx].grass_deco_built = 0; // Force grass deco rebuild
-                        request_save_async(&chunks[idx]);
-                        
-                        // Also recalculate neighbor chunks lighting
-                        let idx_xm = get_chunk_index(cx - 1, cz);
-                        let idx_xp = get_chunk_index(cx + 1, cz);
-                        let idx_zm = get_chunk_index(cx, cz - 1);
-                        let idx_zp = get_chunk_index(cx, cz + 1);
-                        
-                        if chunks[idx_xm].x == cx - 1 && chunks[idx_xm].z == cz {
-                            request_light_async(idx_xm, 4);
-                            chunks[idx_xm].grass_deco_built = 0;
-                        }
-                        if chunks[idx_xp].x == cx + 1 && chunks[idx_xp].z == cz {
-                            request_light_async(idx_xp, 4);
-                            chunks[idx_xp].grass_deco_built = 0;
-                        }
-                        if chunks[idx_zm].x == cx && chunks[idx_zm].z == cz - 1 {
-                            request_light_async(idx_zm, 4);
-                            chunks[idx_zm].grass_deco_built = 0;
-                        }
-                        if chunks[idx_zp].x == cx && chunks[idx_zp].z == cz + 1 {
-                            request_light_async(idx_zp, 4);
-                            chunks[idx_zp].grass_deco_built = 0;
-                        }
+
+                    } else {
+                        // Button not down
+                        destroy_timer = 0.0;
+                        destroy_target_x = -999;
                     }
-                    else if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_RIGHT) {
+                    
+                    if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_RIGHT) {
                         // Default: place in adjacent block
                         let nx = hit.x + hit.face_x;
                         let ny = hit.y + hit.face_y;
@@ -828,7 +1167,8 @@ fn main() {
                              let idx = get_chunk_index(cx, cz);
                              
                              // Full recalc on this chunk AND neighbors (ASYNC)
-                             request_light_async(idx, 4); // REQ_LIGHT_RECALC
+                             request_mesh_async(idx, 1); // INSTANT VISUAL FEEDBACK (Geometry first)
+                             request_light_async(idx, 4, 1); // REQ_LIGHT_RECALC, High
                              chunks[idx].grass_deco_built = 0;
                              request_save_async(&chunks[idx]);
                              
@@ -839,19 +1179,23 @@ fn main() {
                              let idx_zp = get_chunk_index(cx, cz + 1);
                              
                              if chunks[idx_xm].x == cx - 1 && chunks[idx_xm].z == cz {
-                                 request_light_async(idx_xm, 4);
+                                 request_mesh_async(idx_xm, 1);
+                                 request_light_async(idx_xm, 4, 1);
                                  chunks[idx_xm].grass_deco_built = 0;
                              }
                              if chunks[idx_xp].x == cx + 1 && chunks[idx_xp].z == cz {
-                                 request_light_async(idx_xp, 4);
+                                 request_mesh_async(idx_xp, 1);
+                                 request_light_async(idx_xp, 4, 1);
                                  chunks[idx_xp].grass_deco_built = 0;
                              }
                              if chunks[idx_zm].x == cx && chunks[idx_zm].z == cz - 1 {
-                                 request_light_async(idx_zm, 4);
+                                 request_mesh_async(idx_zm, 1);
+                                 request_light_async(idx_zm, 4, 1);
                                  chunks[idx_zm].grass_deco_built = 0;
                              }
                              if chunks[idx_zp].x == cx && chunks[idx_zp].z == cz + 1 {
-                                 request_light_async(idx_zp, 4);
+                                 request_mesh_async(idx_zp, 1);
+                                 request_light_async(idx_zp, 4, 1);
                                  chunks[idx_zp].grass_deco_built = 0;
                              }
                         }
@@ -863,18 +1207,27 @@ fn main() {
                 rl::EndMode3D(); 
             }
     
+            // Draw First-Person Arm (separate 3D pass)
+            (&p).draw_arm((float)rl::GetTime());
+    
             // HUD
+            raw { rlDisableDepthTest(); }
             let sw = rl::GetScreenWidth();
             let sh = rl::GetScreenHeight();
-            rl::DrawRectangle(sw/2 - 5, sh/2 - 1, 10, 2, rl::RED);
-            rl::DrawRectangle(sw/2 - 1, sh/2 - 5, 2, 10, rl::RED);
+            let cx = sw/2;
+            let cy = sh/2;
+            // Crosshair Outline (Black)
+            rl::DrawRectangle(cx - 6, cy - 2, 12, 4, rl::BLACK);
+            rl::DrawRectangle(cx - 2, cy - 6, 4, 12, rl::BLACK);
+            // Crosshair (White)
+            rl::DrawRectangle(cx - 5, cy - 1, 10, 2, rl::WHITE);
+            rl::DrawRectangle(cx - 1, cy - 5, 2, 10, rl::WHITE);
     
             rl::DrawText("Zen Craft", 10, 10, 40, rl::WHITE);
             
             // Version
-            let v_text = "v0.0.1 alpha";
-            let v_width = rl::MeasureText(v_text, 20);
-            rl::DrawText(v_text, sw - v_width - 10, 10, 20, rl::WHITE);
+            let v_width = rl::MeasureText(VERSION_TEXT, 20);
+            rl::DrawText(VERSION_TEXT, sw - v_width - 10, 10, 20, rl::WHITE);
 
             rl::DrawText("Select: 1-7", 10, 60, 20, rl::WHITE);
             rl::DrawText(rl::TextFormat("Block: %d", selected_block), 10, 90, 20, rl::WHITE);
@@ -887,7 +1240,7 @@ fn main() {
                 
                 let dy = 120;
                 rl::DrawFPS(10, dy); dy += 25;
-                rl::DrawText(rl::TextFormat("Chunks: %d / %d (Rendered: %d)", loaded_chunks, MAX_CHUNKS, rendered_chunks), 10, dy, 20, rl::LIME); dy += 25;
+                rl::DrawText(rl::TextFormat("Chunks: %d / %d", loaded_chunks, MAX_CHUNKS), 10, dy, 20, rl::LIME); dy += 25;
                 rl::DrawText(rl::TextFormat("Zibis: %d", MAX_ZIBIS), 10, dy, 20, rl::LIME); dy += 25;
                 rl::DrawText(rl::TextFormat("XYZ: %.2f, %.2f, %.2f", p.x, p.y, p.z), 10, dy, 20, rl::LIME); dy += 25;
                 
@@ -940,24 +1293,27 @@ fn main() {
                 rl::DrawRectangleLines(menu_x, menu_y, menu_w, menu_h, rl::WHITE);
                 rl::DrawText("CONFIGURATION", menu_x + 80, menu_y + 10, 20, rl::WHITE);
                 
-                // Grass Distance Control
-                rl::DrawText("Grass Dist:", menu_x + 20, menu_y + 50, 20, rl::WHITE);
+                // Grass Decoration Toggle
+                rl::DrawText("Grass Deco:", menu_x + 20, menu_y + 50, 20, rl::WHITE);
                 
-                // (-) Button
-                rl::DrawRectangle(menu_x + 180, menu_y + 50, 20, 20, rl::GRAY);
-                rl::DrawText("-", menu_x + 185, menu_y + 50, 20, rl::WHITE);
-                if clicked && mx >= menu_x + 180 && mx <= menu_x + 200 && my >= menu_y + 50 && my <= menu_y + 70 {
-                    if grass_dist > 0.0 { grass_dist = grass_dist - 4.0; }
+                // Toggle Button
+                let is_on = grass_dist > 0.1;
+                let btn_col = rl::RED;
+                let btn_text = "OFF";
+                if is_on {
+                    btn_col = rl::LIME;
+                    btn_text = "ON";
                 }
                 
-                // Value
-                rl::DrawText(rl::TextFormat("%.0f", grass_dist), menu_x + 210, menu_y + 50, 20, rl::WHITE);
+                rl::DrawRectangle(menu_x + 180, menu_y + 45, 60, 30, btn_col);
+                rl::DrawText(btn_text, menu_x + 195, menu_y + 50, 20, rl::BLACK);
                 
-                // (+) Button
-                rl::DrawRectangle(menu_x + 250, menu_y + 50, 20, 20, rl::GRAY);
-                rl::DrawText("+", menu_x + 255, menu_y + 50, 20, rl::WHITE);
-                if clicked && mx >= menu_x + 250 && mx <= menu_x + 270 && my >= menu_y + 50 && my <= menu_y + 70 {
-                    if grass_dist < 80.0 { grass_dist = grass_dist + 4.0; }
+                if clicked && mx >= menu_x + 180 && mx <= menu_x + 240 && my >= menu_y + 45 && my <= menu_y + 75 {
+                    if is_on {
+                        grass_dist = 0.0;
+                    } else {
+                        grass_dist = 2000.0;
+                    }
                 }
                 
                 // Draw Distance
@@ -1020,4 +1376,7 @@ fn main() {
         rl::EndDrawing();
         rl::WaitTime(0.01);
     }
+    
+    // IMPORTANT: Shutdown persistence threads safely
+    cleanup_persistence();
 }

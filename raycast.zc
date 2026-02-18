@@ -11,6 +11,7 @@ struct RaycastHit {
     face_x: int;
     face_y: int;
     face_z: int;
+    distance: float;
 }
 
 fn raycast(chunks: Chunk*, num_chunks: int, ox: float, oy: float, oz: float, dx: float, dy: float, dz: float, max_dist: float) -> RaycastHit {
@@ -38,7 +39,9 @@ fn raycast(chunks: Chunk*, num_chunks: int, ox: float, oy: float, oz: float, dx:
         let iy = (int)floor(y);
         let iz = (int)floor(z);
 
-        if get_block(chunks, num_chunks, ix, iy, iz) != BLOCK_AIR {
+        let b = get_block(chunks, num_chunks, ix, iy, iz);
+        // Treat water as transparent/air for raycasting
+        if (b != BLOCK_AIR && b != BLOCK_WATER && b != BLOCK_WATER_1 && b != BLOCK_WATER_2) {
             r.hit = 1;
             r.x = ix;
             r.y = iy;
@@ -53,8 +56,10 @@ fn raycast(chunks: Chunk*, num_chunks: int, ox: float, oy: float, oz: float, dx:
             else if ix < last_x { r.face_x = 1; }
             else if iy > last_y { r.face_y = -1; }
             else if iy < last_y { r.face_y = 1; }
-            else if iz > last_z { r.face_z = -1; }
-            else if iz < last_z { r.face_z = 1; }
+            else if (iz > last_z) { r.face_z = -1; }
+            else if (iz < last_z) { r.face_z = 1; }
+            
+            r.distance = dist;
 
             return r;
         }

@@ -20,6 +20,9 @@ struct Zibi {
     
     // Animation
     anim_time: float;
+    
+    // Lifecycle
+    active: int;
 }
 
 // Zibi Constants
@@ -41,19 +44,30 @@ impl Zibi {
         inst.state_timer = 2.0;
         inst.target_yaw = 0.0;
         inst.anim_time = 0.0;
+        inst.active = 1;
         return inst;
     }
 
-    fn update(self, chunks: Chunk*, num_chunks: int, dt: float) {
+    // Returns 1 if still active, 0 if despawned
+    fn update(self, chunks: Chunk*, num_chunks: int, dt: float) -> int {
+        if self.active == 0 { return 0; }
+        
         // --- Check if in loaded chunk ---
         let cx = (int)floor(self.x / 16.0);
         let cz = (int)floor(self.z / 16.0);
         
         let idx = get_chunk_index(cx, cz);
         
-        // If chunk is not loaded or not matching coordinates, freeze (don't update)
+        // Safety: Check bounds or invalid index
+        if idx < 0 || idx >= num_chunks {
+            self.active = 0;
+            return 0;
+        }
+
+        // If chunk is not loaded or not matching coordinates, DESPAWN
         if (chunks[idx].x != cx || chunks[idx].z != cz) {
-            return;
+            self.active = 0;
+            return 0;
         }
 
         // --- 1. AI / Behavior ---
@@ -145,27 +159,17 @@ impl Zibi {
         }
         
         if self.y < -50.0 { 
-             // Respawn near player? We don't have player pos here easily without changing signature.
-             // But we can just respawn high up at CURRENT x/z if the chunk is loaded?
-             // Or reset to 0,0?
-             // Since we don't have player loaded, let's just put them very high up, BUT they might fall again if chunk not loaded.
-             // Better: Check if chunk is loaded.
-             
-             // For now, respawn at a "Safe" height of 100, but at their XZ.
-             // If they are far away, they will keep falling.
-             // Ideally we should disable them if they are far.
-             // But to stop flickering, we just stop moving them if they fall too far?
-             
-             // Hack: effectively kill them / stop updating.
-             // self.state = 0; self.vy = 0; self.y = -60.0; return;
-             
-             // Or loop them to top:
-             self.y = (float)CHUNK_HEIGHT + 10.0;
-             self.vy = 0.0;
+             // Fell out of world - DESPAWN
+             self.active = 0;
+             return 0;
         }
+        
+        return 1;
     }
 
     fn draw(self, chunks: Chunk*, num_chunks: int, day_time: float) {
+        if self.active == 0 { return; }
+        
         // --- ZIBI RENDERING (SHREK STYLE) ---
         
         // --- Lighting Calc ---

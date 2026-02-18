@@ -16,3 +16,11 @@ def BLOCK_TORCH_N = 11; // Wall North (Z+)
 def BLOCK_TORCH_S = 12; // Wall South (Z-)
 def BLOCK_TORCH_E = 13; // Wall East (X+)
 def BLOCK_TORCH_W = 14; // Wall West (X-)
+def BLOCK_GLASS_PANE = 17; // Glass Pane
+
+// Water Levels (Diminishing height)
+def BLOCK_WATER_2 = 15; // 2/3 Height
+def BLOCK_WATER_1 = 16; // 1/3 Height
+def BLOCK_CRYSTAL = 18; // New: Crystal
+def BLOCK_PLANKS = 19;  // New: Wood Planks
+def BLOCK_COBBLESTONE = 20; // New: Cobblestone

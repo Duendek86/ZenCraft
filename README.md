@@ -1,5 +1,4 @@
 # ZenCraft
-**Version:** 0.0.1 alpha
 
 A voxel-based sandbox game inspired by Minecraft, featuring procedural terrain generation, asynchronous chunk loading, and dynamic lighting.
 

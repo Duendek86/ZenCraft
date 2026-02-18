@@ -1,0 +1,95 @@
+// particles.zc
+import "raylib.h" as rl;
+import "rlgl.h";
+import "math.h";
+
+struct Particle {
+    x: float;
+    y: float;
+    z: float;
+    vx: float;
+    vy: float;
+    vz: float;
+    life: float;
+    color: rl::Color;
+    size: float;
+    active: int;
+}
+
+def MAX_PARTICLES = 500;
+let particles: Particle[500];
+
+fn init_particles() {
+    for i in 0..MAX_PARTICLES {
+        particles[i].active = 0;
+    }
+}
+
+fn spawn_particle(x: float, y: float, z: float, color: rl::Color) {
+    // Find free slot
+    for i in 0..MAX_PARTICLES {
+        if particles[i].active == 0 {
+            particles[i].x = x;
+            particles[i].y = y;
+            particles[i].z = z;
+            
+            raw {
+                // Random velocity (Explosion)
+                particles[i].vx = ((float)GetRandomValue(-100, 100) / 100.0f) * 4.0f;
+                particles[i].vy = ((float)GetRandomValue(-50, 200) / 100.0f) * 3.0f; // More up
+                particles[i].vz = ((float)GetRandomValue(-100, 100) / 100.0f) * 4.0f;
+            }
+            
+            particles[i].life = 1.0; // 1 second
+            particles[i].color = color;
+            particles[i].size = 0.1 + ((float)(rand()%10)/50.0);
+            particles[i].active = 1;
+            return;
+        }
+    }
+}
+
+fn spawn_explosion(x: float, y: float, z: float, count: int, color: rl::Color) {
+    for i in 0..count {
+        spawn_particle(x, y, z, color);
+    }
+}
+
+fn update_particles(dt: float) {
+   for i in 0..MAX_PARTICLES {
+       if particles[i].active {
+           particles[i].x += particles[i].vx * dt;
+           particles[i].y += particles[i].vy * dt;
+           particles[i].z += particles[i].vz * dt;
+           
+           particles[i].vy -= 9.0 * dt; // Gravity
+           
+           particles[i].life -= dt * 1.5; // Fade faster
+           if particles[i].life <= 0 {
+               particles[i].active = 0;
+           }
+       }
+   }
+}
+
+fn draw_particles() {
+    // raw { rlDisableDepthMask(); } // rendering transparency?
+    for i in 0..MAX_PARTICLES {
+        if particles[i].active {
+            // Fade out
+            let col: rl::Color = particles[i].color;
+            // Linear fade
+            let alpha: float = particles[i].life;
+            if alpha < 0.0 { alpha = 0.0; }
+            if alpha > 1.0 { alpha = 1.0; }
+            
+            raw { 
+                col.a = (unsigned char)(particles[i].life * 255.0f); 
+            }
+            
+            rl::DrawCube(rl::Vector3{x: particles[i].x, y: particles[i].y, z: particles[i].z},
+                         particles[i].size, particles[i].size, particles[i].size, col);
+        }
+    }
+    // raw { rlEnableDepthMask(); }
+}

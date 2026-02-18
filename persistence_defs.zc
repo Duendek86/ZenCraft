@@ -1,0 +1,86 @@
+
+// Constants for Async System
+def MAX_PENDING_IO = 512;
+
+// Request Types
+def REQ_NONE = 0;
+def REQ_SAVE = 1;
+def REQ_LOAD = 2;
+def REQ_BUILD_MESH = 3;
+def REQ_LIGHT_RECALC = 4;
+def REQ_LIGHT_PROPAGATE = 5;
+
+// Request Status
+def IO_STATUS_FREE = 0;
+def IO_STATUS_PENDING = 1;
+def IO_STATUS_COMPLETED = 2;
+def IO_STATUS_FAILED = 3;
+
+// We need a Data struct that can hold a chunk's data for off-thread processing
+struct ChunkData {
+    blocks: int[16][128][16];
+    light: int[16][128][16];
+    plant_count: int;
+    plants: Plant[64];
+    light_calculated: int; // 1 if lighting was computed by generator
+}
+
+struct IORequest {
+    io_status: int;   // Thread-safe flag (renamed from status to avoid conflicts)
+    type: int;        // REQ_SAVE, REQ_LOAD, REQ_BUILD_MESH
+    cx: int;
+    cz: int;
+    target_idx: int;  // Index in global chunks array (for writeback or read)
+    
+    // Data variants
+    data: ChunkData;  // For Save/Load
+    
+    // Mesh Data (Output of REQ_BUILD_MESH)
+    mesh_data: ChunkMeshes;
+    plant_mesh: rl::Mesh;
+    
+    // Priority
+    priority: int; // 0=LOW, 1=HIGH
+}
+
+struct ProfilingStats {
+    mesh_ms: float;
+    gen_ms: float;
+    prop_ms: float;
+}
+
+struct HousePos {
+    x: int; // Global block X
+    y: int; // Floor Y
+    z: int; // Global block Z
+    w: int; // width (x-axis size)
+    d: int; // depth (z-axis size)
+    h: int; // height (walls)
+}
+
+raw {
+    typedef struct {
+        float x, y, z;
+        int selected_block;
+        float yaw, pitch;
+    } PlayerSaveData;
+    
+    // C Definition for IORequest to match ZC struct layout if needed
+    // But since ZC structs map to C structs usually, we rely on ZC compiler.
+    // However, persistence.zc had raw C struct definition for Queue?
+    // Let's check if we need raw block for IORequest.
+    // persistence.zc had:
+    /*
+    typedef struct {
+        volatile int status;
+        int type;
+        ...
+    } RawIORequest;
+    */
+    // If we use ZC struct IORequest, it generates a C struct.
+    // But we need `volatile int status`. ZC `int` is just `int`.
+    // In C block in persistence.zc, we might cast IORequest* to RawIORequest*?
+    // Or just use RawIORequest in C blocks.
+    // I will keep the ZC struct definition here.
+    // And in persistence.zc raw blocks, we can treat it as compatible if fields match.
+}

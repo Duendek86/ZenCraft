@@ -11,141 +11,188 @@ out vec4 finalColor;
 
 uniform sampler2D texture0;
 uniform vec3 uLightDir;
-uniform vec3 uLightCol; // Color del sol (ej: 1.0, 0.9, 0.8)
-uniform vec3 uAmbient;  // Color de sombra (ej: 0.1, 0.1, 0.3)
+uniform vec3 uLightCol; // Color del sol
+uniform vec3 uAmbient;  // Color ambiental
 uniform vec3 viewPos;
 uniform float time;
 
-// Función para simular micro-relieve en el agua sin texturas extra
-float waveNoise(vec2 p, float t) {
-    float n = sin(p.x * 2.0 + t) * 0.5 + sin(p.y * 1.5 + t * 1.2) * 0.5;
-    n += sin((p.x + p.y) * 4.0 - t * 2.0) * 0.2; // Detalles finos
+// Función de ruido simple para simular agua sin texturas externas
+float hash(vec2 p) { return fract(1e4 * sin(17.0 * p.x + p.y * 0.1) * (0.1 + abs(sin(p.y * 13.0 + p.x)))); }
+
+float noise(vec2 x) {
+    vec2 i = floor(x);
+    vec2 f = fract(x);
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+}
+
+// Función fractal para olas más detalladas
+float fbm(vec2 x) {
+    float v = 0.0;
+    float a = 0.5;
+    vec2 shift = vec2(100.0);
+    mat2 rot = mat2(cos(0.5), sin(0.5), -sin(0.5), cos(0.50));
+    for (int i = 0; i < 3; ++i) { // 3 octavas
+        v += a * noise(x);
+        x = rot * x * 2.0 + shift;
+        a *= 0.5;
+    }
+    return v;
+}
+
+// ==========================================
+// FUNCIÓN PRINCIPAL DE SUPERFICIE DE AGUA
+// ==========================================
+vec3 getWaterNormal(vec3 pos, float t, bool isFlowing) {
+    float scale = 0.8; // Escala de las olas
+    vec2 p = pos.xz * scale;
+    
+    float height = 0.0;
+    
+    if (isFlowing) {
+        // --- AGUA EN MOVIMIENTO ---
+        // Se desplaza rápidamente en una dirección (simulando corriente)
+        // Usamos dos capas moviéndose a velocidades distintas para que no se vea como una textura estática deslizando
+        float flowSpeed = 1.5;
+        vec2 flowDir = vec2(0.7, 0.5); // Dirección diagonal
+        
+        height += fbm(p + t * flowSpeed * flowDir) * 0.6; 
+        height += fbm(p * 1.5 - t * (flowSpeed * 0.8) * vec2(flowDir.y, -flowDir.x)) * 0.4; // Turbulencia cruzada
+    } else {
+        // --- AGUA ESTÁTICA ---
+        // Movimiento orgánico y lento, sin dirección fija
+        height += fbm(p + t * 0.2) * 0.5;
+        height += fbm(p * 1.3 - t * 0.15) * 0.5;
+    }
+    
+    // Convertir el mapa de altura en normales
+    // Calculamos la diferencia de altura con puntos vecinos
+    vec2 eps = vec2(0.1, 0.0);
+    // Nota: simplificación de derivada para rendimiento
+    float h1 = fbm((p + eps.xy) + (isFlowing ? t : 0.0)); 
+    float h2 = fbm((p + eps.yx) + (isFlowing ? t : 0.0));
+    
+    // Construir vector normal
+    // Cuanto más alto el multiplicador (2.0), más "picado" el mar
+    vec3 n = normalize(vec3(height - h1, 2.0, height - h2)); 
     return n;
 }
 
 void main()
 {
     vec4 texelColor = texture(texture0, fragTexCoord);
-    
-    // Alpha Clipping para la hierba (para que se vea definida y no con bordes raros)
     if (texelColor.a < 0.5) discard;
-    
+
     vec3 normal = normalize(fragNormal);
     vec3 lightDir = normalize(uLightDir);
     vec3 viewDir = normalize(viewPos - fragPosition);
-    
     vec3 resultColor = vec3(0.0);
     float finalAlpha = texelColor.a;
 
-    // ==========================================
-    // 1. ILUMINACIÓN AGUA (Estilo Shader Pack)
-    // ==========================================
-    if (fragColor.b > 0.9) {
-        // Data from vertex
-        float skyLight = fragColor.g; // Sun/Sky light level attenutation (0.0-1.0)
-        skyLight = pow(skyLight, 4.0); // Curve for darkness
+    // Detectar si es agua (Vertex color Blue > 0.7)
+    bool isWater = fragColor.b > 0.7;
 
-        // Generate fake normals for waves
-        float w = waveNoise(vWorldPos.xz * 0.5, time * 1.5);
-        vec3 waterNormal = normalize(vec3(w * 0.2, 1.0, w * 0.15)); 
+    if (isWater) {
+        // ==========================================
+        // ILUMINACIÓN DE AGUA AVANZADA
+        // ==========================================
         
-        // Fresnel
-        float fresnel = pow(1.0 - max(dot(viewDir, waterNormal), 0.0), 3.0);
+        // 1. Detectar tipo de agua
+        // Si el azul está entre 0.7 y 0.85 es flujo, si es > 0.9 es estática
+        bool isFlowing = (fragColor.b < 0.85);
         
-        // Dynamic Water Colors
-        // Multiply by uAmbient to darken at night
-        // Boost a bit because uAmbient is very dark now (0.001)
-        vec3 ambientTerm = max(uAmbient, vec3(0.005)); 
+        // 2. Obtener Normal del Agua (Unificada pero con comportamiento distinto)
+        vec3 waterNormal = getWaterNormal(vWorldPos, time, isFlowing);
         
-        vec3 deepWater = vec3(0.05, 0.15, 0.3) * ambientTerm * 4.0; 
-        vec3 surfaceWater = vec3(0.0, 0.4, 0.6) * ambientTerm * 4.0;
+        // Si es flujo, añadimos un poco de espuma simulada basada en la altura de la ola
+        float foam = 0.0;
+        if (isFlowing) {
+            foam = smoothstep(0.4, 0.7, waterNormal.y); // Crestas de olas más blancas
+        }
         
-        // Sky Reflection should match Sky Color (uLightCol)
-        // But uLightCol is Sunlight color. During day it's white.
-        // We want blue reflection. 
-        // Let's Mix uLightCol with a Sky Tint.
-        vec3 skyTint = vec3(0.5, 0.7, 1.0);
-        vec3 skyReflection = uLightCol * skyTint * 0.5; // Dampen slightly
+        // 3. Colores Base (Gradient profundo)
+        // Agua profunda oscura y superficie más clara turquesa
+        vec3 colDeep = vec3(0.02, 0.05, 0.15);  // Azul marino oscuro
+        vec3 colShallow = vec3(0.0, 0.35, 0.5); // Turquesa
+        if (isFlowing) colShallow = vec3(0.2, 0.5, 0.6); // Flujo un poco más claro/espumoso
         
-        // Mix Base
-        vec3 waterBase = mix(deepWater, surfaceWater, 0.5 + w * 0.2);
+        // Mezcla basada en la normal (falso efecto de profundidad)
+        vec3 albedo = mix(colDeep, colShallow, waterNormal.y * 0.5 + 0.5);
         
-        // Apply Sky Light Attenuation (Shadows/Caves)
-        waterBase *= skyLight;
-        skyReflection *= skyLight;
-        
-        // Mix Reflection
-        resultColor = mix(waterBase, skyReflection, fresnel * 0.8);
-        
-        // Specular (Sun/Moon Reflection)
+        // Añadir espuma en el flujo
+        if (isFlowing) albedo = mix(albedo, vec3(0.9, 0.95, 1.0), foam * 0.3);
+
+        // 4. Especular (El brillo del sol - Crucial para que se vea bien)
         vec3 halfwayDir = normalize(lightDir + viewDir);
-        float spec = pow(max(dot(waterNormal, halfwayDir), 0.0), 256.0); 
-        resultColor += uLightCol * spec * 2.0 * skyLight; // Mask spec by sky light
-        
-        // Visibility adjustments
-        finalAlpha = clamp(0.35 + fresnel * 0.45, 0.0, 1.0);
-    
-    } 
-    // ==========================================
-    // 2. ILUMINACIÓN TERRENO (Hierba, Tierra, Bloques)
-    // ==========================================
-    else {
-        // Data unpacking from Vertex Color
-        float blockLight = fragColor.r; // 0.0 - 1.0 (Torch)
-        float skyLight = fragColor.g;   // 0.0 - 1.0 (Sun/Sky)
+        float specStrength = 1.0;
+        float shininess = 128.0; // Cuanto más alto, más pequeño y nítido el punto de luz
+        float spec = pow(max(dot(waterNormal, halfwayDir), 0.0), shininess);
+        vec3 specularColor = uLightCol * spec * specStrength;
 
-        // --- Diffuse (Sun) ---
-        // Sun only lights up blocks exposed to sky (skyLight > 0)
-        // We also apply a shadow ramp so low sky light = no sun
+        // 5. Efecto Fresnel (Reflexión angular)
+        // Si miras perpendicular (abajo), ves el fondo (transparente).
+        // Si miras rasante, ves el cielo (reflejo).
+        float fresnel = pow(1.0 - max(dot(viewDir, waterNormal), 0.0), 4.0);
+        
+        // Color del cielo aproximado (dinámico según el sol)
+        // Usamos uLightCol (color del sol) para que de noche sea oscuro
+        vec3 skyColor = uLightCol * vec3(0.4, 0.6, 0.9); 
+        
+        // Mezclamos el color base del agua con el reflejo del cielo según Fresnel
+        vec3 waterFinal = mix(albedo * (uAmbient + 0.05), skyColor, fresnel * 0.6);
+        
+        // Añadimos el brillo del sol encima
+        waterFinal += specularColor;
+        
+        // Iluminación básica de sombras (Sky light attenuation)
+        float skyLight = pow(fragColor.g, 2.0); // Canal verde es luz de cielo
+        waterFinal *= max(skyLight, 0.1); // Nunca totalmente negro
+
+        resultColor = waterFinal;
+        
+        // Ajuste de Alpha: Más transparente en el centro, más opaco en ángulos rasantes
+        finalAlpha = clamp(0.4 + fresnel * 0.5 + foam * 0.3, 0.0, 1.0);
+        
+    } else {
+        // ==========================================
+        // ILUMINACIÓN TERRENO ESTÁNDAR (Simplificada)
+        // ==========================================
+        float blockLight = fragColor.r;
+        float skyLight = fragColor.g;
+
+        // Difusa
         float diff = max(dot(normal, lightDir), 0.0);
         vec3 sunLight = (diff * uLightCol) * skyLight;
         
-        // --- Ambient (Hemispheric) ---
-        // Use uniform uAmbient for the base color (dynamic day/night)
-        // Sky ambient is uAmbient. Ground ambient is dimmer.
-        float hemiMix = normal.y * 0.5 + 0.5;
-        vec3 ambientSky = uAmbient;
-        vec3 ambientGround = uAmbient * 0.3; // Darker ground
-        vec3 ambientColor = mix(ambientGround, ambientSky, hemiMix);
+        // Ambiental
+        vec3 ambientColor = uAmbient * (normal.y * 0.5 + 0.5); // Hemisférica
         
-        // Ambient is also masked by Sky Light (Deep caves are dark)
-        // We add a small base value so total darkness isn't pitch black if we want (optional)
-        // But for "classic" feel, 0 sky light = 0 ambient from sky.
-        vec3 finalAmbient = ambientColor * skyLight;
+        // Luz de antorcha
+        vec3 torchColor = vec3(1.0, 0.7, 0.4) * pow(blockLight, 2.0) * 2.0;
         
-        // --- Torch Light ---
-        // Warm color, quadratic falloff
-        float torchIntensity = pow(blockLight, 2.0);
-        vec3 torchColor = vec3(1.0, 0.7, 0.4); // More orange/warm
-        vec3 finalTorch = torchColor * torchIntensity * 2.5; // Boost intensity
-        
-        // --- Combine ---
-        vec3 lighting = sunLight + finalAmbient + finalTorch;
-        
-        // Ensure lighting doesn't blow out
-        // lighting = min(lighting, vec3(1.5)); 
-
+        vec3 lighting = sunLight + (ambientColor * skyLight) + torchColor;
         resultColor = texelColor.rgb * lighting;
-
-        // Apply a bit of saturation adjustment for vibrancy
-        float luminance = dot(resultColor, vec3(0.2126, 0.7152, 0.0722));
-        resultColor = mix(vec3(luminance), resultColor, 1.4); // 1.4 = 40% more saturation
     }
 
     // ==========================================
-    // 3. POST-PROCESADO (Niebla y Gamma)
+    // POST-PROCESADO
     // ==========================================
     
-    // Aplicar niebla (azul cielo pálido)
-    vec3 fogColor = mix(uAmbient, uLightCol, 0.5); // Dynamic Fog Color
-    if (length(fogColor) < 0.1) fogColor = vec3(0.01, 0.01, 0.02); // Night fog
-    
+    // Niebla
+    vec3 fogColor = mix(uAmbient, uLightCol, 0.5);
+    if (length(fogColor) < 0.1) fogColor = vec3(0.01, 0.01, 0.02);
     resultColor = mix(fogColor, resultColor, vVisibility);
 
-    // Tone Mapping & Gamma Correction (CRUCIAL para quitar el efecto "lavado")
-    // Esto convierte el color lineal a espacio de color de monitor (sRGB)
-    resultColor = resultColor / (resultColor + vec3(1.0)); // Reinhard Tone Mapping simple
-    resultColor = pow(resultColor, vec3(1.0/2.2));       // Gamma Correction
+    // Tone Mapping & Gamma REMOVED for vibrant colors
+    // resultColor = resultColor / (resultColor + vec3(1.0));
+    // resultColor = pow(resultColor, vec3(1.0/2.2));
+    
+    // Clamp to avoid artifacts
+    resultColor = clamp(resultColor, 0.0, 1.0);
     
     finalColor = vec4(resultColor, finalAlpha);
 }

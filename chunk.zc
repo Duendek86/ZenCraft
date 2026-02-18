@@ -8,7 +8,7 @@ import "lighting.zc";
 import "rendering.zc";
 import "grass_deco.zc";
 
-#define IS_TRANSPARENT(b) ((b) == BLOCK_AIR || ((b) >= 10 && (b) <= 14) || (b) == BLOCK_TALLGRASS || (b) == BLOCK_LEAVES || (b) == BLOCK_WATER)
+#define IS_TRANSPARENT(b) ((b) == BLOCK_AIR || ((b) >= 10 && (b) <= 14) || (b) == BLOCK_GLASS_PANE || (b) == BLOCK_TALLGRASS || (b) == BLOCK_LEAVES || (b) == BLOCK_WATER || (b) == BLOCK_WATER_2 || (b) == BLOCK_WATER_1)
 
 // Externs
 extern fn rand() -> int;
@@ -16,8 +16,8 @@ extern fn abs(v: int) -> int;
 
 // World configuration
 def RENDER_DISTANCE = 15;
-def CHUNK_MAP_SIZE = 31; // RENDER_DISTANCE * 2 + 1
-def MAX_CHUNKS = 961;    // CHUNK_MAP_SIZE * CHUNK_MAP_SIZE
+def CHUNK_MAP_SIZE = 32; // Power of 2 for safety/speed
+def MAX_CHUNKS = 1024;   // 32 * 32
 #define CHUNK_HEIGHT 128
 
 struct Plant {
@@ -80,8 +80,8 @@ fn build_plant_mesh(c: Chunk*, plant_tex: rl::Texture2D);
 
 // Global helpers for multi-chunk operations (Optimized O(1) Lookup)
 fn get_chunk_index(cx: int, cz: int) -> int {
-    let mx = ((cx % CHUNK_MAP_SIZE) + CHUNK_MAP_SIZE) % CHUNK_MAP_SIZE;
-    let mz = ((cz % CHUNK_MAP_SIZE) + CHUNK_MAP_SIZE) % CHUNK_MAP_SIZE;
+    let mx = cx & (CHUNK_MAP_SIZE - 1);
+    let mz = cz & (CHUNK_MAP_SIZE - 1);
     return mz * CHUNK_MAP_SIZE + mx;
 }
 
@@ -118,6 +118,9 @@ fn set_block(chunks: Chunk*, num_chunks: int, x: int, y: int, z: int, type: int)
     let idx = get_chunk_index(cx, cz);
 
     if chunks[idx].x == cx && chunks[idx].z == cz {
+        // Note: We allow block modifications even while locked (mesh building).
+        // Writing a single block value is safe; the mesh will be rebuilt anyway (mesh_dirty).
+        // The lock only prevents chunk RECYCLING (slot reuse), not block edits.
         chunks[idx].blocks[lx][y][lz] = type;
     }
 }
@@ -230,7 +233,7 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
     let gx_base = c.x * 16;
     let gz_base = c.z * 16;
     
-    let q_ptr = (LightQueue*)malloc(sizeof(LightQueue));
+    let q_ptr = (LightQueue*)zdebug_malloc(sizeof(LightQueue));
     if (q_ptr == NULL) return; // Allocation failed
     
     (*q_ptr).head = 0;
@@ -285,9 +288,13 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
                             c.light[x][y][z] = (old_val & 0x0F) | (((max_n - 1) & 0xF) << 4);
                         } else {
                             // Block Light -> Lower 4 bits (preserve upper 4 bits)
+                            // Block Light -> Lower 4 bits (preserve upper 4 bits)
                             c.light[x][y][z] = (old_val & 0xF0) | ((max_n - 1) & 0xF);
                         }
                         
+                        // IMPORTANT: Mark mesh as dirty so plants rebuild with new lighting!
+                        c.mesh_dirty = 1;
+
                         queue_push(q_ptr, gx, y, gz);
                     }
                 }
@@ -305,12 +312,20 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
         // Try to propagate to 6 neighbors
         // Helper macro or inline
         let nx = 0; let ny = 0; let nz = 0;
+        let cx_n = 0; let cz_n = 0; let idx_n = 0;
         
         // +X
         nx = node.x + 1; ny = node.y; nz = node.z;
         if IS_TRANSPARENT(get_block(chunks, num_chunks, nx, ny, nz)) {
              if get_light_global(chunks, num_chunks, nx, ny, nz, channel) < light - 1 {
                  set_light_global(chunks, num_chunks, nx, ny, nz, light - 1, channel);
+                 
+                 // Mark neighbor dirty
+                 cx_n = (int)floor((float)nx / 16.0);
+                 cz_n = (int)floor((float)nz / 16.0);
+                 idx_n = get_chunk_index(cx_n, cz_n);
+                 if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                 
                  queue_push(q_ptr, nx, ny, nz);
              }
         }
@@ -319,6 +334,13 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
         if IS_TRANSPARENT(get_block(chunks, num_chunks, nx, ny, nz)) {
              if get_light_global(chunks, num_chunks, nx, ny, nz, channel) < light - 1 {
                  set_light_global(chunks, num_chunks, nx, ny, nz, light - 1, channel);
+                 
+                 // Mark neighbor dirty
+                 cx_n = (int)floor((float)nx / 16.0);
+                 cz_n = (int)floor((float)nz / 16.0);
+                 idx_n = get_chunk_index(cx_n, cz_n);
+                 if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                 
                  queue_push(q_ptr, nx, ny, nz);
              }
         }
@@ -327,6 +349,13 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
         if IS_TRANSPARENT(get_block(chunks, num_chunks, nx, ny, nz)) {
              if get_light_global(chunks, num_chunks, nx, ny, nz, channel) < light - 1 {
                  set_light_global(chunks, num_chunks, nx, ny, nz, light - 1, channel);
+                 
+                 // Mark neighbor dirty
+                 cx_n = (int)floor((float)nx / 16.0);
+                 cz_n = (int)floor((float)nz / 16.0);
+                 idx_n = get_chunk_index(cx_n, cz_n);
+                 if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                 
                  queue_push(q_ptr, nx, ny, nz);
              }
         }
@@ -335,6 +364,13 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
         if IS_TRANSPARENT(get_block(chunks, num_chunks, nx, ny, nz)) {
              if get_light_global(chunks, num_chunks, nx, ny, nz, channel) < light - 1 {
                  set_light_global(chunks, num_chunks, nx, ny, nz, light - 1, channel);
+                 
+                 // Mark neighbor dirty
+                 cx_n = (int)floor((float)nx / 16.0);
+                 cz_n = (int)floor((float)nz / 16.0);
+                 idx_n = get_chunk_index(cx_n, cz_n);
+                 if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                 
                  queue_push(q_ptr, nx, ny, nz);
              }
         }
@@ -343,6 +379,13 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
         if IS_TRANSPARENT(get_block(chunks, num_chunks, nx, ny, nz)) {
              if get_light_global(chunks, num_chunks, nx, ny, nz, channel) < light - 1 {
                  set_light_global(chunks, num_chunks, nx, ny, nz, light - 1, channel);
+                 
+                 // Mark neighbor dirty
+                 cx_n = (int)floor((float)nx / 16.0);
+                 cz_n = (int)floor((float)nz / 16.0);
+                 idx_n = get_chunk_index(cx_n, cz_n);
+                 if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                 
                  queue_push(q_ptr, nx, ny, nz);
              }
         }
@@ -351,12 +394,19 @@ fn propagate_light_internal(c: Chunk*, chunks: Chunk*, num_chunks: int, channel:
         if IS_TRANSPARENT(get_block(chunks, num_chunks, nx, ny, nz)) {
              if get_light_global(chunks, num_chunks, nx, ny, nz, channel) < light - 1 {
                  set_light_global(chunks, num_chunks, nx, ny, nz, light - 1, channel);
+                 
+                 // Mark neighbor dirty
+                 cx_n = (int)floor((float)nx / 16.0);
+                 cz_n = (int)floor((float)nz / 16.0);
+                 idx_n = get_chunk_index(cx_n, cz_n);
+                 if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                 
                  queue_push(q_ptr, nx, ny, nz);
              }
         }
     }
     
-    free(q_ptr); // Cleanup
+    zdebug_free(q_ptr); // Cleanup
 }
 
 fn propagate_light_in_chunk(c: Chunk*, chunks: Chunk*, num_chunks: int) {
@@ -729,11 +779,14 @@ impl Chunk {
 
         // 1. Water
         if (self.water_mesh_built) {
-            DrawModel(self.water_model, offset, 1.0f, WHITE);
+            if self.water_model.meshCount > 0 {
+                DrawModel(self.water_model, offset, 1.0f, WHITE);
+            }
         }
         
         // 2. Plants (Alpha Cutout)
         if self.plant_mesh_built != 0 {
+            set_grass_use_tex(1); // Enable Texture
             DrawModel(self.plant_model, offset, 1.0, WHITE);
         }
         
@@ -751,6 +804,7 @@ impl Chunk {
                 }
                 
                 if self.grass_deco_built != 0 {
+                    set_grass_use_tex(0); // Disable Texture (Use Gradient)
                     DrawModel(self.grass_deco_model, offset, 1.0, WHITE);
                 }
             }
@@ -793,8 +847,119 @@ fn remove_plant_at(chunks: Chunk*, num_chunks: int, x: int, y: int, z: int) {
 }
 
 fn tick_chunk(c: Chunk*, chunks: Chunk*, num_chunks: int) {
+    if c == NULL { return; }
+    
     raw {
-        // Random Ticks (3 per chunk per call/frame)
+        // ========================================
+        // WATER SIMULATION (Deterministic - every frame)
+        // Scan all blocks for water emitters and propagate
+        // ========================================
+        int water_changed = 0;
+        int gx_base = c->x * 16;
+        int gz_base = c->z * 16;
+        
+        for (int lx = 0; lx < 16; lx++) {
+            for (int lz = 0; lz < 16; lz++) {
+                for (int ly = 0; ly < CHUNK_HEIGHT; ly++) {
+                    int btype = c->blocks[lx][ly][lz];
+                    
+                    // All water types participate in gravity. Only WATER and WATER_2 spread laterally.
+                    if (btype != BLOCK_WATER && btype != BLOCK_WATER_2 && btype != BLOCK_WATER_1) continue;
+                    
+                    // Check if this water is in contact with air on any side
+                    int gx = gx_base + lx;
+                    int gz = gz_base + lz;
+                    
+                    // --- GRAVITY CHECK (Vertical Flow) ---
+                    // Prefer flowing down over spreading sideways
+                    if (ly > 0) {
+                        int below_block = c->blocks[lx][ly-1][lz]; // Fast local check
+                        if (below_block == BLOCK_AIR) {
+                            // Flow down!
+                            // Create a FULL water block below to ensure connection and gravity flow
+                            c->blocks[lx][ly-1][lz] = BLOCK_WATER;
+                            water_changed = 1;
+                            c->mesh_dirty = 1;
+                            
+                            // Important: Skip horizontal spread if falling
+                            continue;
+                        }
+                    } else {
+                         // If at bottom of chunk (y=0), checking below might need neighbor chunk if we had vertical chunks.
+                         // But currently we assume 1 layer of chunks. So y=0 is world bottom.
+                         // Do nothing.
+                    }
+
+                    // --- LATERAL SPREAD ---
+                    // Only spread laterally if this block sits on solid ground (not air, not water)
+                    // This prevents waterfall columns from spreading sideways
+                    // Air below was already handled above (gravity flow + continue)
+                    // Water below means we're in a column or submerged - don't spread
+                    int below_check;
+                    if (ly > 0) {
+                        below_check = c->blocks[lx][ly-1][lz];
+                    } else {
+                        below_check = BLOCK_STONE; // Bottom of world = solid
+                    }
+                    if (below_check == BLOCK_WATER || below_check == BLOCK_WATER_2 || below_check == BLOCK_WATER_1) {
+                        continue; // Submerged or column - no lateral spread
+                    }
+                    // WATER_1 can fall but NOT spread laterally
+                    if (btype == BLOCK_WATER_1) continue;
+                    
+                    int next_level = 0;
+                    if (btype == BLOCK_WATER) next_level = BLOCK_WATER_2;
+                    else next_level = BLOCK_WATER_1;
+                    
+                    // Try to spread to 4 horizontal neighbors
+                    // +X
+                    if (get_block(chunks, num_chunks, gx + 1, ly, gz) == BLOCK_AIR) {
+                        set_block(chunks, num_chunks, gx + 1, ly, gz, next_level);
+                        water_changed = 1;
+                        // Dirtify the chunk that received the water
+                        int cx_n = (int)floor((float)(gx + 1) / 16.0);
+                        int cz_n = (int)floor((float)gz / 16.0);
+                        int idx_n = get_chunk_index(cx_n, cz_n);
+                        if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                    }
+                    // -X
+                    if (get_block(chunks, num_chunks, gx - 1, ly, gz) == BLOCK_AIR) {
+                        set_block(chunks, num_chunks, gx - 1, ly, gz, next_level);
+                        water_changed = 1;
+                        int cx_n = (int)floor((float)(gx - 1) / 16.0);
+                        int cz_n = (int)floor((float)gz / 16.0);
+                        int idx_n = get_chunk_index(cx_n, cz_n);
+                        if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                    }
+                    // +Z
+                    if (get_block(chunks, num_chunks, gx, ly, gz + 1) == BLOCK_AIR) {
+                        set_block(chunks, num_chunks, gx, ly, gz + 1, next_level);
+                        water_changed = 1;
+                        int cx_n = (int)floor((float)gx / 16.0);
+                        int cz_n = (int)floor((float)(gz + 1) / 16.0);
+                        int idx_n = get_chunk_index(cx_n, cz_n);
+                        if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                    }
+                    // -Z
+                    if (get_block(chunks, num_chunks, gx, ly, gz - 1) == BLOCK_AIR) {
+                        set_block(chunks, num_chunks, gx, ly, gz - 1, next_level);
+                        water_changed = 1;
+                        int cx_n = (int)floor((float)gx / 16.0);
+                        int cz_n = (int)floor((float)(gz - 1) / 16.0);
+                        int idx_n = get_chunk_index(cx_n, cz_n);
+                        if (chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n) chunks[idx_n].mesh_dirty = 1;
+                    }
+                }
+            }
+        }
+        
+        if (water_changed) {
+            c->mesh_dirty = 1;
+        }
+        
+        // ========================================
+        // RANDOM TICKS (3 per frame - Grass Growth/Death only)
+        // ========================================
         for (int i = 0; i < 3; i++) {
             int lx = rand() % 16;
             int ly = rand() % CHUNK_HEIGHT;
@@ -827,7 +992,6 @@ fn tick_chunk(c: Chunk*, chunks: Chunk*, num_chunks: int) {
                     }
                 }
             }
-        }
         }
     }
 }

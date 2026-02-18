@@ -1,0 +1,368 @@
+
+// Constants (Assuming available from chunk.zc or similar)
+// If not, we might need to import here.
+// import "chunk.zc"; // Let's rely on persistence.zc importing this first.
+
+import "persistence_defs.zc";
+import "chunk.zc"; // for BLOCK_* and CHUNK_HEIGHT
+import "raylib.h";
+
+// Thread-safe pseudo-random number generator
+// Linear Congruential Generator
+fn my_rand(seed: int*) -> int {
+    raw {
+        *seed = (*seed * 1103515245 + 12345) & 0x7fffffff;
+        return *seed;
+    }
+    return 0; // Unreachable
+}
+
+// Spatial Hash for deterministic procedural generation
+fn hash_int2(x: int, y: int) -> int {
+    let n = x * 131071 + y * 956873; // Large primes
+    // Bit mix
+    n = n ^ (n << 13);
+    n = n ^ (n >> 17);
+    return abs(n);
+}
+
+// Helper to determine if a chunk is a village center (0.5% chance)
+fn is_village_center(cx: int, cz: int) -> int {
+    let h = hash_int2(cx, cz);
+    if (h % 200) < 1 { return 1; }
+    return 0;
+}
+
+// This prototyp needs to be visible to db_worker, but implementation is elsewhere or dynamic?
+// For now, keep it here as the default generator
+fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
+    // 1. Generate Heightmap
+    let heights: int[16][16];
+    
+    raw {
+        // Base Terrain (Rolling Hills)
+        Image noise = GenImagePerlinNoise(16, 16, x * 16, z * 16, 0.05f);
+        Color* pixels = LoadImageColors(noise);
+        
+        // Mountain Terrain (Large Scale, jagged)
+        Image m_noise = GenImagePerlinNoise(16, 16, x * 16, z * 16, 0.015f);
+        Color* m_pixels = LoadImageColors(m_noise);
+        
+        for(int i=0; i<16; i++) {
+            for(int j=0; j<16; j++) {
+                // pixels is row-major
+                Color col = pixels[j * 16 + i];
+                float base_val = (float)col.r / 255.0; // 0.0 - 1.0
+                
+                Color m_col = m_pixels[j * 16 + i];
+                float m_val = (float)m_col.r / 255.0; // 0.0 - 1.0
+                
+                float h_f = 5.0 + (base_val * 50.0);
+                
+                // Mountains: m_val^2 * 90 (Squared for wider mountains, up to +90 height)
+                float m_contrib = m_val * m_val; 
+                h_f += m_contrib * 90.0;
+                
+                int h = (int)h_f;
+                
+                // Cap
+                if (h > CHUNK_HEIGHT - 6) h = CHUNK_HEIGHT - 6; // Leave room for trees
+                if (h < 2) h = 2; // Bedrock
+                
+                heights[i][j] = h;
+            }
+        }
+        UnloadImageColors(pixels);
+        UnloadImage(noise);
+        UnloadImageColors(m_pixels);
+        UnloadImage(m_noise);
+    }
+    
+    // 2. Fill Blocks
+    for cx in 0..16 {
+        for cz in 0..16 {
+            let h = heights[cx][cz];
+            for cy in 0..CHUNK_HEIGHT {
+                let l = 0;
+                if cy < h - 1 {
+                    data.blocks[cx][cy][cz] = BLOCK_STONE;
+                } else if cy < h {
+                    data.blocks[cx][cy][cz] = BLOCK_DIRT;
+                } else if cy == h {
+                    // Underwater surfaces are SAND, above water surfaces are grass
+                    // SEA_LEVEL is 30
+                    if (h < 30) {
+                        data.blocks[cx][cy][cz] = BLOCK_SAND;
+                    } else {
+                        data.blocks[cx][cy][cz] = BLOCK_GRASS;
+                    }
+                    l = 240; // Sky Light 15 (0xF0), Block Light 0
+                } else {
+                    data.blocks[cx][cy][cz] = BLOCK_AIR;
+                    l = 240; // Sky Light 15 (0xF0), Block Light 0
+                }
+                data.light[cx][cy][cz] = l;
+            }
+        }
+    }
+    
+    // 2.5. Water Generation (Lakes)
+    // Fill air blocks below sea level with water
+    def SEA_LEVEL = 30;
+    for cx in 0..16 {
+        for cz in 0..16 {
+            for cy in 0..SEA_LEVEL {
+                if data.blocks[cx][cy][cz] == BLOCK_AIR {
+                    data.blocks[cx][cy][cz] = BLOCK_WATER;
+                    // Water is transparent, keep sky light at 240
+                }
+            }
+        }
+    }
+    
+    // 3. Plants/Trees
+    data.plant_count = 0;
+    
+    // Deterministic seed for this chunk
+    let seed = x * 73856093 ^ z * 19349663;
+    
+    // Forest Noise (Low frequency for biomes)
+    let forest_noise_val = 0.0;
+    
+    raw {
+         // Using a specific offset for forest noise to de-correlate from terrain height
+        Image fnoise = GenImagePerlinNoise(1, 1, x, z, 0.02f); 
+        Color* fp = LoadImageColors(fnoise);
+        forest_noise_val = (float)fp[0].r / 255.0; // 0.0 to 1.0
+        UnloadImageColors(fp);
+        UnloadImage(fnoise);
+    }
+    
+    // Determine tree density based on forest noise
+    let tree_chance_threshold = 1; // 1% default (Sparse)
+    
+    if forest_noise_val > 0.55 {
+        tree_chance_threshold = 10; // 10% (Forest)
+        if forest_noise_val > 0.7 {
+             tree_chance_threshold = 15; // 15% (Dense Forest)
+        }
+    } else if forest_noise_val < 0.3 {
+        tree_chance_threshold = 0; // 0.5% approx (Very Sparse) -> handled by rand check
+    }
+    
+    for cx in 0..16 {
+        for cz in 0..16 {
+            let h = heights[cx][cz];
+            // Grass
+            if data.blocks[cx][h][cz] == BLOCK_GRASS && h < CHUNK_HEIGHT - 20 {
+                let r = my_rand(&seed) % 1000; // 0..999
+                
+                // Adjust chance based on threshold
+                let place_tree = 0;
+                if tree_chance_threshold > 0 {
+                    if r < tree_chance_threshold * 10 { place_tree = 1; }
+                } else {
+                     // Very sparse
+                     if r < 2 { place_tree = 1; } // 0.2%
+                }
+
+                if place_tree { 
+                     // Smaller Trees: Trunk 3-5 blocks
+                     if cx > 2 && cx < 13 && cz > 2 && cz < 13 {
+                        // Tree
+                        let th = 3 + (my_rand(&seed) % 3); // 3, 4, 5
+                        for i in 0..th {
+                            if h+1+i < CHUNK_HEIGHT {
+                                data.blocks[cx][h+1+i][cz] = BLOCK_LOG;
+                            }
+                        }
+                        // Leaves (Classic Minecraft Style - 5x5 at bottom, 3x3 at top)
+                        let leaves_start = h + th - 2; // Start leaves 2 blocks below top
+                        let leaves_end = h + th + 1;   // 1 block above top
+                        
+                        for ly in leaves_start..leaves_end {
+                             if ly >= CHUNK_HEIGHT { continue; }
+                             
+                             let radius = 2;
+                             if ly == leaves_end - 1 { radius = 1; } // Top layer narrower
+                             if ly == leaves_end { radius = 1; } // Very top
+                             
+                             for lx in (cx-radius)..(cx+radius+1) {
+                                 for lz in (cz-radius)..(cz+radius+1) {
+                                     // Skip corners for rounded look (optional)
+                                     let dx = lx - cx;
+                                     let dz = lz - cz;
+                                     if (dx*dx + dz*dz) > (radius*radius + 1) { continue; }
+                                     
+                                     if data.blocks[lx][ly][lz] == BLOCK_AIR {
+                                         data.blocks[lx][ly][lz] = BLOCK_LEAVES;
+                                     }
+                                 }
+                             }
+                        }
+                    }
+                }
+                else if r < 30 { // Tall grass chance
+                    if data.plant_count < 64 {
+                        data.plants[data.plant_count].x = (float)cx + 0.5;
+                        data.plants[data.plant_count].y = (float)(h + 1);
+                        data.plants[data.plant_count].z = (float)cz + 0.5;
+                        data.plants[data.plant_count].plant_type = BLOCK_TALLGRASS;
+                        data.plant_count = data.plant_count + 1;
+                    }
+                }
+            }
+        }
+    }
+
+
+    // --- VILLAGE GENERATION ---
+    // Check this chunk and neighbors (3x3 area) for village centers.
+    // If a neighbor is a center, generate its houses and draw the parts that fall in THIS chunk.
+    
+    // Define bounds of current chunk
+    let my_cx_min = x * 16;
+    let my_cx_max = x * 16 + 15;
+    let my_cz_min = z * 16;
+    let my_cz_max = z * 16 + 15;
+    
+    for dx in -1..2 {
+        for dz in -1..2 {
+            let ncx = x + dx;
+            let ncz = z + dz;
+            
+            if is_village_center(ncx, ncz) {
+                // This neighbor (or self) is a village center.
+                // Generate the village layout deterministically.
+                let v_seed = hash_int2(ncx, ncz);
+                
+                // Village properties
+                let num_houses = 4 + (v_seed % 3); // 4 to 6 houses
+                let center_x = ncx * 16 + 8;
+                let center_z = ncz * 16 + 8;
+                
+                // Get ground height at village center (approximate)
+                let center_h = 0;
+                raw {
+                    Image noise = GenImagePerlinNoise(1, 1, ncx * 16 + 8, ncz * 16 + 8, 0.05f);
+                    Color* pixels = LoadImageColors(noise);
+                    float base_val = (float)pixels[0].r / 255.0;
+                    float h_f = 5.0 + (base_val * 50.0); // Match terrain gen
+                    center_h = (int)h_f;
+                    UnloadImageColors(pixels);
+                    UnloadImage(noise);
+                }
+                if center_h < 4 { center_h = 4; } // Safety
+                
+                // Generate Houses
+                for i in 0..num_houses {
+                    // Update seed for each house
+                    v_seed = hash_int2(v_seed, i);
+                    
+                    let angle = (float)(v_seed % 360) * 0.01745; // Radians
+                    let dist = 10.0 + (float)(v_seed % 15); // Distance from center 10..24
+                    
+                    let hx = center_x + (int)((float)cos(angle) * dist);
+                    let hz = center_z + (int)((float)sin(angle) * dist);
+                    
+                    let house_w = 5 + (v_seed % 3); // 5..7
+                    let house_d = 5 + ((v_seed / 10) % 3); // 5..7
+                    let house_h = 4;
+                    
+                    let hy = center_h; // Place at village center height for simplicity (or raycast if we had data)
+
+                    // House Bounds
+                    let hw_half = house_w / 2;
+                    let hd_half = house_d / 2;
+                    let min_x = hx - hw_half;
+                    let max_x = hx + hw_half;
+                    let min_z = hz - hd_half;
+                    let max_z = hz + hd_half;
+                    let max_y = hy + house_h + 2; // Roof
+
+                    // Check if house intersects CURRENT chunk
+                    if max_x < my_cx_min || min_x > my_cx_max || max_z < my_cz_min || min_z > my_cz_max {
+                        continue; // House is completely outside
+                    }
+
+                    // DRAW HOUSE
+                    for bx in min_x..(max_x + 1) {
+                        for bz in min_z..(max_z + 1) {
+                            if bx < my_cx_min || bx > my_cx_max || bz < my_cz_min || bz > my_cz_max { continue; }
+
+                            // Convert to local chunk coords
+                            let lx = bx - my_cx_min;
+                            let lz = bz - my_cz_min;
+                            
+                            // Draw Walls & Interior
+                            for by in hy..(hy + house_h + 1) {
+                                if by >= CHUNK_HEIGHT { continue; }
+                                
+                                // Floor
+                                if by == hy {
+                                     data.blocks[lx][by][lz] = BLOCK_COBBLESTONE; // Cobble Floor (or Planks)
+                                     continue;
+                                }
+                                
+                                // Walls
+                                let is_wall = (bx == min_x || bx == max_x || bz == min_z || bz == max_z);
+                                if is_wall {
+                                    // Corners
+                                    let is_corner = (bx == min_x || bx == max_x) && (bz == min_z || bz == max_z);
+                                    if is_corner {
+                                        data.blocks[lx][by][lz] = BLOCK_LOG;
+                                    } else {
+                                        // Windows: Middle of wall, height +2
+                                        if by == hy + 2 && (bx == hx || bz == hz) {
+                                             data.blocks[lx][by][lz] = BLOCK_GLASS_PANE; // Window
+                                        } else {
+                                             data.blocks[lx][by][lz] = BLOCK_PLANKS; // Plank Walls
+                                        }
+                                    }
+                                } else {
+                                    // Interior Air
+                                    data.blocks[lx][by][lz] = BLOCK_AIR; 
+                                }
+                            }
+                            
+                            // Roof (Simple Slab/Flat for now or Pyramid)
+                            let roof_y = hy + house_h;
+
+                            if roof_y < CHUNK_HEIGHT {
+                                data.blocks[lx][roof_y][lz] = BLOCK_COBBLESTONE; // Flat roof
+                                
+                                // Decorative Crystal on center of roof
+                                if bx == hx && bz == hz && (roof_y + 1) < CHUNK_HEIGHT {
+                                    data.blocks[lx][roof_y + 1][lz] = BLOCK_CRYSTAL;
+                                }
+                            }
+                            
+                            // Foundation (Down to -4 from floor)
+                             for k in 1..5 {
+                                let fy = hy - k;
+                                if fy >= 0 {
+                                    let existing = data.blocks[lx][fy][lz];
+                                    if existing == BLOCK_AIR || existing == BLOCK_WATER || existing == BLOCK_TALLGRASS {
+                                        data.blocks[lx][fy][lz] = BLOCK_COBBLESTONE; // Cobble foundation
+                                    } else {
+                                        break; // Hit ground
+                                    }
+                                }
+                             }
+                        }
+                    }
+                    
+                    // Door (cut hole)
+                    if hx >= my_cx_min && hx <= my_cx_max && min_z >= my_cz_min && min_z <= my_cz_max {
+                         let lx = hx - my_cx_min;
+                         let lz = min_z - my_cz_min;
+                         if hy + 1 < CHUNK_HEIGHT { data.blocks[lx][hy+1][lz] = BLOCK_AIR; }
+                         if hy + 2 < CHUNK_HEIGHT { data.blocks[lx][hy+2][lz] = BLOCK_AIR; }
+                    }
+                }
+            }
+        }
+    }
+    
+    data.light_calculated = 1;
+}
