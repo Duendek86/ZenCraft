@@ -1,0 +1,118 @@
+//> Chunk Simulation
+import "raylib.h" as rl;
+import "blocks.zc";
+import "chunk_core.zc";
+
+fn remove_plant_at(chunks: Chunk*, num_chunks: int, x: int, y: int, z: int) {
+    if y < 0 || y >= CHUNK_HEIGHT { return; }
+    
+    let cx = x >> 4; let cz = z >> 4;
+    let idx = get_chunk_index(cx, cz);
+    if chunks[idx].x != cx || chunks[idx].z != cz { return; }
+    
+    let lx = x & 15; let lz = z & 15;
+    
+    for i in 0..chunks[idx].plant_count {
+        if (int)chunks[idx].plants[i].x == lx && (int)chunks[idx].plants[i].y == y && (int)chunks[idx].plants[i].z == lz {
+            chunks[idx].plants[i] = chunks[idx].plants[chunks[idx].plant_count - 1];
+            chunks[idx].plant_count = chunks[idx].plant_count - 1;
+            chunks[idx].mesh_dirty = 1; 
+            return;
+        }
+    }
+}
+
+fn tick_chunk(c: Chunk*, chunks: Chunk*, num_chunks: int) {
+    if c == NULL { return; }
+    
+    let time_now = rl::GetTime();
+    
+    // --- 1. Ticks Aleatorios Ligeros (Hierba) ---
+    // Esto se ejecuta siempre, porque generar 3 números aleatorios cuesta 0 recursos.
+    for i in 0..3 {
+        let lx = rl::GetRandomValue(0, 15);
+        let ly = rl::GetRandomValue(0, CHUNK_HEIGHT - 1);
+        let lz = rl::GetRandomValue(0, 15);
+        
+        let btype = c.blocks[lx][ly][lz];
+        if btype == BLOCK_DIRT {
+            let above_y = ly + 1;
+            if above_y < CHUNK_HEIGHT {
+                let above_type = c.blocks[lx][above_y][lz];
+                if is_transparent(above_type) == 1 { c.blocks[lx][ly][lz] = BLOCK_GRASS; c.mesh_dirty = 1; }
+            } else { c.blocks[lx][ly][lz] = BLOCK_GRASS; c.mesh_dirty = 1; }
+        }
+        else if btype == BLOCK_GRASS {
+            let above_y = ly + 1;
+            if above_y < CHUNK_HEIGHT {
+                let above_type = c.blocks[lx][above_y][lz];
+                if is_transparent(above_type) == 0 { c.blocks[lx][ly][lz] = BLOCK_DIRT; c.mesh_dirty = 1; }
+            }
+        }
+    }
+
+    // --- 2. Física Pesada (Agua) ---
+    // ACELERADOR DE FPS: El agua solo se actualiza 4 veces por segundo (0.25s)
+    if time_now - c.last_water_tick < 0.25 {
+        return; // Salimos de la función sin quemar la CPU
+    }
+    c.last_water_tick = time_now;
+
+    let water_changed = 0;
+    let gx_base = c.x * 16; let gz_base = c.z * 16;
+    
+    for lx in 0..16 {
+        for lz in 0..16 {
+            for ly in 0..CHUNK_HEIGHT {
+                let btype = c.blocks[lx][ly][lz];
+                if btype != BLOCK_WATER && btype != BLOCK_WATER_2 && btype != BLOCK_WATER_1 { continue; }
+                
+                let gx = gx_base + lx; let gz = gz_base + lz;
+                
+                if ly > 0 {
+                    let below_block = c.blocks[lx][ly-1][lz];
+                    if below_block == BLOCK_AIR {
+                        c.blocks[lx][ly-1][lz] = BLOCK_WATER;
+                        water_changed = 1; c.mesh_dirty = 1;
+                        continue;
+                    }
+                }
+
+                let below_check = BLOCK_STONE;
+                if ly > 0 { below_check = c.blocks[lx][ly-1][lz]; }
+                if below_check == BLOCK_WATER || below_check == BLOCK_WATER_2 || below_check == BLOCK_WATER_1 { continue; }
+                if btype == BLOCK_WATER_1 { continue; }
+                
+                let next_level = BLOCK_WATER_1;
+                if btype == BLOCK_WATER { next_level = BLOCK_WATER_2; }
+                
+                if get_block(chunks, num_chunks, gx + 1, ly, gz) == BLOCK_AIR {
+                    set_block(chunks, num_chunks, gx + 1, ly, gz, next_level); water_changed = 1;
+                    let cx_n = (gx + 1) >> 4; let cz_n = gz >> 4;
+                    let idx_n = get_chunk_index(cx_n, cz_n);
+                    if chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n { chunks[idx_n].mesh_dirty = 1; }
+                }
+                if get_block(chunks, num_chunks, gx - 1, ly, gz) == BLOCK_AIR {
+                    set_block(chunks, num_chunks, gx - 1, ly, gz, next_level); water_changed = 1;
+                    let cx_n = (gx - 1) >> 4; let cz_n = gz >> 4;
+                    let idx_n = get_chunk_index(cx_n, cz_n);
+                    if chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n { chunks[idx_n].mesh_dirty = 1; }
+                }
+                if get_block(chunks, num_chunks, gx, ly, gz + 1) == BLOCK_AIR {
+                    set_block(chunks, num_chunks, gx, ly, gz + 1, next_level); water_changed = 1;
+                    let cx_n = gx >> 4; let cz_n = (gz + 1) >> 4;
+                    let idx_n = get_chunk_index(cx_n, cz_n);
+                    if chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n { chunks[idx_n].mesh_dirty = 1; }
+                }
+                if get_block(chunks, num_chunks, gx, ly, gz - 1) == BLOCK_AIR {
+                    set_block(chunks, num_chunks, gx, ly, gz - 1, next_level); water_changed = 1;
+                    let cx_n = gx >> 4; let cz_n = (gz - 1) >> 4;
+                    let idx_n = get_chunk_index(cx_n, cz_n);
+                    if chunks[idx_n].x == cx_n && chunks[idx_n].z == cz_n { chunks[idx_n].mesh_dirty = 1; }
+                }
+            }
+        }
+    }
+    
+    if water_changed == 1 { c.mesh_dirty = 1; }
+}

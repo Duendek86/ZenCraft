@@ -1,0 +1,143 @@
+//> Chunk Procedural Generation
+import "raylib.h" as rl;
+import "math.h";
+import "string.h";
+import "blocks.zc";
+import "chunk_core.zc";
+
+extern fn GenImagePerlinNoise(width: int, height: int, offsetX: int, offsetY: int, scale: float) -> rl::Image;
+
+impl Chunk {
+    static fn new(x: int, z: int) -> Chunk {
+        let c: Chunk;
+        c.x = x;
+        c.z = z;
+        c.mesh_dirty = 1;
+        c.mesh_built = 0;
+        c.water_mesh_built = 0;
+        c.plant_mesh_built = 0;
+        c.grass_deco_built = 0;
+        c.locked = 0;
+        c.plant_count = 0; 
+        c.last_water_tick = 0.0;
+        
+        memset(&c.chunk_model, 0, sizeof(rl::Model));
+        memset(&c.water_model, 0, sizeof(rl::Model));
+        memset(&c.plant_model, 0, sizeof(rl::Model));
+        memset(&c.grass_deco_model, 0, sizeof(rl::Model));
+
+        let heights: int[16][16];
+        let noise = rl::GenImagePerlinNoise(16, 16, x * 16, z * 16, 0.5);
+        let pixels = rl::LoadImageColors(noise);
+        
+        for i in 0..16 {
+            for j in 0..16 {
+                // Accedemos directamente a .r y casteamos a int. ¡Simple y a prueba de fallos!
+                let val = (int)pixels[j * 16 + i].r;
+                
+                let h = 4 + (val / 2);
+                if h > CHUNK_HEIGHT - 10 { h = CHUNK_HEIGHT - 10; }
+                heights[i][j] = h;
+            }
+        }
+        rl::UnloadImageColors(pixels);
+        rl::UnloadImage(noise);
+
+        let SEA_LEVEL_GEN = 30;
+        
+        for cx in 0..16 {
+            for cz in 0..16 {
+                let h = heights[cx][cz];
+                for cy in 0..CHUNK_HEIGHT {
+                    let l = 0;
+                    if cy < h - 1 { c.blocks[cx][cy][cz] = BLOCK_STONE; } 
+                    else if cy < h { c.blocks[cx][cy][cz] = BLOCK_DIRT; } 
+                    else if cy == h {
+                        if h < SEA_LEVEL_GEN { c.blocks[cx][cy][cz] = BLOCK_SAND; } 
+                        else { c.blocks[cx][cy][cz] = BLOCK_GRASS; }
+                        l = 15;
+                    } else {
+                        c.blocks[cx][cy][cz] = BLOCK_AIR;
+                        l = 15;
+                    }
+                    c.light[cx][cy][cz] = l;
+                }
+            }
+        }
+        
+        let SEA_LEVEL = 30;
+        for wx in 0..16 {
+            for wz in 0..16 {
+                for wy in 0..SEA_LEVEL {
+                    if c.blocks[wx][wy][wz] == BLOCK_AIR {
+                        c.blocks[wx][wy][wz] = BLOCK_WATER;
+                    }
+                }
+            }
+        }
+        
+        c.plant_count = 0;
+        rl::SetRandomSeed(x * 73856093 ^ z * 19349663); // Usamos Raylib RNG
+        let SEA_LEVEL_VEG = 30;
+        
+        for cx in 0..16 {
+            for cz in 0..16 {
+                let h = heights[cx][cz];
+                if h < SEA_LEVEL_VEG { continue; }
+                
+                if c.blocks[cx][h][cz] == BLOCK_GRASS && h < CHUNK_HEIGHT - 1 {
+                    let r = rl::GetRandomValue(0, 99); // Usamos Raylib RNG
+                    
+                    if r < 10 {
+                        if cx > 1 && cx < 14 && cz > 1 && cz < 14 {
+                            let tree_h = 5;
+                            for k in 0..tree_h {
+                                if h + 1 + k < CHUNK_HEIGHT { c.blocks[cx][h + 1 + k][cz] = BLOCK_LOG; }
+                            }
+                            
+                            let ly = h + 1 + tree_h - 2;
+                            for ly_off in 0..2 {
+                                let chy = ly + ly_off;
+                                if chy < CHUNK_HEIGHT {
+                                    for lx in -2..3 {
+                                        for lz in -2..3 {
+                                            if abs(lx) == 2 && abs(lz) == 2 { continue; }
+                                            let tx = cx + lx;
+                                            let tz = cz + lz;
+                                            if tx >= 0 && tx < 16 && tz >= 0 && tz < 16 {
+                                                if c.blocks[tx][chy][tz] == BLOCK_AIR {
+                                                    c.blocks[tx][chy][tz] = BLOCK_LEAVES;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            let th = h + 1 + tree_h;
+                            if th < CHUNK_HEIGHT {
+                                c.blocks[cx][th][cz] = BLOCK_LEAVES;
+                                if cx + 1 < 16 { c.blocks[cx + 1][th][cz] = BLOCK_LEAVES; }
+                                if cx - 1 >= 0 { c.blocks[cx - 1][th][cz] = BLOCK_LEAVES; }
+                                if cz + 1 < 16 { c.blocks[cx][th][cz + 1] = BLOCK_LEAVES; }
+                                if cz - 1 >= 0 { c.blocks[cx][th][cz - 1] = BLOCK_LEAVES; }
+                            }
+                        }
+                    } else if r < 20 {
+                        if c.blocks[cx][h + 1][cz] == BLOCK_AIR && c.plant_count < 64 {
+                            c.plants[c.plant_count].x = (float)cx + 0.5;
+                            c.plants[c.plant_count].y = (float)(h + 1);
+                            c.plants[c.plant_count].z = (float)cz + 0.5;
+                            c.plants[c.plant_count].plant_type = BLOCK_TALLGRASS; 
+                            c.plant_count++;
+                        }
+                    }
+                }
+            }
+        }
+        
+        c.mesh_dirty = 1;
+        c.mesh_built = 0;
+        return c;
+    }
+}

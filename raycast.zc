@@ -2,6 +2,7 @@
 
 import "blocks.zc";
 import "chunk.zc";
+import "math.h"; // <-- ¡CRÍTICO! Añadido para que floor() funcione correctamente
 
 struct RaycastHit {
     hit: int;
@@ -22,6 +23,7 @@ fn raycast(chunks: Chunk*, num_chunks: int, ox: float, oy: float, oz: float, dx:
     let y = oy;
     let z = oz;
 
+    // Small step raymarching (Simple but effective for short distances)
     let step = 0.05;
     let dist = 0.0;
 
@@ -40,8 +42,9 @@ fn raycast(chunks: Chunk*, num_chunks: int, ox: float, oy: float, oz: float, dx:
         let iz = (int)floor(z);
 
         let b = get_block(chunks, num_chunks, ix, iy, iz);
+        
         // Treat water as transparent/air for raycasting
-        if (b != BLOCK_AIR && b != BLOCK_WATER && b != BLOCK_WATER_1 && b != BLOCK_WATER_2) {
+        if b != BLOCK_AIR && b != BLOCK_WATER && b != BLOCK_WATER_1 && b != BLOCK_WATER_2 {
             r.hit = 1;
             r.x = ix;
             r.y = iy;
@@ -56,11 +59,10 @@ fn raycast(chunks: Chunk*, num_chunks: int, ox: float, oy: float, oz: float, dx:
             else if ix < last_x { r.face_x = 1; }
             else if iy > last_y { r.face_y = -1; }
             else if iy < last_y { r.face_y = 1; }
-            else if (iz > last_z) { r.face_z = -1; }
-            else if (iz < last_z) { r.face_z = 1; }
+            else if iz > last_z { r.face_z = -1; }
+            else if iz < last_z { r.face_z = 1; }
             
             r.distance = dist;
-
             return r;
         }
 
