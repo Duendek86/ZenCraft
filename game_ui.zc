@@ -1,0 +1,116 @@
+//> Game UI, HUD & Settings Menu
+import "raylib.h" as rl;
+import "rlgl.h";
+import "player.zc";
+import "chunk_core.zc";
+import "persistence.zc";
+
+fn draw_hud(p: Player*, selected_block: int, version: char*) {
+    raw { rlDisableDepthTest(); }
+    let sw = rl::GetScreenWidth(); let sh = rl::GetScreenHeight();
+    let cx = sw / 2; let cy = sh / 2;
+    
+    // Crosshair
+    rl::DrawRectangle(cx - 6, cy - 2, 12, 4, rl::BLACK);
+    rl::DrawRectangle(cx - 2, cy - 6, 4, 12, rl::BLACK);
+    rl::DrawRectangle(cx - 5, cy - 1, 10, 2, rl::WHITE);
+    rl::DrawRectangle(cx - 1, cy - 5, 2, 10, rl::WHITE);
+
+    rl::DrawText("Zen Craft", 10, 10, 40, rl::WHITE);
+    
+    // Stats Bars
+    let bar_w = 200; let bar_h = 20; let bar_x = 20;
+    let bar_y_health = sh - 50; let bar_y_mana = sh - 25;
+    
+    rl::DrawRectangle(bar_x, bar_y_health, bar_w, bar_h, rl::GRAY);
+    rl::DrawRectangle(bar_x, bar_y_health, (int)((float)bar_w * (p.health / 100.0)), bar_h, rl::RED);
+    rl::DrawRectangleLines(bar_x, bar_y_health, bar_w, bar_h, rl::BLACK);
+    rl::DrawText(rl::TextFormat("%.0f", p.health), bar_x + 5, bar_y_health + 2, 20, rl::WHITE);
+
+    rl::DrawRectangle(bar_x, bar_y_mana, bar_w, bar_h, rl::GRAY);
+    rl::DrawRectangle(bar_x, bar_y_mana, (int)((float)bar_w * (p.mana / 100.0)), bar_h, rl::BLUE);
+    rl::DrawRectangleLines(bar_x, bar_y_mana, bar_w, bar_h, rl::BLACK);
+    rl::DrawText(rl::TextFormat("%.0f", p.mana), bar_x + 5, bar_y_mana + 2, 20, rl::WHITE);
+
+    let v_width = rl::MeasureText(version, 20);
+    rl::DrawText(version, sw - v_width - 10, 10, 20, rl::WHITE);
+
+    rl::DrawText("Select: 1-8", 10, 60, 20, rl::WHITE);
+    rl::DrawText(rl::TextFormat("Block: %d", selected_block), 10, 90, 20, rl::WHITE);
+}
+
+fn draw_debug_info(p: Player*, chunks: Chunk*, dt: float, day_time: float, draw_distance: int, max_zibis: int) {
+    let loaded_chunks = 0;
+    for i in 0..MAX_CHUNKS { if chunks[i].x != -9999 { loaded_chunks++; } }
+    
+    let dy = 120;
+    rl::DrawFPS(10, dy); dy = dy + 25;
+    rl::DrawText(rl::TextFormat("Chunks: %d / %d", loaded_chunks, MAX_CHUNKS), 10, dy, 20, rl::LIME); dy = dy + 25;
+    rl::DrawText(rl::TextFormat("Zibis: %d", max_zibis), 10, dy, 20, rl::LIME); dy = dy + 25;
+    rl::DrawText(rl::TextFormat("XYZ: %.2f, %.2f, %.2f", p.x, p.y, p.z), 10, dy, 20, rl::LIME); dy = dy + 25;
+    
+    let frame_time_ms = dt * 1000.0;
+    let pending_io = get_pending_req_count();
+    rl::DrawText(rl::TextFormat("Frame: %.2f ms", frame_time_ms), 10, dy, 20, rl::YELLOW); dy = dy + 25;
+    rl::DrawText(rl::TextFormat("Async Q: %d", pending_io), 10, dy, 20, rl::YELLOW); dy = dy + 25;
+    rl::DrawText(rl::TextFormat("Draw Dist: %d", draw_distance), 10, dy, 20, rl::YELLOW); dy = dy + 30;
+    
+    let hour_float = (day_time * 24.0) + 6.0;
+    if hour_float >= 24.0 { hour_float = hour_float - 24.0; }
+    let hour = (int)hour_float;
+    let minute = (int)((hour_float - (float)hour) * 60.0);
+    
+    if hour == 0 { rl::DrawText(rl::TextFormat("Time: 12:%02d AM", minute), 10, dy, 20, rl::WHITE); } 
+    else if hour < 12 { rl::DrawText(rl::TextFormat("Time: %d:%02d AM", hour, minute), 10, dy, 20, rl::WHITE); } 
+    else if hour == 12 { rl::DrawText(rl::TextFormat("Time: 12:%02d PM", minute), 10, dy, 20, rl::WHITE); } 
+    else { rl::DrawText(rl::TextFormat("Time: %d:%02d PM", hour - 12, minute), 10, dy, 20, rl::WHITE); }
+    dy = dy + 30;
+    
+    let prof = get_profiling_stats();
+    rl::DrawText("Profiling (Last Op):", 10, dy, 20, rl::ORANGE); dy = dy + 25;
+    rl::DrawText(rl::TextFormat("Mesh Gen: %.2f ms", prof.mesh_ms), 20, dy, 20, rl::ORANGE); dy = dy + 25;
+    rl::DrawText(rl::TextFormat("World Gen: %.2f ms", prof.gen_ms), 20, dy, 20, rl::ORANGE); dy = dy + 25;
+    rl::DrawText(rl::TextFormat("Light Prop: %.2f ms", prof.prop_ms), 20, dy, 20, rl::ORANGE);
+}
+
+fn draw_settings_menu(draw_distance: int*, grass_dist: float*) {
+    let sw = rl::GetScreenWidth(); let sh = rl::GetScreenHeight();
+    let mx = rl::GetMouseX(); let my = rl::GetMouseY();
+    let clicked = rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_LEFT);
+    
+    let menu_x = sw/2 - 150; let menu_y = sh/2 - 100;
+    let menu_w = 300; let menu_h = 200;
+    
+    rl::DrawRectangle(menu_x, menu_y, menu_w, menu_h, rl::Color{r: 0, g: 0, b: 0, a: 200});
+    rl::DrawRectangleLines(menu_x, menu_y, menu_w, menu_h, rl::WHITE);
+    rl::DrawText("CONFIGURATION", menu_x + 80, menu_y + 10, 20, rl::WHITE);
+    
+    rl::DrawText("Grass Deco:", menu_x + 20, menu_y + 50, 20, rl::WHITE);
+    let is_on = *grass_dist > 0.1;
+    let btn_col = rl::RED; let btn_text = "OFF";
+    if is_on { btn_col = rl::LIME; btn_text = "ON"; }
+    
+    rl::DrawRectangle(menu_x + 180, menu_y + 45, 60, 30, btn_col);
+    rl::DrawText(btn_text, menu_x + 195, menu_y + 50, 20, rl::BLACK);
+    
+    if clicked == 1 && mx >= menu_x + 180 && mx <= menu_x + 240 && my >= menu_y + 45 && my <= menu_y + 75 {
+        if is_on { *grass_dist = 0.0; } else { *grass_dist = 2000.0; }
+    }
+    
+    rl::DrawText("Render Distance:", menu_x + 20, menu_y + 90, 20, rl::WHITE);
+    rl::DrawText(rl::TextFormat("%d", *draw_distance), menu_x + 180, menu_y + 90, 20, rl::WHITE);
+    
+    rl::DrawRectangle(menu_x + 150, menu_y + 90, 20, 20, rl::GRAY);
+    rl::DrawText("-", menu_x + 155, menu_y + 90, 20, rl::WHITE);
+    if clicked == 1 && mx >= menu_x + 150 && mx <= menu_x + 170 && my >= menu_y + 90 && my <= menu_y + 110 {
+        if *draw_distance > 2 { *draw_distance = *draw_distance - 1; }
+    }
+    
+    rl::DrawRectangle(menu_x + 210, menu_y + 90, 20, 20, rl::GRAY);
+    rl::DrawText("+", menu_x + 215, menu_y + 90, 20, rl::WHITE);
+    if clicked == 1 && mx >= menu_x + 210 && mx <= menu_x + 230 && my >= menu_y + 90 && my <= menu_y + 110 {
+        if *draw_distance < 15 { *draw_distance = *draw_distance + 1; }
+    }
+    
+    rl::DrawText("F1 to Close", menu_x + 100, menu_y + 170, 10, rl::GRAY);
+}
