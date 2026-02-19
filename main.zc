@@ -38,7 +38,7 @@ import "grass_deco.zc";
 import "particles.zc";
 import "spellbook.zc";
 
-def VERSION_TEXT = "v0.0.1.7 alpha-dev";
+def VERSION_TEXT = "v0.0.1.8 alpha-dev";
 def MAX_ZIBIS = 10;
 def SAVE_DIR = "world";
 // Removed DRAW_DISTANCE constant, now using variable
