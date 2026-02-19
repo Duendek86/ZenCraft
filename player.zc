@@ -26,6 +26,10 @@ struct Player {
     is_flying: int;
     last_jump_time: double;
     is_crouching: int;
+    
+    // Stats
+    health: float;
+    mana: float;
 }
 
 fn check_collision(chunks: Chunk*, num_chunks: int, x: float, y: float, z: float, w: float, h: float) -> int {
@@ -66,6 +70,9 @@ impl Player {
         p.is_flying = 0;
         p.last_jump_time = 0.0;
         p.is_crouching = 0;
+        
+        p.health = 100.0;
+        p.mana = 100.0;
 
         p.camera = rl::Camera3D{
             position: rl::Vector3{x: x, y: y, z: z},

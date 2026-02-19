@@ -706,6 +706,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
                         else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
                         else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
                         else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px, py+1, pz,     0,1,0, u_min, v_min, light_val, 0);
@@ -724,6 +725,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
                         else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
                         else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
                         else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px, py, pz,     0,-1,0, u_min, v_min, light_val, 0);
@@ -742,6 +744,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
                         else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
                         else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
                         else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px+1, py, pz,     1,0,0, u_min, v_max, light_val, 0);
@@ -760,6 +763,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
                         else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
                         else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
                         else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px, py, pz,     -1,0,0, u_min, v_max, light_val, 0);
@@ -778,6 +782,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
                         else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
                         else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
                         else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px, py, pz+1,     0,0,1, u_min, v_max, light_val, 0);
@@ -796,6 +801,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
                         else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
                         else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
                         else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px, py, pz,     0,0,-1, u_min, v_max, light_val, 0);

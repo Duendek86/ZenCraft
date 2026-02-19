@@ -5,7 +5,7 @@
 
 import "persistence_defs.zc";
 import "chunk.zc"; // for BLOCK_* and CHUNK_HEIGHT
-import "raylib.h";
+import "raylib.h" as rl;
 
 // Thread-safe pseudo-random number generator
 // Linear Congruential Generator
@@ -36,6 +36,7 @@ fn is_village_center(cx: int, cz: int) -> int {
 // This prototyp needs to be visible to db_worker, but implementation is elsewhere or dynamic?
 // For now, keep it here as the default generator
 fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
+    rl::TraceLog(rl::LOG_INFO, "Generating chunk data for %d, %d", x, z);
     // 1. Generate Heightmap
     let heights: int[16][16];
     
@@ -365,4 +366,5 @@ fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
     }
     
     data.light_calculated = 1;
+    rl::TraceLog(rl::LOG_INFO, "Chunk %d, %d generation complete", x, z);
 }
