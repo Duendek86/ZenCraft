@@ -1,197 +1,139 @@
-// Build grass decoration mesh for a chunk
-// Adds small decorative grass blades on top of grass blocks
+//> Build grass decoration mesh for a chunk (LOD)
+import "raylib.h" as rl;
+import "math.h";
+import "string.h";
+import "blocks.zc";
+import "chunk_core.zc";
+import "chunk_light.zc";
+import "rendering.zc";
+
+struct DecoVertexData {
+    vertices: float*; normals: float*;
+    texcoords: float*; colors: char*;
+    idx: int; max_verts: int;
+}
+
+fn push_deco_v(vd: DecoVertexData*, px: float, py: float, pz: float, u: float, v: float, light_r: char, light_g: char, flag: char) {
+    if vd.idx >= vd.max_verts { return; }
+    let i = vd.idx;
+    vd.vertices[i * 3 + 0] = px; vd.vertices[i * 3 + 1] = py; vd.vertices[i * 3 + 2] = pz;
+    vd.normals[i * 3 + 0] = 0.0; vd.normals[i * 3 + 1] = 1.0; vd.normals[i * 3 + 2] = 0.0;
+    vd.texcoords[i * 2 + 0] = u; vd.texcoords[i * 2 + 1] = v;
+    vd.colors[i * 4 + 0] = light_r; vd.colors[i * 4 + 1] = light_g; vd.colors[i * 4 + 2] = flag; vd.colors[i * 4 + 3] = (char)255;
+    vd.idx = i + 1;
+}
+
+fn get_foliage_noise(x: float, z: float) -> float {
+    let n1 = (float)sin(x * 0.05 + z * 0.05);
+    let n2 = (float)sin(x * 0.2 - z * 0.1) * 0.5;
+    let n3 = (float)cos(x * 0.1 + z * 0.2) * 0.25;
+    let total = (n1 + n2 + n3) / 1.75; 
+    return (total + 1.0) * 0.5;
+}
+
 fn build_grass_decorations(c: Chunk*, chunks: Chunk*, num_chunks: int) {
-    raw {
-        // Count grass blocks with air above
-        int grass_count = 0;
-        for (int x = 0; x < 16; x++) {
-            for (int y = 0; y < CHUNK_HEIGHT - 1; y++) { // check y+1
-                for (int z = 0; z < 16; z++) {
-                    if (c->blocks[x][y][z] == BLOCK_GRASS) {
-                        int above = c->blocks[x][y + 1][z];
-                        if (above == BLOCK_AIR || above == BLOCK_WATER) {
-                            grass_count++;
-                        }
+    let grass_count = 0;
+    for x in 0..16 {
+        for y in 0..CHUNK_HEIGHT - 1 {
+            for z in 0..16 {
+                if c.blocks[x][y][z] == BLOCK_GRASS {
+                    let above = c.blocks[x][y + 1][z];
+                    if above == BLOCK_AIR || above == BLOCK_WATER || above == BLOCK_WATER_1 || above == BLOCK_WATER_2 {
+                        grass_count++;
                     }
                 }
             }
         }
-        
-        if (grass_count == 0) {
-            c->grass_deco_built = 1;
-            return;
-        }
-        
-        // Each grass block gets 25 decorations (5x5 grid)
-        // Each decoration is 2 crossed quads (4 quads total)
-        // Each quad = 6 vertices
-        int num_decorations = grass_count * 25;
-        int vertex_count = num_decorations * 6; // 1 quad per deco, 6 verts
-        
-        float* vertices = (float*)malloc(vertex_count * 3 * sizeof(float));
-        float* normals = (float*)malloc(vertex_count * 3 * sizeof(float));
-        float* texcoords = (float*)malloc(vertex_count * 2 * sizeof(float));
-        unsigned char* colors = (unsigned char*)malloc(vertex_count * 4 * sizeof(unsigned char));
-        
-        int v_idx = 0;
-        
-        // Pseudo-random helper (deterministic)
-        #define PRNG(seed) ((seed * 1103515245 + 12345) & 0x7FFFFFFF)
-        #define PRAND_FLOAT(seed) (((float)((seed) & 0xFFFF)) / 65535.0f)
-        
-        for (int x = 0; x < 16; x++) {
-            for (int y = 0; y < CHUNK_HEIGHT - 1; y++) {
-                for (int z = 0; z < 16; z++) {
-                    if (c->blocks[x][y][z] != BLOCK_GRASS) continue;
-                    
-                    int above = c->blocks[x][y + 1][z];
-                    if (above != BLOCK_AIR && above != BLOCK_WATER) continue;
-                    
-                    // Deterministic seed based on block position
-                    int seed_base = (c->x * 16 + x) * 73856093 ^ (y) * 19349663 ^ (c->z * 16 + z) * 83492791;
-                    
-                    // Sample light from the block above
-                    int light_val = c->light[x][y + 1][z];
-                    int light_r = ((light_val & 0xF) * 17);        // Block Light
-                    int light_g = (((light_val >> 4) & 0xF) * 17); // Sky Light
-                    
-                    // Noise-based distribution
-                    // World coordinates
-                    float wx = (float)(c->x * 16 + x);
-                    float wz = (float)(c->z * 16 + z);
-                    
-                    // Simple Perlin-like noise using sine waves for patches
-                    // Frequency 0.1 gives patches roughly 10-20 blocks wide
-                    float n1 = sin(wx * 0.05f + wz * 0.03f);
-                    float n2 = cos(wx * 0.02f - wz * 0.06f);
-                    float noise = (n1 + n2) * 0.5f; // Range roughly -1 to 1
-                    
-                    // Normalize to 0..1 for height/density control
-                    // High values = center of patch, Low values = edge/no grass
-                    float val = noise * 0.5f + 0.5f;
-                    
-                    // Threshold: only draw if val > 0.4
-                    if (val < 0.4f) continue;
-                    
-                    // Height based on "centrality" in the patch (0.4 to 1.0 -> 0.0 to 0.6 remapped)
-                    float patch_intensity = (val - 0.4f) / 0.6f;
-                    
-                    // Number of blades based on intensity?
-                    // Let's stick to 5x5 grid but scale height and cull random ones for "fading" edge
-                    
-                    for (int gx = 0; gx < 5; gx++) {
-                        for (int gz = 0; gz < 5; gz++) {
-                            int deco_index = gx * 5 + gz;
-                            int seed = PRNG(seed_base + deco_index * 12345);
-                            
-                            // Random cull at edges
-                            float rnd_exist = PRAND_FLOAT(PRNG(seed));
-                            if (rnd_exist > patch_intensity) continue; // Sparse edges
-                            
-                            // Grid cell center
-                            float cell_center_x = (float)gx * 0.2f + 0.1f;
-                            float cell_center_z = (float)gz * 0.2f + 0.1f;
-                            
-                            // Jitter
-                            float jitter_x = PRAND_FLOAT(PRNG(seed)) * 0.2f - 0.1f;
-                            float jitter_z = PRAND_FLOAT(PRNG(PRNG(seed))) * 0.2f - 0.1f;
-                            
-                            float px = (float)x + cell_center_x + jitter_x;
-                            float py = (float)(y + 1);
-                            float pz = (float)z + cell_center_z + jitter_z;
-                            
-                            // Height varies with patch intensity (Center = Tall, Edge = Short)
-                            // Max height 0.8, Min height 0.2
-                            float base_h = 0.2f + patch_intensity * 0.6f;
-                            float rnd_h = PRAND_FLOAT(PRNG(PRNG(PRNG(seed)))) * 0.2f;
-                            float height = base_h + rnd_h;
-                            
-                            // Width proportional to height (e.g. 15% of height)
-                            float width = height * 0.15f; 
-                            if (width < 0.02f) width = 0.02f; // Minimum width clamp
-                            if (width > 0.08f) width = 0.08f; // Maximum width clamp (fix for too wide)
-                            
-                            // Safety check for NaNs/Infs
-                            if (isnan(height) || isinf(height)) height = 0.4f;
-                            if (isnan(width) || isinf(width)) width = 0.04f;
-                            
-                            // Texture coords (Grass Top)
-                            float u_min = 0.26f;
-                            float v_min = 0.01f;
-                            float u_max = 0.49f;
-                            float v_max = 0.32f;
-                            
-                            // Random rotation
-                            float angle = PRAND_FLOAT(PRNG(seed + 1)) * 6.28318f;
-                            float s = (float)sin(angle);
-                            float c_rot = (float)cos(angle);
-                            
-                            float hw = width; 
-                            float x1 = -hw * c_rot;
-                            float z1 = -hw * s;
-                            float x2 = hw * c_rot;
-                            float z2 = hw * s;
-                            
-                            // Triangle 1
-                            vertices[v_idx * 3 + 0] = px + x1; vertices[v_idx * 3 + 1] = py; vertices[v_idx * 3 + 2] = pz + z1;
-                            normals[v_idx * 3 + 0] = 0; normals[v_idx * 3 + 1] = 1; normals[v_idx * 3 + 2] = 0; // Up normals
-                            texcoords[v_idx * 2 + 0] = u_min; texcoords[v_idx * 2 + 1] = v_max;
-                            colors[v_idx * 4 + 0] = light_r; colors[v_idx * 4 + 1] = light_g; colors[v_idx * 4 + 2] = 0; colors[v_idx * 4 + 3] = 255;
-                            v_idx++;
-                            
-                            vertices[v_idx * 3 + 0] = px + x2; vertices[v_idx * 3 + 1] = py + height; vertices[v_idx * 3 + 2] = pz + z2;
-                            normals[v_idx * 3 + 0] = 0; normals[v_idx * 3 + 1] = 1; normals[v_idx * 3 + 2] = 0;
-                            texcoords[v_idx * 2 + 0] = u_max; texcoords[v_idx * 2 + 1] = v_min;
-                            colors[v_idx * 4 + 0] = light_r; colors[v_idx * 4 + 1] = light_g; colors[v_idx * 4 + 2] = 100; colors[v_idx * 4 + 3] = 255;
-                            v_idx++;
-                            
-                            vertices[v_idx * 3 + 0] = px + x1; vertices[v_idx * 3 + 1] = py + height; vertices[v_idx * 3 + 2] = pz + z1;
-                            normals[v_idx * 3 + 0] = 0; normals[v_idx * 3 + 1] = 1; normals[v_idx * 3 + 2] = 0;
-                            texcoords[v_idx * 2 + 0] = u_min; texcoords[v_idx * 2 + 1] = v_min;
-                            colors[v_idx * 4 + 0] = light_r; colors[v_idx * 4 + 1] = light_g; colors[v_idx * 4 + 2] = 100; colors[v_idx * 4 + 3] = 255;
-                            v_idx++;
-                            
-                            // Triangle 2
-                            vertices[v_idx * 3 + 0] = px + x1; vertices[v_idx * 3 + 1] = py; vertices[v_idx * 3 + 2] = pz + z1;
-                            normals[v_idx * 3 + 0] = 0; normals[v_idx * 3 + 1] = 1; normals[v_idx * 3 + 2] = 0;
-                            texcoords[v_idx * 2 + 0] = u_min; texcoords[v_idx * 2 + 1] = v_max;
-                            colors[v_idx * 4 + 0] = light_r; colors[v_idx * 4 + 1] = light_g; colors[v_idx * 4 + 2] = 0; colors[v_idx * 4 + 3] = 255;
-                            v_idx++;
-                            
-                            vertices[v_idx * 3 + 0] = px + x2; vertices[v_idx * 3 + 1] = py; vertices[v_idx * 3 + 2] = pz + z2;
-                            normals[v_idx * 3 + 0] = 0; normals[v_idx * 3 + 1] = 1; normals[v_idx * 3 + 2] = 0;
-                            texcoords[v_idx * 2 + 0] = u_max; texcoords[v_idx * 2 + 1] = v_max;
-                            colors[v_idx * 4 + 0] = light_r; colors[v_idx * 4 + 1] = light_g; colors[v_idx * 4 + 2] = 0; colors[v_idx * 4 + 3] = 255;
-                            v_idx++;
-                            
-                            vertices[v_idx * 3 + 0] = px + x2; vertices[v_idx * 3 + 1] = py + height; vertices[v_idx * 3 + 2] = pz + z2;
-                            normals[v_idx * 3 + 0] = 0; normals[v_idx * 3 + 1] = 1; normals[v_idx * 3 + 2] = 0;
-                            texcoords[v_idx * 2 + 0] = u_max; texcoords[v_idx * 2 + 1] = v_min;
-                            colors[v_idx * 4 + 0] = light_r; colors[v_idx * 4 + 1] = light_g; colors[v_idx * 4 + 2] = 100; colors[v_idx * 4 + 3] = 255;
-                            v_idx++;
-                        }
-                    }
-                }
-            }
-        }
-        
-        // Create mesh
-        Mesh mesh = {0};
-        mesh.triangleCount = v_idx / 3;
-        mesh.vertexCount = v_idx;
-        mesh.vertices = vertices;
-        mesh.normals = normals;
-        mesh.texcoords = texcoords;
-        mesh.colors = colors;
-        
-        SetTraceLogLevel(LOG_WARNING);
-        UploadMesh(&mesh, false);
-        SetTraceLogLevel(LOG_INFO);
-        
-        c->grass_deco_mesh = mesh;
-        c->grass_deco_model = LoadModelFromMesh(mesh);
-        c->grass_deco_model.materials[0].shader = get_shader_grass();
-        c->grass_deco_model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = get_tex_atlas();
-        c->grass_deco_built = 1;
     }
+    
+    if grass_count == 0 { c.grass_deco_built = 1; return; }
+    
+    let num_decorations = grass_count * 28;
+    let vertex_count = num_decorations * 6; 
+    
+    let vd: DecoVertexData; vd.max_verts = vertex_count; vd.idx = 0;
+    vd.vertices = (float*)rl::MemAlloc(vertex_count * 3 * 4);
+    vd.normals = (float*)rl::MemAlloc(vertex_count * 3 * 4);
+    vd.texcoords = (float*)rl::MemAlloc(vertex_count * 2 * 4);
+    vd.colors = (char*)rl::MemAlloc(vertex_count * 4);
+    
+    let gx_base = c.x * 16; let gz_base = c.z * 16;
+    
+    for x in 0..16 {
+        for y in 0..CHUNK_HEIGHT - 1 {
+            for z in 0..16 {
+                if c.blocks[x][y][z] == BLOCK_GRASS {
+                    let above = c.blocks[x][y + 1][z];
+                    if above == BLOCK_AIR || above == BLOCK_WATER || above == BLOCK_WATER_1 || above == BLOCK_WATER_2 {
+                        
+                        let light_val = get_light_levels(chunks, num_chunks, gx_base + x, y + 1, gz_base + z);
+                        let r_raw = (light_val & 0xF) * 17;
+                        let g_raw = ((light_val >> 4) & 0xF) * 17;
+                        let r_bright = 160 + (r_raw * 95 / 255); 
+                        let g_bright = 160 + (g_raw * 95 / 255);
+
+                        let light_r = (char)r_bright; let light_g = (char)g_bright;
+                        let base_r = (char)(r_bright * 9 / 10); let base_g = (char)(g_bright * 9 / 10);
+                        
+                        let seed = (gx_base + x) * 31337 + (gz_base + z) * 4231 + y * 739;
+                        
+                        for i in 0..12 {
+                            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF; let ox = (float)(seed % 1000) / 1000.0;
+                            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF; let oz = (float)(seed % 1000) / 1000.0;
+                            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF; let scale_rnd = (float)(seed % 1000) / 1000.0;
+                            let height = 0.15 + (scale_rnd * 0.15); let width = 0.10 + (scale_rnd * 0.05);  
+                            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF; let angle = (float)(seed % 360) * 0.0174533; 
+                            
+                            let px = (float)x + ox; let py = (float)y + 1.0; let pz = (float)z + oz;
+                            let sa = (float)sin(angle) * width; let ca = (float)cos(angle) * width;
+                            
+                            push_deco_v(&vd, px - ca, py, pz - sa, 0.0, 1.0, base_r, base_g, (char)0);
+                            push_deco_v(&vd, px + ca, py, pz + sa, 1.0, 1.0, base_r, base_g, (char)0);
+                            push_deco_v(&vd, px + ca, py + height, pz + sa, 1.0, 0.0, light_r, light_g, (char)100);
+                            push_deco_v(&vd, px - ca, py, pz - sa, 0.0, 1.0, base_r, base_g, (char)0);
+                            push_deco_v(&vd, px + ca, py + height, pz + sa, 1.0, 0.0, light_r, light_g, (char)100);
+                            push_deco_v(&vd, px - ca, py + height, pz - sa, 0.0, 0.0, light_r, light_g, (char)100);
+                        }
+                        
+                        let noise = get_foliage_noise((float)(gx_base + x), (float)(gz_base + z));
+                        if noise > 0.50 { 
+                            let tall_blades = (int)((noise - 0.50) * 32.0); 
+                            if tall_blades > 16 { tall_blades = 16; } 
+                            
+                            for i in 0..tall_blades {
+                                seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF; let ox = (float)(seed % 1000) / 1000.0;
+                                seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF; let oz = (float)(seed % 1000) / 1000.0;
+                                seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF; let scale_rnd = (float)(seed % 1000) / 1000.0;
+                                let height = 0.35 + (scale_rnd * 0.3) + (noise * 0.2); let width = 0.12 + (scale_rnd * 0.08); 
+                                seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF; let angle = (float)(seed % 360) * 0.0174533; 
+                                
+                                let px = (float)x + ox; let py = (float)y + 1.0; let pz = (float)z + oz;
+                                let sa = (float)sin(angle) * width; let ca = (float)cos(angle) * width;
+                                
+                                push_deco_v(&vd, px - ca, py, pz - sa, 0.0, 1.0, base_r, base_g, (char)0);
+                                push_deco_v(&vd, px + ca, py, pz + sa, 1.0, 1.0, base_r, base_g, (char)0);
+                                push_deco_v(&vd, px + ca, py + height, pz + sa, 1.0, 0.0, light_r, light_g, (char)100);
+                                push_deco_v(&vd, px - ca, py, pz - sa, 0.0, 1.0, base_r, base_g, (char)0);
+                                push_deco_v(&vd, px + ca, py + height, pz + sa, 1.0, 0.0, light_r, light_g, (char)100);
+                                push_deco_v(&vd, px - ca, py + height, pz - sa, 0.0, 0.0, light_r, light_g, (char)100);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    let mesh: rl::Mesh;
+    memset(&mesh, 0, sizeof(rl::Mesh));
+    mesh.triangleCount = vd.idx / 3; mesh.vertexCount = vd.idx;
+    mesh.vertices = vd.vertices; mesh.normals = vd.normals;
+    mesh.texcoords = vd.texcoords; mesh.colors = (void*)vd.colors;
+    
+    rl::SetTraceLogLevel(rl::LOG_WARNING);
+    rl::UploadMesh(&mesh, false);
+    
+    c.grass_deco_mesh = mesh; c.grass_deco_model = rl::LoadModelFromMesh(mesh); c.grass_deco_built = 1;
+    c.grass_deco_model.materials[0].shader = get_shader_grass();
+    c.grass_deco_model.materials[0].maps[rl::MATERIAL_MAP_DIFFUSE].texture = get_tex_grass();
 }

@@ -1,24 +1,19 @@
-
+//> Async Light Request Handler
 import "persistence_defs.zc";
-import "chunk.zc";
-import "lighting.zc"; // for recalculate_chunk_lighting
+import "chunk_core.zc";
+import "chunk_light.zc";
 
 fn handle_light_request(req: any, chunks: Chunk*, num_chunks: int) {
-    raw {
-        IORequest* r = (IORequest*)req;
-        if (chunks != NULL) {
-            Chunk* c = &chunks[r->target_idx];
-            
-            if(r->type == 4) { // REQ_LIGHT_RECALC
-                recalculate_chunk_lighting(c, chunks, num_chunks);
-            }
-            else if(r->type == 5) { // REQ_LIGHT_PROPAGATE
-                propagate_light_in_chunk(c, chunks, num_chunks);
-            }
-            
-            r->io_status = 2; // COMPLETED
-        } else {
-            r->io_status = 3; // FAILED
-        }
+    if chunks == NULL { return; }
+    
+    let r = (IORequest*)req;
+    let c = &chunks[r.target_idx];
+    
+    if r.type == REQ_LIGHT_RECALC { 
+        recalculate_chunk_lighting(c, chunks, num_chunks);
+    } else if r.type == REQ_LIGHT_PROPAGATE { 
+        propagate_light_in_chunk(c, chunks, num_chunks);
     }
+    
+    r.io_status = IO_STATUS_COMPLETED;
 }

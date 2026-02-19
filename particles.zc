@@ -1,15 +1,11 @@
-// particles.zc
+//> Particle System Engine
 import "raylib.h" as rl;
 import "rlgl.h";
 import "math.h";
 
 struct Particle {
-    x: float;
-    y: float;
-    z: float;
-    vx: float;
-    vy: float;
-    vz: float;
+    x: float; y: float; z: float;
+    vx: float; vy: float; vz: float;
     life: float;
     color: rl::Color;
     size: float;
@@ -33,16 +29,16 @@ fn spawn_particle(x: float, y: float, z: float, color: rl::Color) {
             particles[i].y = y;
             particles[i].z = z;
             
-            raw {
-                // Random velocity (Explosion)
-                particles[i].vx = ((float)GetRandomValue(-100, 100) / 100.0f) * 4.0f;
-                particles[i].vy = ((float)GetRandomValue(-50, 200) / 100.0f) * 3.0f; // More up
-                particles[i].vz = ((float)GetRandomValue(-100, 100) / 100.0f) * 4.0f;
-            }
+            // Random velocity (Explosion math 100% native)
+            particles[i].vx = ((float)rl::GetRandomValue(-100, 100) / 100.0) * 4.0;
+            particles[i].vy = ((float)rl::GetRandomValue(-50, 200) / 100.0) * 3.0; 
+            particles[i].vz = ((float)rl::GetRandomValue(-100, 100) / 100.0) * 4.0;
             
             particles[i].life = 1.0; // 1 second
             particles[i].color = color;
-            particles[i].size = 0.1 + ((float)(rand()%10)/50.0);
+            
+            // Unified RNG (No more rand() from C)
+            particles[i].size = 0.1 + ((float)rl::GetRandomValue(0, 10) / 50.0);
             particles[i].active = 1;
             return;
         }
@@ -57,15 +53,15 @@ fn spawn_explosion(x: float, y: float, z: float, count: int, color: rl::Color) {
 
 fn update_particles(dt: float) {
    for i in 0..MAX_PARTICLES {
-       if particles[i].active {
-           particles[i].x += particles[i].vx * dt;
-           particles[i].y += particles[i].vy * dt;
-           particles[i].z += particles[i].vz * dt;
+       if particles[i].active == 1 {
+           particles[i].x = particles[i].x + (particles[i].vx * dt);
+           particles[i].y = particles[i].y + (particles[i].vy * dt);
+           particles[i].z = particles[i].z + (particles[i].vz * dt);
            
-           particles[i].vy -= 9.0 * dt; // Gravity
+           particles[i].vy = particles[i].vy - (9.0 * dt); // Gravity
            
-           particles[i].life -= dt * 1.5; // Fade faster
-           if particles[i].life <= 0 {
+           particles[i].life = particles[i].life - (dt * 1.5); // Fade faster
+           if particles[i].life <= 0.0 {
                particles[i].active = 0;
            }
        }
@@ -73,23 +69,30 @@ fn update_particles(dt: float) {
 }
 
 fn draw_particles() {
-    // raw { rlDisableDepthMask(); } // rendering transparency?
+    // Enable proper transparency rendering without breaking the Z-Buffer
+    rlDisableDepthMask(); 
+    
     for i in 0..MAX_PARTICLES {
-        if particles[i].active {
-            // Fade out
-            let col: rl::Color = particles[i].color;
-            // Linear fade
-            let alpha: float = particles[i].life;
+        if particles[i].active == 1 {
+            let col = particles[i].color;
+            let alpha = particles[i].life;
+            
             if alpha < 0.0 { alpha = 0.0; }
             if alpha > 1.0 { alpha = 1.0; }
             
-            raw { 
-                col.a = (unsigned char)(particles[i].life * 255.0f); 
-            }
+            // Native cast to char (0-255) for the alpha channel
+            col.a = (char)(alpha * 255.0);
             
-            rl::DrawCube(rl::Vector3{x: particles[i].x, y: particles[i].y, z: particles[i].z},
-                         particles[i].size, particles[i].size, particles[i].size, col);
+            // Safe struct instantiation
+            let pos: rl::Vector3;
+            pos.x = particles[i].x;
+            pos.y = particles[i].y;
+            pos.z = particles[i].z;
+            
+            rl::DrawCube(pos, particles[i].size, particles[i].size, particles[i].size, col);
         }
     }
-    // raw { rlEnableDepthMask(); }
+    
+    // Restore Z-Buffer writing
+    rlEnableDepthMask();
 }
