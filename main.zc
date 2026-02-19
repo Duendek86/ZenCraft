@@ -671,7 +671,7 @@ fn main() {
             if !show_settings && !spellbook.show {
                 if rl::IsKeyPressed(rl::KEY_ONE) { selected_block = BLOCK_DIRT; }
             if rl::IsKeyPressed(rl::KEY_TWO) { selected_block = BLOCK_GRASS; }
-            if rl::IsKeyPressed(rl::KEY_THREE) { selected_block = BLOCK_STONE; }
+            if rl::IsKeyPressed(rl::KEY_THREE) { selected_block = BLOCK_STONE; } 
             if rl::IsKeyPressed(rl::KEY_FOUR) { selected_block = BLOCK_LOG; }
             if rl::IsKeyPressed(rl::KEY_FIVE) { selected_block = BLOCK_LEAVES; }
             if rl::IsKeyPressed(rl::KEY_SIX) { selected_block = BLOCK_TORCH; }
