@@ -36,6 +36,7 @@ import "title_generator.zc";
 import "zibi.zc";
 import "grass_deco.zc";
 import "particles.zc";
+import "spellbook.zc";
 
 def VERSION_TEXT = "v0.0.1.7 alpha-dev";
 def MAX_ZIBIS = 10;
@@ -102,6 +103,8 @@ fn main() {
     // --- GAME STATE SETUP ---
     let p: Player;
     let selected_block = BLOCK_STONE;
+    let spellbook = SpellbookState::new();
+    let show_spellbook = 0;
     let zibis: Zibi[MAX_ZIBIS]; // Declare here for scope visibility
     
     // Cleanup on exit
@@ -131,7 +134,9 @@ fn main() {
     while !rl::WindowShouldClose() {
         // User Fix: Recapture cursor if left click detected (focus regain)
         if (rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_LEFT)) {
-            rl::DisableCursor();
+            if (!show_settings && !show_spellbook) {
+                rl::DisableCursor();
+            }
         }
 
         let dt: float = rl::GetFrameTime();
@@ -549,7 +554,19 @@ fn main() {
                  }
             }
             
-            if !show_settings {
+            // Toggle Spellbook
+            if rl::IsKeyPressed(rl::KEY_E) {
+                show_spellbook = !show_spellbook;
+                rl::TraceLog(rl::LOG_WARNING, "ZEN_DEBUG: Key E Pressed. Show Spellbook: %d", show_spellbook);
+                
+                if show_spellbook {
+                    rl::EnableCursor();
+                } else {
+                    rl::DisableCursor();
+                }
+            }
+
+            if !show_settings && !show_spellbook {
                 (&p).update(&chunks[0], MAX_CHUNKS, dt);
             }
             
@@ -622,7 +639,8 @@ fn main() {
             }
     
             // Block selection input
-            if rl::IsKeyPressed(rl::KEY_ONE) { selected_block = BLOCK_DIRT; }
+            if !show_settings && !spellbook.show {
+                if rl::IsKeyPressed(rl::KEY_ONE) { selected_block = BLOCK_DIRT; }
             if rl::IsKeyPressed(rl::KEY_TWO) { selected_block = BLOCK_GRASS; }
             if rl::IsKeyPressed(rl::KEY_THREE) { selected_block = BLOCK_STONE; }
             if rl::IsKeyPressed(rl::KEY_FOUR) { selected_block = BLOCK_LOG; }
@@ -788,7 +806,7 @@ fn main() {
             draw_particles();
     
             // Block interaction
-            if !show_settings {
+            if !show_settings && !show_spellbook {
                 let screen_center = rl::Vector2{
                     x: (float)rl::GetScreenWidth() / 2.0,
                     y: (float)rl::GetScreenHeight() / 2.0
@@ -1102,105 +1120,73 @@ fn main() {
                         destroy_timer = 0.0;
                         destroy_target_x = -999;
                     }
+            if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_RIGHT) {
+                if (spellbook.selected_spell == 0) {
+                    // Default: place in adjacent block
+                    let nx = hit.x + hit.face_x;
+                    let ny = hit.y + hit.face_y;
+                    let nz = hit.z + hit.face_z;
+
+                    let dist_x = p.x - ((float)nx + 0.5);
+                    let dist_y = p.y + 1.6 - ((float)ny + 0.5);
+                    let dist_z = p.z - ((float)nz + 0.5);
                     
-                    if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_RIGHT) {
-                        // Default: place in adjacent block
-                        let nx = hit.x + hit.face_x;
-                        let ny = hit.y + hit.face_y;
-                        let nz = hit.z + hit.face_z;
-        
-                        let dist_x = p.x - ((float)nx + 0.5);
-                        let dist_y = p.y + 1.6 - ((float)ny + 0.5);
-                        let dist_z = p.z - ((float)nz + 0.5);
-                        
-                        // Allow closer placement for torches (non-solid blocks)
-                        let min_dist: float;
-                        if selected_block == BLOCK_TORCH {
-                            min_dist = 0.5;
-                        } else {
-                            min_dist = 1.0;
-                        }
-                        
-                        if (dist_x*dist_x + dist_y*dist_y + dist_z*dist_z) > min_dist {
-                             // Determine block type to place
-                             let block_to_place = selected_block;
-                             
-                             // If placing Grass, place Dirt first to simulate growth
-                             if (block_to_place == BLOCK_GRASS) {
-                                 block_to_place = BLOCK_DIRT;
+                    // Allow closer placement for torches (non-solid blocks)
+                    let min_dist: float;
+                    if selected_block == BLOCK_TORCH {
+                        min_dist = 0.5;
+                    } else {
+                        min_dist = 1.0;
+                    }
+                    
+                    if (dist_x*dist_x + dist_y*dist_y + dist_z*dist_z) > min_dist {
+                         // Determine block type to place
+                         let block_to_place = selected_block;
+                         
+                         if (block_to_place == BLOCK_GRASS) { block_to_place = BLOCK_DIRT; }
+                         
+                         if selected_block == BLOCK_TORCH {
+                             if hit.face_y == 1 { block_to_place = 10; }
+                             else if hit.face_y == -1 { block_to_place = BLOCK_AIR; }
+                             else {
+                                 if hit.face_z == 1 { block_to_place = 12; }
+                                 else if hit.face_z == -1 { block_to_place = 11; }
+                                 else if hit.face_x == 1 { block_to_place = 14; }
+                                 else if hit.face_x == -1 { block_to_place = 13; }
                              }
-                             
-                             // Special handling for torches - detect which face we clicked
-                             if selected_block == BLOCK_TORCH {
-                                 // hit.face_x/y/z tells us which face we clicked
-                                 
-                                 if hit.face_y == 1 {
-                                     // Top face -> floor torch (place in adjacent block above)
-                                     block_to_place = 10; // BLOCK_TORCH_FLOOR
-                                 }
-                                 else if hit.face_y == -1 {
-                                     // Bottom face -> don't place torches on ceiling
-                                     block_to_place = BLOCK_AIR; // Skip placement
-                                 }
-                                 else {
-                                     // Side face -> wall torch (in adjacent block, geometry makes it look attached)
-                                     // INVERTED: clicking north face places torch leaning south (toward wall)
-                                     if hit.face_z == 1 {
-                                         block_to_place = 12; // South-leaning torch (toward Z-)
-                                     }
-                                     else if hit.face_z == -1 {
-                                         block_to_place = 11; // North-leaning torch (toward Z+)
-                                     }
-                                     else if hit.face_x == 1 {
-                                         block_to_place = 14; // West-leaning torch (toward X-)
-                                     }
-                                     else if hit.face_x == -1 {
-                                         block_to_place = 13; // East-leaning torch (toward X+)
-                                     }
-                                 }
-                             }
-                             
-                             set_block(&chunks[0], MAX_CHUNKS, nx, ny, nz, block_to_place);
-                             
-                             let cx = (int)floor((float)nx / 16.0);
-                             let cz = (int)floor((float)nz / 16.0);
-                             let idx = get_chunk_index(cx, cz);
-                             
-                             // Full recalc on this chunk AND neighbors (ASYNC)
-                             request_mesh_async(idx, 1); // INSTANT VISUAL FEEDBACK (Geometry first)
-                             request_light_async(idx, 4, 1); // REQ_LIGHT_RECALC, High
-                             chunks[idx].grass_deco_built = 0;
-                             request_save_async(&chunks[idx]);
-                             
-                             // Also recalculate neighbor chunks lighting
-                             let idx_xm = get_chunk_index(cx - 1, cz);
-                             let idx_xp = get_chunk_index(cx + 1, cz);
-                             let idx_zm = get_chunk_index(cx, cz - 1);
-                             let idx_zp = get_chunk_index(cx, cz + 1);
-                             
-                             if chunks[idx_xm].x == cx - 1 && chunks[idx_xm].z == cz {
-                                 request_mesh_async(idx_xm, 1);
-                                 request_light_async(idx_xm, 4, 1);
-                                 chunks[idx_xm].grass_deco_built = 0;
-                             }
-                             if chunks[idx_xp].x == cx + 1 && chunks[idx_xp].z == cz {
-                                 request_mesh_async(idx_xp, 1);
-                                 request_light_async(idx_xp, 4, 1);
-                                 chunks[idx_xp].grass_deco_built = 0;
-                             }
-                             if chunks[idx_zm].x == cx && chunks[idx_zm].z == cz - 1 {
-                                 request_mesh_async(idx_zm, 1);
-                                 request_light_async(idx_zm, 4, 1);
-                                 chunks[idx_zm].grass_deco_built = 0;
-                             }
-                             if chunks[idx_zp].x == cx && chunks[idx_zp].z == cz + 1 {
-                                 request_mesh_async(idx_zp, 1);
-                                 request_light_async(idx_zp, 4, 1);
-                                 chunks[idx_zp].grass_deco_built = 0;
-                             }
-                        }
+                         }
+                         
+                         set_block(&chunks[0], MAX_CHUNKS, nx, ny, nz, block_to_place);
+                         
+                         let cx = (int)floor((float)nx / 16.0);
+                         let cz = (int)floor((float)nz / 16.0);
+                         let idx = get_chunk_index(cx, cz);
+                         
+                         request_mesh_async(idx, 1);
+                         request_light_async(idx, 4, 1); 
+                         chunks[idx].grass_deco_built = 0;
+                         request_save_async(&chunks[idx]);
+                         
+                         // Update Neighbors
+                         let cx_nx = (int)floor((float)(nx+1) / 16.0);
+                         let idx_nx = get_chunk_index(cx_nx, cz);
+                         if(idx_nx != idx) { request_mesh_async(idx_nx, 1); request_light_async(idx_nx, 4, 1); chunks[idx_nx].grass_deco_built = 0; }
+                         
+                         let cx_px = (int)floor((float)(nx-1) / 16.0);
+                         let idx_px = get_chunk_index(cx_px, cz);
+                         if(idx_px != idx) { request_mesh_async(idx_px, 1); request_light_async(idx_px, 4, 1); chunks[idx_px].grass_deco_built = 0; }
+
+                         let cz_nz = (int)floor((float)(nz+1) / 16.0);
+                         let idx_nz = get_chunk_index(cx, cz_nz);
+                         if(idx_nz != idx) { request_mesh_async(idx_nz, 1); request_light_async(idx_nz, 4, 1); chunks[idx_nz].grass_deco_built = 0; }
+                         
+                         let cz_pz = (int)floor((float)(nz-1) / 16.0);
+                         let idx_pz = get_chunk_index(cx, cz_pz);
+                         if(idx_pz != idx) { request_mesh_async(idx_pz, 1); request_light_async(idx_pz, 4, 1); chunks[idx_pz].grass_deco_built = 0; }
                     }
                 }
+            }
+        } // End hit check
         
                 rl::EndMode3D();
             } else {
@@ -1337,10 +1323,16 @@ fn main() {
                 rl::DrawText("F1 to Close", menu_x + 100, menu_y + 170, 10, rl::GRAY);
             }
 
+            if (show_spellbook) {
+                // rl::TraceLog(rl::LOG_WARNING, "ZEN_DEBUG: Calling draw_spellbook...");
+                draw_spellbook(&spellbook, &selected_block);
+            }
+
             rl::EndDrawing();
         }
     }
-    
+    } // End of Main Loop
+
     // Save on exit (Only if in GAME state, to avoid saving Title world as Player world or vice versa??)
     // Actually, saving chunks is safe because they use `world_dir`.
     // But we should only save PLAYER data if we are in GAME state.
@@ -1348,7 +1340,7 @@ fn main() {
     if current_state == STATE_GAME {
         save_player_data(p.x, p.y, p.z, selected_block, p.yaw, p.pitch);
     }
-
+    
     // Flush chunks
     for i in 0..MAX_CHUNKS {
         if chunks[i].x != -9999 {
