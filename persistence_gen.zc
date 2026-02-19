@@ -216,6 +216,27 @@ fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
         }
     }
 
+    // --- Skull Generation ---
+    data.skull_count = 0;
+    if (rl::GetRandomValue(0, 100) < 30) { // 30% chance per chunk
+        let sx = rl::GetRandomValue(1, 14);
+        let sz = rl::GetRandomValue(1, 14);
+        let h = heights[sx][sz];
+        
+        // Ensure valid ground (grass or sand) and air above
+        if (h > 30 && h < CHUNK_HEIGHT - 1) {
+            let ground = data.blocks[sx][h][sz];
+            if ((ground == BLOCK_GRASS || ground == BLOCK_SAND) && data.blocks[sx][h+1][sz] == BLOCK_AIR) {
+                data.skulls[data.skull_count].x = (float)sx + 0.5;
+                data.skulls[data.skull_count].y = (float)(h + 1);
+                data.skulls[data.skull_count].z = (float)sz + 0.5;
+                data.skulls[data.skull_count].rotation = (float)rl::GetRandomValue(0, 360);
+                data.skull_count++;
+                rl::TraceLog(rl::LOG_INFO, "Skull [PERSISTENCE] generated at Chunk[%d, %d] Local[%d, %d, %d]", x, z, sx, h+1, sz);
+            }
+        }
+    }
+
 
     // --- VILLAGE GENERATION ---
     // Check this chunk and neighbors (3x3 area) for village centers.

@@ -24,7 +24,14 @@ struct ChunkData {
     light: int[16][128][16];
     plant_count: int;
     plants: Plant[64];
+    skulls: Skull[4];
+    skull_count: int;
     light_calculated: int; 
+}
+
+struct Skull {
+    x: float; y: float; z: float;
+    rotation: float;
 }
 
 struct IORequest {

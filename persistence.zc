@@ -166,6 +166,8 @@ fn request_save_async(c: Chunk*) {
                     sys_memcpy((any)io_queue[i].data.light, (any)c.light, 131072);
                     io_queue[i].data.plant_count = c.plant_count;
                     sys_memcpy((any)io_queue[i].data.plants, (any)c.plants, 1024);
+                    io_queue[i].data.skull_count = c.skull_count;
+                    sys_memcpy((any)io_queue[i].data.skulls, (any)c.skulls, sizeof(Skull) * 4);
                     return;
                 }
             }
@@ -188,6 +190,8 @@ fn request_save_async(c: Chunk*) {
         sys_memcpy((any)io_queue[slot].data.light, (any)c.light, 131072);
         io_queue[slot].data.plant_count = c.plant_count;
         sys_memcpy((any)io_queue[slot].data.plants, (any)c.plants, 1024);
+        io_queue[slot].data.skull_count = c.skull_count;
+        sys_memcpy((any)io_queue[slot].data.skulls, (any)c.skulls, sizeof(Skull) * 4);
         
         io_queue[slot].io_status = IO_STATUS_PENDING;
     }
@@ -380,6 +384,8 @@ fn poll_async_results() {
                         sys_memcpy((any)chunks[idx].light, (any)queue[i].data.light, 131072);
                         chunks[idx].plant_count = queue[i].data.plant_count;
                         sys_memcpy((any)chunks[idx].plants, (any)queue[i].data.plants, 1024);
+                        chunks[idx].skull_count = queue[i].data.skull_count;
+                        sys_memcpy((any)chunks[idx].skulls, (any)queue[i].data.skulls, sizeof(Skull) * 4);
                         
                         if chunks[idx].mesh_built == 1 { rl::UnloadModel(chunks[idx].chunk_model); }
                         if chunks[idx].water_mesh_built == 1 { rl::UnloadModel(chunks[idx].water_model); }
@@ -494,6 +500,8 @@ fn load_chunk_into(c_ptr: any, cx: int, cz: int) {
         sys_memcpy((any)c.light, (any)data_ptr.light, 131072);
         c.plant_count = data_ptr.plant_count;
         sys_memcpy((any)c.plants, (any)data_ptr.plants, 1024);
+        c.skull_count = data_ptr.skull_count;
+        sys_memcpy((any)c.skulls, (any)data_ptr.skulls, sizeof(Skull) * 4);
         
         rl::MemFree(data_ptr);
     }

@@ -20,6 +20,11 @@ struct Plant {
     plant_type: int;
 }
 
+struct Skull {
+    x: float; y: float; z: float;
+    rotation: float;
+}
+
 struct ChunkMeshes {
     opq_mesh: rl::Mesh; water: rl::Mesh;
     has_opaque: int; has_water: int;
@@ -30,6 +35,8 @@ struct Chunk {
     light: int[16][128][16];
     plants: Plant[64];
     plant_count: int;
+    skulls: Skull[4];
+    skull_count: int;
     chunk_mesh: rl::Mesh; chunk_model: rl::Model;
     water_mesh: rl::Mesh; water_model: rl::Model;
     water_mesh_built: int;

@@ -17,6 +17,7 @@ let tex_moon: rl::Texture2D;
 let sh_lighting: rl::Shader;
 let sh_grass: rl::Shader; 
 let sh_beam: rl::Shader;
+let model_skull: rl::Model;
 
 // Uniform Locations (Lighting)
 let loc_light_dir: int;
@@ -241,6 +242,9 @@ fn init_textures() {
     rl::SetShaderValue(sh_grass, loc_grass_light_dir, &d, rl::SHADER_UNIFORM_VEC3);
     rl::SetShaderValue(sh_grass, loc_grass_light_col, &c, rl::SHADER_UNIFORM_VEC3);
     rl::SetShaderValue(sh_grass, loc_grass_ambient, &a, rl::SHADER_UNIFORM_VEC3);
+
+    model_skull = rl::LoadModel("assets/3DModels/skull.glb");
+    model_skull.materials[0].shader = sh_lighting;
 }
 
 fn get_tex_atlas() -> rl::Texture2D { return tex_atlas; }
@@ -248,3 +252,4 @@ fn get_tex_grass() -> rl::Texture2D { return tex_grass; }
 fn get_shader_lighting() -> rl::Shader { return sh_lighting; }
 fn get_shader_grass() -> rl::Shader { return sh_grass; }
 fn get_shader_beam() -> rl::Shader { return sh_beam; }
+fn get_model_skull() -> rl::Model { return model_skull; }
