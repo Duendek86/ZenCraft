@@ -24,13 +24,22 @@ fn get_recharge_target_x() -> int { return recharge_target_x; }
 fn get_recharge_target_y() -> int { return recharge_target_y; }
 fn get_recharge_target_z() -> int { return recharge_target_z; }
 
-fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_block: int) {
+fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_block: int, selected_spell: int) {
     let screen_center = rl::Vector2{ x: (float)rl::GetScreenWidth() / 2.0, y: (float)rl::GetScreenHeight() / 2.0 };
     let pick_ray = rl::GetScreenToWorldRay(screen_center, p.camera);
 
     let hit = raycast(chunks, MAX_CHUNKS, pick_ray.position.x, pick_ray.position.y, pick_ray.position.z, 
                       pick_ray.direction.x, pick_ray.direction.y, pick_ray.direction.z, 12.0);
                       
+    // --- Fireball Launch (works even without block hit) ---
+    if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_RIGHT) && selected_spell == 1 {
+        if p.mana >= get_fireball_mana_cost() {
+            p.mana = p.mana - get_fireball_mana_cost();
+            spawn_fireball(pick_ray.position.x, pick_ray.position.y, pick_ray.position.z,
+                           pick_ray.direction.x, pick_ray.direction.y, pick_ray.direction.z);
+        }
+    }
+
     if hit.hit != 0 {
         let hx = (float)hit.x; let hy = (float)hit.y; let hz = (float)hit.z;
         rl::DrawCubeWires(rl::Vector3{x: hx + 0.5, y: hy + 0.5, z: hz + 0.5}, 1.01, 1.01, 1.01, rl::BLACK);
@@ -364,8 +373,8 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
             destroy_timer = 0.0; destroy_target_x = -999;
         }
         
-        // --- Block Placement ---
-        if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_RIGHT) {
+        // --- Block Placement (only when Place Block spell is selected) ---
+        if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_RIGHT) && selected_spell == 0 {
             let nx = hit.x + hit.face_x; let ny = hit.y + hit.face_y; let nz = hit.z + hit.face_z;
             let dist_x = p.x - ((float)nx + 0.5); let dist_y = p.y + 1.6 - ((float)ny + 0.5); let dist_z = p.z - ((float)nz + 0.5);
             

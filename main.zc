@@ -36,6 +36,7 @@ import "zibi.zc";
 import "grass_deco.zc";
 import "particles.zc";
 import "spellbook.zc";
+import "fireball.zc";
 import "player_interaction.zc";
 
 // Import modules from the refactoring
@@ -44,7 +45,7 @@ import "game_ui.zc";
 import "player_interaction.zc";
 import "bloom.zc";
 
-def VERSION_TEXT = "v0.0.1.14 alpha-dev";
+def VERSION_TEXT = "v0.0.1.15 alpha-dev";
 def MAX_ZIBIS = 10;
 def SAVE_DIR = "world";
 
@@ -229,10 +230,11 @@ fn main() {
             if first_frame == 1 { init_particles(); first_frame = 0; }
             poll_async_results();
             update_particles(dt);
+            update_fireballs(dt, chunks, MAX_CHUNKS);
             
             let mesh_requests = 0;
             for i in 0..MAX_CHUNKS {
-                if mesh_requests >= 16 { break; }
+                if mesh_requests >= 32 { break; }
                 if chunks[i].x != -9999 && chunks[i].mesh_dirty != 0 && chunks[i].locked == 0 {
                     if request_mesh_async(i, 0) == 1 { mesh_requests++; }
                 }
@@ -513,9 +515,10 @@ fn main() {
             
             for i in 0..MAX_ZIBIS { zibis[i].draw(chunks, MAX_CHUNKS, day_time); }
             draw_particles();
+            draw_fireballs();
             
             if show_settings == 0 && show_spellbook == 0 {
-                handle_player_interaction(&p, chunks, dt, selected_block);
+                handle_player_interaction(&p, chunks, dt, selected_block, spellbook.selected_spell);
             }
             
             rl::EndMode3D();

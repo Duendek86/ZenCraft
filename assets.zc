@@ -213,6 +213,50 @@ fn init_textures() {
     rl::ImageDrawRectangle(&atlas, cx+2, cy_pos+2, 2, 2, rl::WHITE);
     rl::ImageDrawRectangle(&atlas, cx+w-4, cy_pos+h-4, 2, 2, rl::WHITE);
 
+    // Snow (Procedural) - Slot (1,3)
+    let sx = w;
+    let sy = h * 3;
+    rl::ImageDrawRectangle(&atlas, sx, sy, w, h, rl::Color{r: 240, g: 245, b: 255, a: 255});
+    for i in 0..30 {
+        let rx = rl::GetRandomValue(0, w - 1);
+        let ry = rl::GetRandomValue(0, h - 1);
+        rl::ImageDrawPixel(&atlas, sx+rx, sy+ry, rl::Color{r: 220, g: 230, b: 245, a: 255});
+    }
+    for i in 0..15 {
+        let rx = rl::GetRandomValue(0, w - 1);
+        let ry = rl::GetRandomValue(0, h - 1);
+        rl::ImageDrawPixel(&atlas, sx+rx, sy+ry, rl::WHITE);
+    }
+
+    // Ice (Procedural) - Slot (2,3)
+    let ix = w * 2;
+    let iy = h * 3;
+    rl::ImageDrawRectangle(&atlas, ix, iy, w, h, rl::Color{r: 140, g: 200, b: 235, a: 200});
+    rl::ImageDrawLine(&atlas, ix+2, iy+3, ix+8, iy+7, rl::Color{r: 180, g: 220, b: 255, a: 150});
+    rl::ImageDrawLine(&atlas, ix+6, iy+1, ix+12, iy+5, rl::Color{r: 180, g: 220, b: 255, a: 120});
+    rl::ImageDrawLine(&atlas, ix+10, iy+9, ix+14, iy+13, rl::Color{r: 200, g: 235, b: 255, a: 130});
+    for i in 0..10 {
+        let rx = rl::GetRandomValue(0, w - 1);
+        let ry = rl::GetRandomValue(0, h - 1);
+        rl::ImageDrawPixel(&atlas, ix+rx, iy+ry, rl::Color{r: 200, g: 230, b: 255, a: 180});
+    }
+
+    // Cactus (Procedural) - Slot (3,3)
+    let cax = w * 3;
+    let cay = h * 3;
+    rl::ImageDrawRectangle(&atlas, cax, cay, w, h, rl::Color{r: 50, g: 140, b: 50, a: 255});
+    // Vertical ridges
+    for i in 0..4 {
+        let rx = 2 + i * 4;
+        rl::ImageDrawLine(&atlas, cax+rx, cay, cax+rx, cay+h-1, rl::Color{r: 40, g: 120, b: 40, a: 255});
+    }
+    // Spines
+    for i in 0..12 {
+        let rx = rl::GetRandomValue(0, w - 1);
+        let ry = rl::GetRandomValue(0, h - 1);
+        rl::ImageDrawPixel(&atlas, cax+rx, cay+ry, rl::Color{r: 200, g: 220, b: 180, a: 255});
+    }
+
     tex_atlas = rl::LoadTextureFromImage(atlas);
     rl::SetTextureFilter(tex_atlas, rl::TEXTURE_FILTER_POINT);
     

@@ -51,6 +51,25 @@ fn draw_spellbook(state: SpellbookState*, selected_block: int*) {
         state.selected_spell = 0;
     }
     
+    // Spell 2: Fireball
+    let s2_x = book_x + 30;
+    let s2_y = book_y + 120;
+    let s2_w = 240;
+    let s2_h = 40;
+    
+    if (state.selected_spell == 1) {
+        rl::DrawRectangle(s2_x, s2_y, s2_w, s2_h, rl::Color{r: 255, g: 180, b: 100, a: 255}); // Fire highlight
+    }
+    rl::DrawRectangleLines(s2_x, s2_y, s2_w, s2_h, rl::BLACK);
+    rl::DrawRectangle(s2_x + 5, s2_y + 8, 24, 24, rl::Color{r: 255, g: 100, b: 0, a: 255}); // Fire icon
+    rl::DrawRectangle(s2_x + 11, s2_y + 14, 12, 12, rl::Color{r: 255, g: 200, b: 50, a: 255}); // Inner flame
+    rl::DrawText("Fireball", s2_x + 35, s2_y + 5, 20, rl::Color{r: 180, g: 50, b: 0, a: 255});
+    rl::DrawText("20 Mana", s2_x + 35, s2_y + 24, 12, rl::DARKGRAY);
+    
+    if (clicked && mx >= s2_x && mx <= s2_x + s2_w && my >= s2_y && my <= s2_y + s2_h) {
+        state.selected_spell = 1;
+    }
+    
     // --- RIGHT PAGE: INVENTORY ---
     // Tabs
     let tab_x = book_x + book_w/2 + 20;

@@ -50,9 +50,13 @@ fn draw_debug_info(p: Player*, chunks: Chunk*, dt: float, day_time: float, draw_
     rl::DrawText(rl::TextFormat("XYZ: %.2f, %.2f, %.2f", p.x, p.y, p.z), 10, dy, 20, rl::LIME); dy = dy + 25;
     
     let frame_time_ms = dt * 1000.0;
-    let pending_io = get_pending_req_count();
+    
+    let pending_load = get_pending_load_count();
+    let pending_mesh = get_pending_mesh_count();
+    
     rl::DrawText(rl::TextFormat("Frame: %.2f ms", frame_time_ms), 10, dy, 20, rl::YELLOW); dy = dy + 25;
-    rl::DrawText(rl::TextFormat("Async Q: %d", pending_io), 10, dy, 20, rl::YELLOW); dy = dy + 25;
+    rl::DrawText(rl::TextFormat("Load/Gen Q: %d", pending_load), 10, dy, 20, rl::YELLOW); dy = dy + 25;
+    rl::DrawText(rl::TextFormat("Mesh Q: %d", pending_mesh), 10, dy, 20, rl::YELLOW); dy = dy + 25;
     rl::DrawText(rl::TextFormat("Draw Dist: %d", draw_distance), 10, dy, 20, rl::YELLOW); dy = dy + 30;
     
     let hour_float = (day_time * 24.0) + 6.0;

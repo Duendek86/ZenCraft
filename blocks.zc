@@ -27,3 +27,9 @@ def BLOCK_PLANKS = 19;  // New: Wood Planks
 def BLOCK_COBBLESTONE = 20; // New: Cobblestone
 def BLOCK_POWER_SOURCE = 21; // New: Mana Power Source
 def BLOCK_POWER_CRYSTAL = 22; // Invisible block for crystal collisions
+
+// Biome blocks
+def BLOCK_SNOW = 24;    // Frozen biome surface
+def BLOCK_ICE = 25;     // Frozen water
+def BLOCK_CACTUS = 26;  // Desert decoration
+

@@ -292,6 +292,26 @@ fn get_pending_req_count() -> int {
     return count;
 }
 
+fn get_pending_load_count() -> int {
+    let count = 0;
+    if io_queue != NULL {
+        for i in 0..io_queue_capacity {
+            if io_queue[i].io_status == IO_STATUS_PENDING && io_queue[i].type == REQ_LOAD { count++; }
+        }
+    }
+    return count;
+}
+
+fn get_pending_mesh_count() -> int {
+    let count = 0;
+    if io_queue != NULL {
+        for i in 0..io_queue_capacity {
+            if io_queue[i].io_status == IO_STATUS_PENDING && io_queue[i].type == REQ_BUILD_MESH { count++; }
+        }
+    }
+    return count;
+}
+
 fn get_profiling_stats() -> ProfilingStats {
     let s: ProfilingStats;
     s.mesh_ms = (float)(prof_mesh_time * 1000.0);
@@ -318,7 +338,10 @@ fn poll_async_results() {
 
         for i in 0..size {
              if rl::GetTime() - start_time > time_budget && processed > 0 {
-                 stop_polling = 1; break;
+                 // Always process LOAD results even after time budget (they're cheap memcpy)
+                 if queue[i].io_status != IO_STATUS_COMPLETED || queue[i].type != REQ_LOAD {
+                     stop_polling = 1; break;
+                 }
              }
 
             if queue[i].io_status == IO_STATUS_COMPLETED { 
