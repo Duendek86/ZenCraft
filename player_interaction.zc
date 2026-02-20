@@ -14,6 +14,15 @@ let destroy_timer: float = 0.0;
 let destroy_target_x: int = -999;
 let destroy_target_y: int = -999;
 let destroy_target_z: int = -999;
+let recharge_timer: float = 0.0;
+let recharge_target_x: int = -999;
+let recharge_target_y: int = -999;
+let recharge_target_z: int = -999;
+
+fn get_recharge_timer() -> float { return recharge_timer; }
+fn get_recharge_target_x() -> int { return recharge_target_x; }
+fn get_recharge_target_y() -> int { return recharge_target_y; }
+fn get_recharge_target_z() -> int { return recharge_target_z; }
 
 fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_block: int) {
     let screen_center = rl::Vector2{ x: (float)rl::GetScreenWidth() / 2.0, y: (float)rl::GetScreenHeight() / 2.0 };
@@ -28,16 +37,97 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
         
         if rl::IsMouseButtonDown(rl::MOUSE_BUTTON_LEFT) {
             let b_hit = get_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z);
-            if b_hit == BLOCK_POWER_SOURCE {
+            let base_x = hit.x; let base_y = hit.y; let base_z = hit.z;
+            
+            // If we hit the invisible crystal, find the base
+            if b_hit == BLOCK_POWER_CRYSTAL {
+                 let below1 = get_block(chunks, MAX_CHUNKS, hit.x, hit.y - 1, hit.z);
+                 if below1 == BLOCK_POWER_SOURCE { base_y = hit.y - 1; }
+                 else {
+                     let below2 = get_block(chunks, MAX_CHUNKS, hit.x, hit.y - 2, hit.z);
+                     if below2 == BLOCK_POWER_SOURCE { base_y = hit.y - 2; }
+                 }
+            } else if b_hit == BLOCK_POWER_SOURCE {
+                 base_y = hit.y;
+            }
+
+            if b_hit == BLOCK_POWER_SOURCE || b_hit == BLOCK_POWER_CRYSTAL {
+                destroy_timer = 0.0; destroy_target_x = -999;
+                if hit.x == recharge_target_x && base_y == recharge_target_y && hit.z == recharge_target_z {
+                    recharge_timer = recharge_timer + dt;
+                } else {
+                    recharge_target_x = hit.x; recharge_target_y = base_y; recharge_target_z = hit.z;
+                    recharge_timer = 0.0;
+                }
+
                 p.mana = p.mana + (30.0 * dt);
                 if p.mana > 100.0 { p.mana = 100.0; }
+                
+                // --- Recharge Beam Animation ---
+                let cam_origin = p.camera.position;
+                let start_pos = cam_origin;
+                
+                let cy = (float)cos(p.yaw); let sy = (float)sin(p.yaw);
+                let cp = (float)cos(p.pitch); let sp = (float)sin(p.pitch);
+                
+                let fx = cy * cp; let fz = sy * cp; let fy = -sp;
+                let rx = -fz; let ry = 0.0; let rz = fx;
+                let ux = -fx * fy; let uy = fx * fx + fz * fz; let uz = -fz * fy;
+                
+                let off_r = 0.5; let off_u = 0.28; let off_f = 0.8; 
+                let time = (float)rl::GetTime();
+                
+                if p.vx != 0.0 || p.vz != 0.0 {
+                    off_r = off_r + (float)cos(time * 10.0) * 0.02;
+                    off_u = off_u + (float)sin(time * 10.0) * 0.03;
+                }
+                
+                start_pos.x = start_pos.x + rx * off_r + ux * off_u + fx * off_f;
+                start_pos.y = start_pos.y + ry * off_r + uy * off_u + fy * off_f;
+                start_pos.z = start_pos.z + rz * off_r + uz * off_u + fz * off_f;
+                
+                // End pos is the floating crystal (top block)
+                let end_pos: rl::Vector3;
+                let hover_offset = (float)sin(time * 2.0 + ((float)base_x + 0.5 + (float)base_z + 0.5)) * 0.15;
+                end_pos.x = (float)base_x + 0.5;
+                end_pos.y = (float)base_y + 2.2 + hover_offset; // Target the top crystal block
+                end_pos.z = (float)base_z + 0.5;
+
+                // Mana Beam colors (Bright Cyan/Purple)
+                let core_col = rl::Color{ r: 255, g: 255, b: 255, a: 255 };
+                let outer_col = rl::Color{ r: 0, g: 255, b: 0, a: 180 };
+                
+                let sh_beam = get_shader_beam();
+                rl::BeginShaderMode(sh_beam);
+                let loc_time = rl::GetShaderLocation(sh_beam, "time");
+                rl::SetShaderValue(sh_beam, loc_time, &time, rl::SHADER_UNIFORM_FLOAT);
+                
+                rl::rlSetBlendMode(rl::BLEND_ADDITIVE); 
+                rl::rlDisableDepthMask();
+                
+                rl::DrawCylinderEx(start_pos, end_pos, 0.06, 0.1, 8, outer_col);
+                rl::DrawCylinderEx(start_pos, end_pos, 0.02, 0.03, 8, core_col);
+                
+                // Spawn some reverse particles from the crystal to the player
+                if rl::GetRandomValue(0, 10) < 5 {
+                    spawn_particle(end_pos.x + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.5, 
+                                   end_pos.y + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.5, 
+                                   end_pos.z + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.5, 
+                                   rl::Color{r: 50, g: 255, b: 50, a: 255});
+                }
+                
+                rl::rlEnableDepthMask();
+                rl::rlSetBlendMode(rl::BLEND_ALPHA);
+                rl::EndShaderMode();
             } else {
+                recharge_timer = 0.0; recharge_target_x = -999;
+                
                 if p.mana >= 5.0 {
-                    if hit.x == destroy_target_x && hit.y == destroy_target_y && hit.z == destroy_target_z {
+                    if base_x == destroy_target_x && base_y == destroy_target_y && base_z == destroy_target_z {
                         destroy_timer = destroy_timer + dt;
                         // rl::TraceLog(rl::LOG_INFO, "Destroying... Timer: %f", destroy_timer);
                     } else {
-                        destroy_target_x = hit.x; destroy_target_y = hit.y; destroy_target_z = hit.z;
+                        destroy_target_x = base_x; destroy_target_y = base_y; destroy_target_z = base_z;
                         destroy_timer = 0.0;
                     }
                     
@@ -203,6 +293,13 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                             remove_plant_at(chunks, MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
                         }
                         
+                        // Destroy all 3 blocks if it was a power crystal setup
+                        if b_hit == BLOCK_POWER_SOURCE || b_hit == BLOCK_POWER_CRYSTAL {
+                             set_block(chunks, MAX_CHUNKS, hit.x, base_y + 1, hit.z, BLOCK_AIR);
+                             set_block(chunks, MAX_CHUNKS, hit.x, base_y + 2, hit.z, BLOCK_AIR);
+                             if b_hit == BLOCK_POWER_CRYSTAL { set_block(chunks, MAX_CHUNKS, hit.x, base_y, hit.z, BLOCK_AIR); }
+                        }
+                        
                         if get_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z + 1) == 11 { set_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z + 1, BLOCK_AIR); }
                         if get_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z - 1) == 12 { set_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z - 1, BLOCK_AIR); }
                         if get_block(chunks, MAX_CHUNKS, hit.x + 1, hit.y, hit.z) == 13 { set_block(chunks, MAX_CHUNKS, hit.x + 1, hit.y, hit.z, BLOCK_AIR); }
@@ -258,7 +355,22 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                         }
                     }
                     
-                    set_block(chunks, MAX_CHUNKS, nx, ny, nz, block_to_place);
+                    let can_place = 1;
+                    if block_to_place == BLOCK_POWER_SOURCE {
+                         if ny + 2 >= CHUNK_HEIGHT { can_place = 0; }
+                         else {
+                              let up1 = get_block(chunks, MAX_CHUNKS, nx, ny + 1, nz);
+                              let up2 = get_block(chunks, MAX_CHUNKS, nx, ny + 2, nz);
+                              if up1 != BLOCK_AIR || up2 != BLOCK_AIR { can_place = 0; }
+                         }
+                    }
+
+                    if can_place == 1 {
+                        set_block(chunks, MAX_CHUNKS, nx, ny, nz, block_to_place);
+                        if block_to_place == BLOCK_POWER_SOURCE {
+                             set_block(chunks, MAX_CHUNKS, nx, ny + 1, nz, BLOCK_POWER_CRYSTAL);
+                             set_block(chunks, MAX_CHUNKS, nx, ny + 2, nz, BLOCK_POWER_CRYSTAL);
+                        }
                     
                     let cx = (int)floor((float)nx / 16.0); let cz = (int)floor((float)nz / 16.0);
                     let idx = get_chunk_index(cx, cz);
@@ -277,6 +389,7 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                     
                     let cz_pz = (int)floor((float)(nz-1) / 16.0); let idx_pz = get_chunk_index(cx, cz_pz);
                     if idx_pz != idx { request_mesh_async(idx_pz, 1); request_light_async(idx_pz, 4, 1); chunks[idx_pz].grass_deco_built = 0; }
+                    }
                 }
             }
         }

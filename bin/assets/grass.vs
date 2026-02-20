@@ -21,7 +21,7 @@ void main()
 {
     fragTexCoord = vertexTexCoord;
     fragColor = vertexColor;
-    fragNormal = normalize(vec3(matNormal * vec4(vertexNormal, 1.0)));
+    fragNormal = normalize(mat3(matNormal) * vertexNormal);
     
     vec3 pos = vertexPosition;
     

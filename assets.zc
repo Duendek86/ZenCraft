@@ -17,7 +17,10 @@ let tex_moon: rl::Texture2D;
 let sh_lighting: rl::Shader;
 let sh_grass: rl::Shader; 
 let sh_beam: rl::Shader;
+let sh_crystal: rl::Shader;
 let model_skull: rl::Model;
+let model_obelisco_base: rl::Model;
+let model_obelisco_cristal: rl::Model;
 
 // Uniform Locations (Lighting)
 let loc_light_dir: int;
@@ -25,6 +28,13 @@ let loc_light_col: int;
 let loc_ambient: int;
 let loc_view_pos: int;
 let loc_time: int;
+let loc_emission: int;
+let loc_crystal_time: int;
+let loc_crystal_emission: int;
+let loc_crystal_light_dir: int;
+let loc_crystal_light_col: int;
+let loc_crystal_ambient: int;
+let loc_crystal_view_pos: int;
 
 // Uniform Locations (Grass)
 let loc_grass_light_dir: int;
@@ -33,6 +43,12 @@ let loc_grass_ambient: int;
 let loc_grass_view_pos: int;
 let loc_grass_time: int;
 let loc_grass_use_tex: int;
+let loc_grass_crystal_points: int;
+let loc_grass_crystal_count: int;
+
+// Uniform Locations (Dynamic Lights)
+let loc_crystal_points: int;
+let loc_crystal_count: int;
 
 fn load_texture_from_memory(_data: char*, _len: int) -> rl::Texture2D {
     let img = rl::LoadImageFromMemory(".png", _data, _len);
@@ -85,6 +101,7 @@ fn init_textures() {
     let fs_grass_data = embed "./assets/grass.fs";
     let vs_beam_data = embed "./assets/beam.vs";
     let fs_beam_data = embed "./assets/beam.fs";
+    let fs_crystal_data = embed "./assets/crystal.fs";
 
     let img_dirt = rl::LoadImageFromMemory(".png", dirt_data.data, dirt_data.len);
     let img_grass_s = rl::LoadImageFromMemory(".png", grass_side_data.data, grass_side_data.len);
@@ -191,8 +208,8 @@ fn init_textures() {
     // Crystal (Procedural)
     let cx = 0;
     let cy_pos = h * 3;
-    rl::ImageDrawRectangle(&atlas, cx, cy_pos, w, h, rl::Color{r: 200, g: 0, b: 255, a: 180});
-    rl::ImageDrawRectangle(&atlas, cx+4, cy_pos+4, w-8, h-8, rl::Color{r: 0, g: 255, b: 255, a: 200});
+    rl::ImageDrawRectangle(&atlas, cx, cy_pos, w, h, rl::Color{r: 200, g: 1, b: 255, a: 180});
+    rl::ImageDrawRectangle(&atlas, cx+4, cy_pos+4, w-8, h-8, rl::Color{r: 1, g: 255, b: 255, a: 200});
     rl::ImageDrawRectangle(&atlas, cx+2, cy_pos+2, 2, 2, rl::WHITE);
     rl::ImageDrawRectangle(&atlas, cx+w-4, cy_pos+h-4, 2, 2, rl::WHITE);
 
@@ -215,6 +232,7 @@ fn init_textures() {
     sh_lighting = load_shader_from_memory(vs_data.data, vs_data.len, fs_data.data, fs_data.len);
     sh_grass = load_shader_from_memory(vs_grass_data.data, vs_grass_data.len, fs_grass_data.data, fs_grass_data.len);
     sh_beam = load_shader_from_memory(vs_beam_data.data, vs_beam_data.len, fs_beam_data.data, fs_beam_data.len);
+    sh_crystal = load_shader_from_memory(vs_data.data, vs_data.len, fs_crystal_data.data, fs_crystal_data.len);
 
     // Get Uniform Locations
     loc_light_dir = rl::GetShaderLocation(sh_lighting, "uLightDir");
@@ -222,6 +240,16 @@ fn init_textures() {
     loc_ambient = rl::GetShaderLocation(sh_lighting, "uAmbient");
     loc_view_pos = rl::GetShaderLocation(sh_lighting, "viewPos");
     loc_time = rl::GetShaderLocation(sh_lighting, "time");
+    loc_emission = rl::GetShaderLocation(sh_lighting, "uEmission");
+    loc_crystal_points = rl::GetShaderLocation(sh_lighting, "uCrystalPoints");
+    loc_crystal_count = rl::GetShaderLocation(sh_lighting, "uCrystalCount");
+    
+    loc_crystal_time = rl::GetShaderLocation(sh_crystal, "time");
+    loc_crystal_emission = rl::GetShaderLocation(sh_crystal, "uEmission");
+    loc_crystal_light_dir = rl::GetShaderLocation(sh_crystal, "uLightDir");
+    loc_crystal_light_col = rl::GetShaderLocation(sh_crystal, "uLightCol");
+    loc_crystal_ambient = rl::GetShaderLocation(sh_crystal, "uAmbient");
+    loc_crystal_view_pos = rl::GetShaderLocation(sh_crystal, "viewPos");
     
     loc_grass_light_dir = rl::GetShaderLocation(sh_grass, "uLightDir");
     loc_grass_light_col = rl::GetShaderLocation(sh_grass, "uLightCol");
@@ -229,6 +257,8 @@ fn init_textures() {
     loc_grass_view_pos = rl::GetShaderLocation(sh_grass, "viewPos");
     loc_grass_time = rl::GetShaderLocation(sh_grass, "time");
     loc_grass_use_tex = rl::GetShaderLocation(sh_grass, "uUseTex");
+    loc_grass_crystal_points = rl::GetShaderLocation(sh_grass, "uCrystalPoints");
+    loc_grass_crystal_count = rl::GetShaderLocation(sh_grass, "uCrystalCount");
 
     // Set default values (Mid-day)
     let d = rl::Vector3{x: 0.8, y: 1.0, z: 0.5};
@@ -242,12 +272,29 @@ fn init_textures() {
     rl::SetShaderValue(sh_grass, loc_grass_light_dir, &d, rl::SHADER_UNIFORM_VEC3);
     rl::SetShaderValue(sh_grass, loc_grass_light_col, &c, rl::SHADER_UNIFORM_VEC3);
     rl::SetShaderValue(sh_grass, loc_grass_ambient, &a, rl::SHADER_UNIFORM_VEC3);
+    
+    rl::SetShaderValue(sh_crystal, loc_crystal_light_dir, &d, rl::SHADER_UNIFORM_VEC3);
+    rl::SetShaderValue(sh_crystal, loc_crystal_light_col, &c, rl::SHADER_UNIFORM_VEC3);
+    rl::SetShaderValue(sh_crystal, loc_crystal_ambient, &a, rl::SHADER_UNIFORM_VEC3);
 
     model_skull = rl::LoadModel("assets/3DModels/skull.glb");
+    model_obelisco_base = rl::LoadModel("assets/3DModels/obeliscoBase.glb");
+    model_obelisco_cristal = rl::LoadModel("assets/3DModels/obeliscoCristal.glb");
     
     
     for i in 0..model_skull.materialCount {
         model_skull.materials[i].shader = sh_lighting;
+    }
+    for i in 0..model_obelisco_base.materialCount {
+        model_obelisco_base.materials[i].shader = sh_lighting;
+    }
+    // Override material 2 of the base with the crystal shader
+    if model_obelisco_base.materialCount > 2 {
+        model_obelisco_base.materials[2].shader = sh_crystal;
+    }
+    
+    for i in 0..model_obelisco_cristal.materialCount {
+        model_obelisco_cristal.materials[i].shader = sh_crystal;
     }
 }
 
@@ -256,4 +303,15 @@ fn get_tex_grass() -> rl::Texture2D { return tex_grass; }
 fn get_shader_lighting() -> rl::Shader { return sh_lighting; }
 fn get_shader_grass() -> rl::Shader { return sh_grass; }
 fn get_shader_beam() -> rl::Shader { return sh_beam; }
+fn get_shader_crystal() -> rl::Shader { return sh_crystal; }
+fn get_loc_emission() -> int { return loc_emission; }
+fn get_loc_crystal_emission() -> int { return loc_crystal_emission; }
+
+fn get_loc_crystal_points() -> int { return loc_crystal_points; }
+fn get_loc_crystal_count() -> int { return loc_crystal_count; }
+fn get_loc_grass_crystal_points() -> int { return loc_grass_crystal_points; }
+fn get_loc_grass_crystal_count() -> int { return loc_grass_crystal_count; }
+
 fn get_model_skull() -> rl::Model { return model_skull; }
+fn get_model_obelisco_base() -> rl::Model { return model_obelisco_base; }
+fn get_model_obelisco_cristal() -> rl::Model { return model_obelisco_cristal; }

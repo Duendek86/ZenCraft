@@ -36,13 +36,14 @@ import "zibi.zc";
 import "grass_deco.zc";
 import "particles.zc";
 import "spellbook.zc";
+import "player_interaction.zc";
 
 // Import modules from the refactoring
 import "game_loading.zc";
 import "game_ui.zc";
 import "player_interaction.zc";
 
-def VERSION_TEXT = "v0.0.1.10 alpha-dev";
+def VERSION_TEXT = "v0.0.1.11 alpha-dev";
 def MAX_ZIBIS = 10;
 def SAVE_DIR = "world";
 
@@ -54,8 +55,8 @@ fn main() {
     rl::SetTraceLogLevel(rl::LOG_WARNING);
     rl::InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, TITLE);
     rl::SetWindowState(rl::FLAG_WINDOW_RESIZABLE | rl::FLAG_VSYNC_HINT | rl::FLAG_WINDOW_ALWAYS_RUN);
-    rl::ToggleFullscreen();
-    rl::SetTargetFPS(120);
+    //rl::ToggleFullscreen();
+    rl::SetTargetFPS(60);
 
     init_textures();
     init_clouds();
@@ -324,6 +325,41 @@ fn main() {
             let cam_len = sqrt(cam_fx * cam_fx + cam_fz * cam_fz);
             if cam_len > 0.001 { cam_fx = cam_fx / cam_len; cam_fz = cam_fz / cam_len; }
             
+            // --- Collect Crystal Light Positions ---
+            let crystal_points: float[48]; // 16 * 3 (vec3 array for shader)
+            let crystal_count = 0;
+            
+            for i in 0..MAX_CHUNKS {
+                let c = &chunks[i];
+                if c.x != -9999 {
+                    let dist_x = abs(c.x - pcx); let dist_z = abs(c.z - pcz);
+                    if dist_x <= draw_distance && dist_z <= draw_distance && crystal_count < 16 {
+                         for s in 0..c.power_source_count {
+                              if crystal_count >= 16 { break; }
+                              // Position of the glowing crystal float
+                              crystal_points[crystal_count * 3 + 0] = (float)(c.x * 16) + c.power_sources[s].x;
+                              crystal_points[crystal_count * 3 + 1] = c.power_sources[s].y + 1.2;
+                              crystal_points[crystal_count * 3 + 2] = (float)(c.z * 16) + c.power_sources[s].z;
+                              crystal_count++;
+                         }
+                    }
+                }
+            }
+            
+            // Send to lighting shader
+            let sh_light = get_shader_lighting();
+            let loc_c_pts = get_loc_crystal_points();
+            let loc_c_cnt = get_loc_crystal_count();
+            if loc_c_cnt != -1 { rl::SetShaderValue(sh_light, loc_c_cnt, &crystal_count, rl::SHADER_UNIFORM_INT); }
+            if loc_c_pts != -1 && crystal_count > 0 { rl::SetShaderValueV(sh_light, loc_c_pts, &crystal_points[0], rl::SHADER_UNIFORM_VEC3, crystal_count); }
+            
+            // Send to grass shader
+            let sh_grass_fx = get_shader_grass();
+            let loc_g_c_pts = get_loc_grass_crystal_points();
+            let loc_g_c_cnt = get_loc_grass_crystal_count();
+            if loc_g_c_cnt != -1 { rl::SetShaderValue(sh_grass_fx, loc_g_c_cnt, &crystal_count, rl::SHADER_UNIFORM_INT); }
+            if loc_g_c_pts != -1 && crystal_count > 0 { rl::SetShaderValueV(sh_grass_fx, loc_g_c_pts, &crystal_points[0], rl::SHADER_UNIFORM_VEC3, crystal_count); }
+            
             for i in 0..MAX_CHUNKS {
                 let c = &chunks[i];
                 if c.x != -9999 {
@@ -369,6 +405,85 @@ fn main() {
                              
                              use_ent = 0;
                              if loc_use_entity != -1 { rl::SetShaderValue(sh, loc_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+                        }
+                    }
+
+                    // Render Power Sources
+                    if dist_x <= draw_distance && dist_z <= draw_distance {
+                         if c.power_source_count > 0 {
+                             let model_base = get_model_obelisco_base();
+                             let model_cristal = get_model_obelisco_cristal();
+                             
+                             let sh = get_shader_lighting();
+                             rl::BeginShaderMode(sh);
+                             
+                             let loc_entity_light = rl::GetShaderLocation(sh, "uEntityLight");
+                             let loc_use_entity   = rl::GetShaderLocation(sh, "uUseEntityLight");
+                             
+                             let sh_c = get_shader_crystal();
+                             let loc_c_entity_light = rl::GetShaderLocation(sh_c, "uEntityLight");
+                             let loc_c_use_entity   = rl::GetShaderLocation(sh_c, "uUseEntityLight");
+        
+                             let use_ent = 1;
+                             if loc_use_entity != -1 { rl::SetShaderValue(sh, loc_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+                             if loc_c_use_entity != -1 { rl::SetShaderValue(sh_c, loc_c_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+                             
+                             let time_now = (float)rl::GetTime();
+                             
+                             for s in 0..c.power_source_count {
+                                 let pos = rl::Vector3{x: (float)(c.x * 16) + c.power_sources[s].x, y: c.power_sources[s].y, z: (float)(c.z * 16) + c.power_sources[s].z};
+                                 
+                                 let lx = (int)floor(pos.x); let ly = (int)floor(pos.y); let lz = (int)floor(pos.z);
+                                 let packed_light = get_light_levels(chunks, MAX_CHUNKS, lx, ly, lz);
+                                 
+                                 let el = rl::Vector2{x: (float)(packed_light & 0xF) / 15.0, y: (float)((packed_light >> 4) & 0xF) / 15.0};
+                                 if loc_entity_light != -1 { rl::SetShaderValue(sh, loc_entity_light, &el, rl::SHADER_UNIFORM_VEC2); }
+                                 if loc_c_entity_light != -1 { rl::SetShaderValue(sh_c, loc_c_entity_light, &el, rl::SHADER_UNIFORM_VEC2); }
+                                 
+                                 rl::DrawModelEx(model_base, pos, rl::Vector3{x: 0.0, y: 1.0, z: 0.0}, 0.0, rl::Vector3{x: 1.0, y: 1.0, z: 1.0}, rl::WHITE);
+                                 
+                                 // Rotar en el eje Y (vertical) y hacer que flote arriba y abajo
+                                 let hover_offset = (float)sin(time_now * 2.0 + (pos.x + pos.z)) * 0.15;
+                                 let spin_angle = time_now * 50.0 + (pos.x + pos.z) * 10.0; // grados
+                                 
+                                 let cristal_pos = pos;
+                                 cristal_pos.y = pos.y + 0.2 + hover_offset;
+                                 
+                                 // Check if this crystal is being recharged
+                                 let emission_val: float = 0.0;
+                                 
+                                 let rx = get_recharge_target_x();
+                                 let ry = get_recharge_target_y();
+                                 let rz = get_recharge_target_z();
+                                 
+                                 let bcx = c.x * 16 + (int)c.power_sources[s].x;
+                                 let bcy = (int)c.power_sources[s].y;
+                                 let bcz = c.z * 16 + (int)c.power_sources[s].z;
+                                 
+                                 if bcx == rx && bcy == ry && bcz == rz {
+                                     let r_timer = get_recharge_timer();
+                                     emission_val = r_timer * 1.5;
+                                     if emission_val > 2.0 { emission_val = 2.0; } // Max brightness limit
+                                 }
+                                 
+                                 let loc_em = get_loc_emission();
+                                 if loc_em != -1 { rl::SetShaderValue(sh, loc_em, &emission_val, rl::SHADER_UNIFORM_FLOAT); }
+                                 let loc_c_em = get_loc_crystal_emission();
+                                 if loc_c_em != -1 { rl::SetShaderValue(sh_c, loc_c_em, &emission_val, rl::SHADER_UNIFORM_FLOAT); }
+                                 
+                                 rl::DrawModelEx(model_cristal, cristal_pos, rl::Vector3{x: 0.0, y: 1.0, z: 0.0}, spin_angle, rl::Vector3{x: 1.0, y: 1.0, z: 1.0}, rl::WHITE);
+                                 
+                                 // Reset emission for next draw calls
+                                 emission_val = 0.0;
+                                 if loc_em != -1 { rl::SetShaderValue(sh, loc_em, &emission_val, rl::SHADER_UNIFORM_FLOAT); }
+                                 if loc_c_em != -1 { rl::SetShaderValue(sh_c, loc_c_em, &emission_val, rl::SHADER_UNIFORM_FLOAT); }
+                             }
+                             
+                             rl::EndShaderMode();
+                             
+                             use_ent = 0;
+                             if loc_use_entity != -1 { rl::SetShaderValue(sh, loc_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+                             if loc_c_use_entity != -1 { rl::SetShaderValue(sh_c, loc_c_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
                         }
                     }
                 }

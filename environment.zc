@@ -11,6 +11,10 @@ fn update_lighting_uniforms(dir: rl::Vector3, col: rl::Vector3, amb: rl::Vector3
     rl::SetShaderValue(sh_grass, loc_grass_light_dir, &dir, rl::SHADER_UNIFORM_VEC3);
     rl::SetShaderValue(sh_grass, loc_grass_light_col, &col, rl::SHADER_UNIFORM_VEC3);
     rl::SetShaderValue(sh_grass, loc_grass_ambient, &amb, rl::SHADER_UNIFORM_VEC3);
+    
+    rl::SetShaderValue(sh_crystal, loc_crystal_light_dir, &dir, rl::SHADER_UNIFORM_VEC3);
+    rl::SetShaderValue(sh_crystal, loc_crystal_light_col, &col, rl::SHADER_UNIFORM_VEC3);
+    rl::SetShaderValue(sh_crystal, loc_crystal_ambient, &amb, rl::SHADER_UNIFORM_VEC3);
 }
 
 fn update_frame_uniforms(cam_pos: rl::Vector3, time: float) {
@@ -19,6 +23,9 @@ fn update_frame_uniforms(cam_pos: rl::Vector3, time: float) {
     
     rl::SetShaderValue(sh_grass, loc_grass_view_pos, &cam_pos, rl::SHADER_UNIFORM_VEC3);
     rl::SetShaderValue(sh_grass, loc_grass_time, &time, rl::SHADER_UNIFORM_FLOAT);
+    
+    rl::SetShaderValue(sh_crystal, loc_crystal_view_pos, &cam_pos, rl::SHADER_UNIFORM_VEC3);
+    rl::SetShaderValue(sh_crystal, loc_crystal_time, &time, rl::SHADER_UNIFORM_FLOAT);
 }
 
 fn set_grass_use_tex(use_tex: int) {

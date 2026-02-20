@@ -10,7 +10,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
         res.has_opaque = 0;
         res.has_water = 0;
 
-        #define IS_TRANSPARENT_MESH(b) ((b) == 0 || ((b) >= 10 && (b) <= 14) || (b) == 17 || (b) == 4 || (b) == 6 || (b) == 8 || (b) == 15 || (b) == 16 || (b) == 18)
+        #define IS_TRANSPARENT_MESH(b) ((b) == 0 || ((b) >= 10 && (b) <= 14) || (b) == 17 || (b) == 4 || (b) == 6 || (b) == 8 || (b) == 15 || (b) == 16 || (b) == 18 || (b) == BLOCK_POWER_SOURCE || (b) == BLOCK_POWER_CRYSTAL)
         #define IS_WATER_TYPE(b) ((b) == BLOCK_WATER || (b) == BLOCK_WATER_2 || (b) == BLOCK_WATER_1)
         #define WATER_LEVEL(b) ((b) == BLOCK_WATER ? 3 : ((b) == BLOCK_WATER_2 ? 2 : ((b) == BLOCK_WATER_1 ? 1 : 0)))
         #define SHOULD_RENDER_FACE(neighbor_block) \
@@ -24,6 +24,8 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
         int face_count = 0;
         int water_face_count = 0;
         
+        res.power_source_count = 0;
+        
         for (int x = 0; x < 16; x++) {
             for (int y = 0; y < CHUNK_HEIGHT; y++) {
                 for (int z = 0; z < 16; z++) {
@@ -32,6 +34,16 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                     
                     int b_gx = gx_base + x;
                     int b_gz = gz_base + z;
+                    
+                    if (btype == BLOCK_POWER_SOURCE) {
+                         if (res.power_source_count < 32) {
+                             res.power_sources[res.power_source_count].x = (float)x + 0.5f;
+                             res.power_sources[res.power_source_count].y = (float)y;
+                             res.power_sources[res.power_source_count].z = (float)z + 0.5f;
+                             res.power_source_count++;
+                         }
+                         continue;
+                    }
                     
                     if (btype >= 10 && btype <= 14) { face_count += 6; continue; }
                     if (btype == BLOCK_GLASS_PANE) { water_face_count += 24; continue; }
@@ -154,7 +166,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
             for (int y = 0; y < CHUNK_HEIGHT; y++) {
                 for (int z = 0; z < 16; z++) {
                     int btype = c->blocks[x][y][z];
-                    if (btype == BLOCK_AIR) continue;
+                    if (btype == BLOCK_AIR || btype == BLOCK_POWER_SOURCE || btype == BLOCK_POWER_CRYSTAL) continue;
                     
                     int current_flag = 0;
                     if (btype == BLOCK_WATER || btype == BLOCK_WATER_2 || btype == BLOCK_WATER_1) current_flag = 255;

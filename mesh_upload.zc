@@ -44,6 +44,11 @@ fn upload_chunk_mesh(c: Chunk*, meshes: ChunkMeshes) {
         c.water_mesh_built = 0; 
     }
     
+    c.power_source_count = meshes.power_source_count;
+    for i in 0..meshes.power_source_count {
+        c.power_sources[i] = meshes.power_sources[i];
+    }
+    
     c.mesh_dirty = 0;
 }
 

@@ -25,3 +25,4 @@ def BLOCK_CRYSTAL = 18; // New: Crystal
 def BLOCK_PLANKS = 19;  // New: Wood Planks
 def BLOCK_COBBLESTONE = 20; // New: Cobblestone
 def BLOCK_POWER_SOURCE = 21; // New: Mana Power Source
+def BLOCK_POWER_CRYSTAL = 22; // Invisible block for crystal collisions

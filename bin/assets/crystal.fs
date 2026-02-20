@@ -20,9 +20,6 @@ uniform int uUseEntityLight;
 uniform vec2 uEntityLight;
 uniform float uEmission;
 
-uniform vec3 uCrystalPoints[16];
-uniform int uCrystalCount;
-
 // Función de ruido simple para simular agua sin texturas externas
 float hash(vec2 p) { return fract(1e4 * sin(17.0 * p.x + p.y * 0.1) * (0.1 + abs(sin(p.y * 13.0 + p.x)))); }
 
@@ -176,38 +173,49 @@ void main()
         
     } else {
         // ==========================================
-        // ILUMINACIÓN TERRENO ESTÁNDAR (Simplificada)
+        // ILUMINACIÓN CRISTAL (Glassy & Glowing)
         // ==========================================
         float blockLight = (uUseEntityLight > 0) ? uEntityLight.x : fragColor.r;
         float skyLight = (uUseEntityLight > 0) ? uEntityLight.y : fragColor.g;
+
+        // Base color ignoring texture (which is black for untextured models)
+        vec3 crystalBase = vec3(0.1, 0.8, 0.5);
 
         // Difusa
         float diff = max(dot(normal, lightDir), 0.0);
         vec3 sunLight = (diff * uLightCol) * skyLight;
         
         // Ambiental
-        vec3 ambientColor = uAmbient * (normal.y * 0.5 + 0.5); // Hemisférica
+        vec3 ambientColor = uAmbient * (normal.y * 0.5 + 0.5); 
         
         // Luz de antorcha
         vec3 torchColor = vec3(1.0, 0.7, 0.4) * pow(blockLight, 2.0) * 2.0;
         
-        // --- Crystal Dynamic Glow ---
-        vec3 crystalGlow = vec3(0.0);
-        for(int i=0; i<uCrystalCount; i++) {
-             float dist = distance(vWorldPos, uCrystalPoints[i]);
-             if (dist < 8.0) {
-                 float intensity = pow(1.0 - (dist / 8.0), 2.0) * 0.8;
-                 crystalGlow += vec3(0.1, 1.0, 0.3) * intensity;
-             }
-        }
+        // Specular reflections for the glassy look
+        vec3 viewDir = normalize(viewPos - fragPosition);
+        vec3 halfwayDir = normalize(lightDir + viewDir);
+        float specStrength = 1.5;
+        float shininess = 64.0;
+        float spec = pow(max(dot(normal, halfwayDir), 0.0), shininess);
+        vec3 specularColor = uLightCol * spec * specStrength * skyLight;
         
-        vec3 lighting = sunLight + (ambientColor * skyLight) + torchColor + crystalGlow;
-        resultColor = texelColor.rgb * lighting;
-        
-        // Añadir emisión (brillo propio) sin verse afectado por las luces
-        resultColor += texelColor.rgb * uEmission;
-    }
+        // Fresnel for glowing edges
+        float fresnel = pow(1.0 - max(dot(viewDir, normal), 0.0), 2.0);
+        vec3 edgeGlow = vec3(0.2, 1.0, 0.5) * fresnel * 0.8;
 
+        vec3 lighting = sunLight + (ambientColor * skyLight) + torchColor;
+        
+        // Emisión base permanente (self-glow brillante verde)
+        vec3 selfGlow = vec3(0.1, 0.9, 0.3) * 0.8;
+        
+        resultColor = (crystalBase * lighting) + specularColor + edgeGlow + selfGlow;
+        
+        // Emisión pulsante / dependiente de recarga
+        vec3 emissionColor = vec3(0.2, 1.0, 0.3); // Bright green emission
+        resultColor += (crystalBase * emissionColor * uEmission * 1.5);
+        
+        finalAlpha = 0.85; // Fixed translucency since texelColor.a could be 0
+    }
     // ==========================================
     // POST-PROCESADO
     // ==========================================

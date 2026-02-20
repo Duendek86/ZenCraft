@@ -16,6 +16,9 @@ uniform vec3 viewPos;
 uniform float time;
 uniform int uUseTex; // 1 = Use Texture (Plants), 0 = Use Gradient (Grass Deco)
 
+uniform vec3 uCrystalPoints[16];
+uniform int uCrystalCount;
+
 void main()
 {
     // Sample texture for Alpha (Shape) only
@@ -64,6 +67,18 @@ void main()
     vec3 blockContribution = torchColor * blockIntensity;
 
     vec3 combinedLight = effectiveSkyLight + blockContribution;
+    
+    // --- Crystal Dynamic Glow ---
+    vec3 crystalGlow = vec3(0.0);
+    for(int i=0; i<uCrystalCount; i++) {
+         float dist = distance(fragPosition, uCrystalPoints[i]);
+         if (dist < 8.0) {
+             float intensity = pow(1.0 - (dist / 8.0), 2.0) * 0.8;
+             crystalGlow += vec3(0.1, 1.0, 0.3) * intensity;
+         }
+    }
+    
+    combinedLight += crystalGlow;
     combinedLight = max(combinedLight, vec3(0.001)); // Min brightness (much lower for night)
 
     vec3 finalRGB = grassColor * combinedLight;
