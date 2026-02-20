@@ -24,3 +24,4 @@ def BLOCK_WATER_1 = 16; // 1/3 Height
 def BLOCK_CRYSTAL = 18; // New: Crystal
 def BLOCK_PLANKS = 19;  // New: Wood Planks
 def BLOCK_COBBLESTONE = 20; // New: Cobblestone
+def BLOCK_POWER_SOURCE = 21; // New: Mana Power Source

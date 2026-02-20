@@ -1,0 +1,86 @@
+//> Plant Mesh Generation (Pure Zen-C State Machine)
+import "raylib.h" as rl;
+import "chunk_core.zc";
+
+struct PlantVertexData {
+    vertices: float*;
+    normals: float*;
+    texcoords: float*;
+    colors: char*;
+    idx: int;
+    max_verts: int;
+}
+
+// 8 parameters -> Safe for Zen-C compiler limits
+fn push_plant_v(vd: PlantVertexData*, px: float, py: float, pz: float, u: float, v: float, light: int, flag: int) {
+    if vd.idx >= vd.max_verts { return; }
+    let i = vd.idx;
+    
+    vd.vertices[i * 3 + 0] = px; vd.vertices[i * 3 + 1] = py; vd.vertices[i * 3 + 2] = pz;
+    vd.normals[i * 3 + 0] = 0.0; vd.normals[i * 3 + 1] = 0.0; vd.normals[i * 3 + 2] = 1.0;
+    vd.texcoords[i * 2 + 0] = u; vd.texcoords[i * 2 + 1] = v;
+    
+    vd.colors[i * 4 + 0] = (char)((light & 0xF) * 17);
+    vd.colors[i * 4 + 1] = (char)(((light >> 4) & 0xF) * 17);
+    vd.colors[i * 4 + 2] = (char)flag;
+    vd.colors[i * 4 + 3] = (char)255;
+    
+    vd.idx = i + 1;
+}
+
+fn compute_plant_mesh(c: Chunk*) -> rl::Mesh {
+    let mesh: rl::Mesh;
+    mesh.vertexCount = 0; mesh.triangleCount = 0;
+    mesh.vertices = NULL; mesh.normals = NULL; mesh.texcoords = NULL; mesh.colors = NULL; mesh.indices = NULL;
+
+    if c.plant_count == 0 { return mesh; }
+
+    let vertex_count = c.plant_count * 12;
+    let vd: PlantVertexData;
+    vd.max_verts = vertex_count;
+    vd.idx = 0;
+    vd.vertices = (float*)rl::MemAlloc(vertex_count * 3 * 4);
+    vd.normals = (float*)rl::MemAlloc(vertex_count * 3 * 4);
+    vd.texcoords = (float*)rl::MemAlloc(vertex_count * 2 * 4);
+    vd.colors = (char*)rl::MemAlloc(vertex_count * 4);
+
+    for i in 0..c.plant_count {
+        let size = 0.8;
+        let cx = c.plants[i].x; let cy = c.plants[i].y; let cz = c.plants[i].z;
+        
+        let x0 = cx - size/2.0; let x1 = cx + size/2.0;
+        let y0 = cy;            let y1 = cy + size; 
+        let z0 = cz - size/2.0; let z1 = cz + size/2.0;
+        
+        let lx = (int)cx; let ly = (int)cy; let lz = (int)cz;
+        let light_val = 15;
+        if lx >= 0 && lx < 16 && ly >= 0 && ly < 128 && lz >= 0 && lz < 16 {
+            light_val = c.light[lx][ly][lz];
+        }
+        
+        // Plane 1
+        push_plant_v(&vd, x0, y0, z0, 0.0, 1.0, light_val, 0);
+        push_plant_v(&vd, x1, y0, z1, 1.0, 1.0, light_val, 0);
+        push_plant_v(&vd, x1, y1, z1, 1.0, 0.0, light_val, 100);
+        push_plant_v(&vd, x0, y0, z0, 0.0, 1.0, light_val, 0);
+        push_plant_v(&vd, x1, y1, z1, 1.0, 0.0, light_val, 100);
+        push_plant_v(&vd, x0, y1, z0, 0.0, 0.0, light_val, 100);
+        
+        // Plane 2
+        push_plant_v(&vd, x1, y0, z0, 0.0, 1.0, light_val, 0);
+        push_plant_v(&vd, x0, y0, z1, 1.0, 1.0, light_val, 0);
+        push_plant_v(&vd, x0, y1, z1, 1.0, 0.0, light_val, 100);
+        push_plant_v(&vd, x1, y0, z0, 0.0, 1.0, light_val, 0);
+        push_plant_v(&vd, x0, y1, z1, 1.0, 0.0, light_val, 100);
+        push_plant_v(&vd, x1, y1, z0, 0.0, 0.0, light_val, 100);
+    }
+    
+    mesh.vertexCount = vd.idx;
+    mesh.triangleCount = vd.idx / 3;
+    mesh.vertices = vd.vertices;
+    mesh.normals = vd.normals;
+    mesh.texcoords = vd.texcoords;
+    mesh.colors = (void*)vd.colors; // BUGFIX de Zen-C: Usamos (void*)
+    
+    return mesh;
+}

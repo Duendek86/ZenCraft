@@ -26,6 +26,10 @@ struct Player {
     is_flying: int;
     last_jump_time: double;
     is_crouching: int;
+    
+    // Stats
+    health: float;
+    mana: float;
 }
 
 fn check_collision(chunks: Chunk*, num_chunks: int, x: float, y: float, z: float, w: float, h: float) -> int {
@@ -40,6 +44,7 @@ fn check_collision(chunks: Chunk*, num_chunks: int, x: float, y: float, z: float
         for iy in min_y..max_y+1 {
             for iz in min_z..max_z+1 {
                 let block = get_block(chunks, num_chunks, ix, iy, iz);
+                
                 // Tall grass, torches, and all water levels are non-solid
                 if block != BLOCK_AIR && block != BLOCK_TALLGRASS && !(block >= 10 && block <= 14) && block != BLOCK_WATER && block != BLOCK_WATER_2 && block != BLOCK_WATER_1 {
                     return 1;
@@ -60,12 +65,14 @@ impl Player {
         p.vy = 0.0;
         p.vz = 0.0;
         p.yaw = 0.0;
-        p.yaw = 0.0;
         p.pitch = 0.0;
         
         p.is_flying = 0;
         p.last_jump_time = 0.0;
         p.is_crouching = 0;
+        
+        p.health = 100.0;
+        p.mana = 100.0;
 
         p.camera = rl::Camera3D{
             position: rl::Vector3{x: x, y: y, z: z},
@@ -74,6 +81,7 @@ impl Player {
             fovy: 70.0,
             projection: rl::CAMERA_PERSPECTIVE
         };
+        
         return p;
     }
 
@@ -103,14 +111,15 @@ impl Player {
             if rl::IsKeyDown(rl::KEY_A) { dz -= 1.0; }
             if rl::IsKeyDown(rl::KEY_D) { dz += 1.0; }
 
-            let fx = cos(self.yaw);
-            let fz = sin(self.yaw);
-            let rx = -sin(self.yaw);
-            let rz = cos(self.yaw);
+            let fx = (float)cos(self.yaw);
+            let fz = (float)sin(self.yaw);
+            // FIXED: Cast to float first, then negate to avoid transpiler confusion
+            let rx = -(float)sin(self.yaw);
+            let rz = (float)cos(self.yaw);
 
             let move_x = fx * dx + rx * dz;
             let move_z = fz * dx + rz * dz;
-
+            
             // Check if player is in water (check at player center)
             let player_block = get_block(chunks, num_chunks, (int)floor(self.x), (int)floor(self.y + 0.9), (int)floor(self.z));
             let in_water = (player_block == BLOCK_WATER);
@@ -145,14 +154,14 @@ impl Player {
             // Movement speed modifier
             let speed_mult = 1.0;
             if self.is_flying { 
-                speed_mult = 2.0; 
+                speed_mult = 2.0;
             } else if self.is_crouching {
                 speed_mult = 0.3;
             } else if in_water {
                 speed_mult = 0.5; // Slower in water
             }
 
-            let mlen = sqrt(move_x*move_x + move_z*move_z);
+            let mlen = (float)sqrt(move_x*move_x + move_z*move_z);
             if mlen > 0.001 {
                 move_x /= mlen;
                 move_z /= mlen;
@@ -170,7 +179,6 @@ impl Player {
                 if rl::IsKeyDown(rl::KEY_SPACE) { self.vy = MOVE_SPEED * speed_mult; }
                 if rl::IsKeyDown(rl::KEY_LEFT_SHIFT) { self.vy = -MOVE_SPEED * speed_mult; }
                 
-                // Apply friction/drag to horizontal? (Already set directly above)
             } else {
                 // Walking Physics
                 let gravity_mult = 1.0;
@@ -183,7 +191,6 @@ impl Player {
             // Physics integration (Separate Axes)
             let box_w = 0.6;
             let box_h = 1.8;
-
 
             // X axis
             self.x += self.vx * dt;
@@ -208,20 +215,22 @@ impl Player {
 
             // Check World Floor (Void Safety)
             if self.y < -30.0 {
-                self.y = (float)CHUNK_HEIGHT + 20.0;
+                // Assuming CHUNK_HEIGHT is 32 (or similar from chunk.zc), using a fallback height
+                self.y = 32.0 + 20.0; 
                 self.vy = 0.0;
             }
         } else {
-            // Optional: Apply minimal damping or zero velocity to stop sliding if we entered void?
+            // Optional: Apply minimal damping or zero velocity to stop sliding if we entered void
             self.vx = 0.0;
             self.vy = 0.0;
             self.vz = 0.0;
         }
 
         // Sync Camera
-        let view_x = cos(self.yaw) * cos(self.pitch);
-        let view_z = sin(self.yaw) * cos(self.pitch);
-        let view_y = -sin(self.pitch);
+        let view_x = (float)(cos(self.yaw) * cos(self.pitch));
+        let view_z = (float)(sin(self.yaw) * cos(self.pitch));
+        // FIXED: Same transpiler fix for view_y
+        let view_y = -(float)sin(self.pitch);
 
         self.camera.position.x = self.x;
         
@@ -240,10 +249,10 @@ impl Player {
     fn draw_arm(self, time: float) {
         // Use a separate 3D camera pass for the weapon (standard FPS technique)
         // This camera sits at origin and looks forward, with the arm placed relative to it.
-        
         let bob_y: float = 0.0;
         let bob_x: float = 0.0;
-        let v_len = sqrt(self.vx * self.vx + self.vz * self.vz);
+        let v_len = (float)sqrt(self.vx * self.vx + self.vz * self.vz);
+        
         if v_len > 0.1 {
             bob_y = (float)sin(time * 10.0) * 0.03;
             bob_x = (float)cos(time * 10.0) * 0.02;
@@ -259,55 +268,50 @@ impl Player {
         };
         
         // Clear depth buffer so arm always draws on top of world
-        raw { rlDisableDepthTest(); }
+        rl::rlDisableDepthTest();
         
         rl::BeginMode3D(arm_cam);
         
-        raw {
-            // Arm offset: Right, Down, Forward (-Z)
-            // Adjusted for vertical hold
-            float ax = 0.5f + bob_x;   // Further right
-            float ay = -0.4f + bob_y;  // Lower down
-            float az = -0.6f;          // Close to camera
-            
-            // --- DRAW ARM (Skin) ---
-            // Forearm (angled slightly up/forward)
-            // We'll simplify to just a hand holding it for now or a simple arm extending from bottom-right
-            
-            // Arm Mesh (angled from bottom right corner)
-            // Use a rotated cube or just a sequence of cubes to approximate angle
-            rlPushMatrix();
-            rlTranslatef(ax + 0.2f, ay - 0.2f, az + 0.2f);
-            rlRotatef(-45.0f, 0, 0, 1); // Tilt arm
-            rlRotatef(20.0f, 1, 0, 0);  // Pitch arm
-            DrawCube((Vector3){0, 0, 0}, 0.12f, 0.6f, 0.12f, (Color){220, 180, 150, 255}); // Forearm
-            rlPopMatrix();
-            
-            // Hand (holding scepter)
-            DrawCube((Vector3){ax, ay, az}, 0.1f, 0.1f, 0.1f, (Color){220, 180, 150, 255});
-            
-            // --- DRAW SCEPTER (Vertical) ---
-            // Handle (Dark Wood) - Vertical Y axis
-            // Base at hand height, extending up
-            DrawCube((Vector3){ax, ay + 0.3f, az}, 0.04f, 0.7f, 0.04f, (Color){80, 50, 25, 255});
-            
-            // Handle Rings
-            DrawCube((Vector3){ax, ay + 0.15f, az}, 0.05f, 0.02f, 0.05f, (Color){180, 150, 50, 255});
-            DrawCube((Vector3){ax, ay + 0.55f, az}, 0.05f, 0.02f, 0.05f, (Color){180, 150, 50, 255});
-            
-            // Head Mount (Gold) - Top of handle
-            DrawCube((Vector3){ax, ay + 0.68f, az}, 0.12f, 0.12f, 0.12f, (Color){255, 215, 0, 255});
-            
-            // Gem (Glowing Crystal) - Floating/Mounted on top
-            float pulse = 0.7f + 0.3f * sin(time * 3.0f);
-            unsigned char gem_alpha = (unsigned char)(180.0f + 75.0f * pulse);
-            float gem_size = 0.08f + 0.01f * pulse;
-            DrawCube((Vector3){ax, ay + 0.68f, az}, gem_size, gem_size + 0.05f, gem_size, (Color){0, (unsigned char)(200 * pulse), 255, gem_alpha});
-        }
+        // Arm offset: Right, Down, Forward (-Z)
+        // Adjusted for vertical hold
+        let ax = 0.5 + bob_x; // Further right
+        let ay = -0.4 + bob_y; // Lower down
+        let az = -0.6; // Close to camera
+        
+        // --- DRAW ARM (Skin) ---
+        // Arm Mesh (angled from bottom right corner)
+        rl::rlPushMatrix();
+        rl::rlTranslatef(ax + 0.2, ay - 0.2, az + 0.2);
+        rl::rlRotatef(-45.0, 0.0, 0.0, 1.0); // Tilt arm
+        rl::rlRotatef(20.0, 1.0, 0.0, 0.0); // Pitch arm
+        rl::DrawCube(rl::Vector3{x: 0.0, y: 0.0, z: 0.0}, 0.12, 0.6, 0.12, rl::Color{r: 220, g: 180, b: 150, a: 255}); // Forearm
+        rl::rlPopMatrix();
+        
+        // Hand (holding scepter)
+        rl::DrawCube(rl::Vector3{x: ax, y: ay, z: az}, 0.1, 0.1, 0.1, rl::Color{r: 220, g: 180, b: 150, a: 255});
+        
+        // --- DRAW SCEPTER (Vertical) ---
+        // Handle (Dark Wood) - Base at hand height, extending up
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.3, z: az}, 0.04, 0.7, 0.04, rl::Color{r: 80, g: 50, b: 25, a: 255});
+        
+        // Handle Rings
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.15, z: az}, 0.05, 0.02, 0.05, rl::Color{r: 180, g: 150, b: 50, a: 255});
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.55, z: az}, 0.05, 0.02, 0.05, rl::Color{r: 180, g: 150, b: 50, a: 255});
+        
+        // Head Mount (Gold) - Top of handle
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.68, z: az}, 0.12, 0.12, 0.12, rl::Color{r: 255, g: 215, b: 0, a: 255});
+        
+        // Gem (Glowing Crystal) - Floating/Mounted on top
+        let pulse = 0.7 + 0.3 * (float)sin(time * 3.0);
+        let gem_alpha = (int)(180.0 + 75.0 * pulse);
+        let gem_size = 0.08 + 0.01 * pulse;
+        let gem_g = (int)(200.0 * pulse);
+        
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.68, z: az}, gem_size, gem_size + 0.05, gem_size, rl::Color{r: 0, g: gem_g, b: 255, a: gem_alpha});
         
         rl::EndMode3D();
-        // Depth test is standard, no need to re-enable explicit if we didn't disable it.
-        // But main loop expects it enabled.
-        raw { rlEnableDepthTest(); }
+        
+        // Re-enable depth testing for the rest of the engine
+        rl::rlEnableDepthTest();
     }
 }

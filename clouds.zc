@@ -1,0 +1,190 @@
+//> Cloud Generation and Rendering
+import "raylib.h" as rl;
+import "raymath.h" as rl; // <-- ¡Añadimos esta línea!
+import "math.h";
+
+let mesh_clouds: rl::Mesh;
+let cloud_mesh_built: int = 0;
+
+// Helper function replacing the C Macro ADD_VERT
+fn add_vert(mesh: rl::Mesh*, v_idx: int, px: float, py: float, pz: float, nx: float, ny: float, nz: float) -> int {
+    mesh.vertices[v_idx*3+0] = px;
+    mesh.vertices[v_idx*3+1] = py;
+    mesh.vertices[v_idx*3+2] = pz;
+    mesh.normals[v_idx*3+0] = nx;
+    mesh.normals[v_idx*3+1] = ny;
+    mesh.normals[v_idx*3+2] = nz;
+    mesh.texcoords[v_idx*2+0] = 0.0;
+    mesh.texcoords[v_idx*2+1] = 0.0;
+    return v_idx + 1;
+}
+
+fn init_clouds() {
+    let w = 100;
+    let h = 100;
+    let scale = 6.0;
+    
+    let noise = rl::GenImagePerlinNoise(w, h, 0, 0, 0.15);
+    let pixels = rl::LoadImageColors(noise);
+    
+    let count = 0;
+    for i in 0..(w*h) {
+        if pixels[i].r > 100 { count++; }
+    }
+    
+    rl::TraceLog(rl::LOG_INFO, rl::TextFormat("CLOUDS: Generated %d cloud cubes from %dx%d noise", count, w, h));
+    
+    // Construct Mesh
+    mesh_clouds = rl::Mesh{
+        vertexCount: count * 24,
+        triangleCount: count * 12,
+        vertices: NULL, texcoords: NULL, texcoords2: NULL, normals: NULL, tangents: NULL,
+        colors: NULL, indices: NULL, animVertices: NULL, animNormals: NULL, boneIds: NULL,
+        boneWeights: NULL, vaoId: 0, vboId: NULL
+    };
+    
+    // Using Raylib's MemAlloc since UnloadMesh will eventually free it
+    mesh_clouds.vertices = (float*)rl::MemAlloc(mesh_clouds.vertexCount * 3 * 4);
+    mesh_clouds.texcoords = (float*)rl::MemAlloc(mesh_clouds.vertexCount * 2 * 4);
+    mesh_clouds.normals = (float*)rl::MemAlloc(mesh_clouds.vertexCount * 3 * 4);
+    mesh_clouds.indices = (short*)rl::MemAlloc(mesh_clouds.triangleCount * 3 * 2);
+    
+    let v_idx = 0;
+    let i_idx = 0;
+    let idx_offset = 0;
+    
+    for y in 0..h {
+        for x in 0..w {
+            if pixels[y*w+x].r > 100 {
+                let cx = (float)(x - w/2) * scale;
+                let cz = (float)(y - h/2) * scale;
+                let cy = 0.0;
+                
+                let size = scale;
+                let height_c = 2.0;
+                
+                let x1 = cx; let x2 = cx + size;
+                let y1 = cy; let y2 = cy + height_c;
+                let z1 = cz; let z2 = cz + size;
+                
+                // Top
+                v_idx = add_vert(&mesh_clouds, v_idx, x1, y2, z1, 0.0, 1.0, 0.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x1, y2, z2, 0.0, 1.0, 0.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x2, y2, z2, 0.0, 1.0, 0.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x2, y2, z1, 0.0, 1.0, 0.0);
+                mesh_clouds.indices[i_idx++] = (short)(idx_offset+0); mesh_clouds.indices[i_idx++] = (short)(idx_offset+1); mesh_clouds.indices[i_idx++] = (short)(idx_offset+2);
+                mesh_clouds.indices[i_idx++] = (short)(idx_offset+0); mesh_clouds.indices[i_idx++] = (short)(idx_offset+2); mesh_clouds.indices[i_idx++] = (short)(idx_offset+3);
+                idx_offset += 4;
+                
+                // Bottom
+                v_idx = add_vert(&mesh_clouds, v_idx, x1, y1, z2, 0.0, -1.0, 0.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x1, y1, z1, 0.0, -1.0, 0.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x2, y1, z1, 0.0, -1.0, 0.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x2, y1, z2, 0.0, -1.0, 0.0);
+                mesh_clouds.indices[i_idx++] = (short)(idx_offset+0); mesh_clouds.indices[i_idx++] = (short)(idx_offset+1); mesh_clouds.indices[i_idx++] = (short)(idx_offset+2);
+                mesh_clouds.indices[i_idx++] = (short)(idx_offset+0); mesh_clouds.indices[i_idx++] = (short)(idx_offset+2); mesh_clouds.indices[i_idx++] = (short)(idx_offset+3);
+                idx_offset += 4;
+                
+                // Front (Z-)
+                v_idx = add_vert(&mesh_clouds, v_idx, x1, y1, z1, 0.0, 0.0, -1.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x1, y2, z1, 0.0, 0.0, -1.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x2, y2, z1, 0.0, 0.0, -1.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x2, y1, z1, 0.0, 0.0, -1.0);
+                mesh_clouds.indices[i_idx++] = (short)(idx_offset+0); mesh_clouds.indices[i_idx++] = (short)(idx_offset+1); mesh_clouds.indices[i_idx++] = (short)(idx_offset+2);
+                mesh_clouds.indices[i_idx++] = (short)(idx_offset+0); mesh_clouds.indices[i_idx++] = (short)(idx_offset+2); mesh_clouds.indices[i_idx++] = (short)(idx_offset+3);
+                idx_offset += 4;
+                
+                // Back (Z+)
+                v_idx = add_vert(&mesh_clouds, v_idx, x1, y1, z2, 0.0, 0.0, 1.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x2, y1, z2, 0.0, 0.0, 1.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x2, y2, z2, 0.0, 0.0, 1.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x1, y2, z2, 0.0, 0.0, 1.0);
+                mesh_clouds.indices[i_idx++] = (short)(idx_offset+0); mesh_clouds.indices[i_idx++] = (short)(idx_offset+1); mesh_clouds.indices[i_idx++] = (short)(idx_offset+2);
+                mesh_clouds.indices[i_idx++] = (short)(idx_offset+0); mesh_clouds.indices[i_idx++] = (short)(idx_offset+2); mesh_clouds.indices[i_idx++] = (short)(idx_offset+3);
+                idx_offset += 4;
+                
+                // Left (X-)
+                v_idx = add_vert(&mesh_clouds, v_idx, x1, y1, z2, -1.0, 0.0, 0.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x1, y2, z2, -1.0, 0.0, 0.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x1, y2, z1, -1.0, 0.0, 0.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x1, y1, z1, -1.0, 0.0, 0.0);
+                mesh_clouds.indices[i_idx++] = (short)(idx_offset+0); mesh_clouds.indices[i_idx++] = (short)(idx_offset+1); mesh_clouds.indices[i_idx++] = (short)(idx_offset+2);
+                mesh_clouds.indices[i_idx++] = (short)(idx_offset+0); mesh_clouds.indices[i_idx++] = (short)(idx_offset+2); mesh_clouds.indices[i_idx++] = (short)(idx_offset+3);
+                idx_offset += 4;
+                
+                // Right (X+)
+                v_idx = add_vert(&mesh_clouds, v_idx, x2, y1, z1, 1.0, 0.0, 0.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x2, y2, z1, 1.0, 0.0, 0.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x2, y2, z2, 1.0, 0.0, 0.0);
+                v_idx = add_vert(&mesh_clouds, v_idx, x2, y1, z2, 1.0, 0.0, 0.0);
+                mesh_clouds.indices[i_idx++] = (short)(idx_offset+0); mesh_clouds.indices[i_idx++] = (short)(idx_offset+1); mesh_clouds.indices[i_idx++] = (short)(idx_offset+2);
+                mesh_clouds.indices[i_idx++] = (short)(idx_offset+0); mesh_clouds.indices[i_idx++] = (short)(idx_offset+2); mesh_clouds.indices[i_idx++] = (short)(idx_offset+3);
+                idx_offset += 4;
+            }
+        }
+    }
+    
+    rl::UnloadImageColors(pixels);
+    rl::UnloadImage(noise);
+    
+    rl::UploadMesh(&mesh_clouds, false);
+    cloud_mesh_built = 1;
+}
+
+fn draw_clouds(camera: rl::Camera3D, time: float, day_time: float) {
+    if cloud_mesh_built == 0 { return; }
+    
+    let cloud_y = 100.0;
+    let drift_speed = 4.0;
+    let offset_x = time * drift_speed;
+    let loop_dist = 600.0;
+    
+    let cam_snap_x = (float)((int)(camera.position.x / loop_dist)) * loop_dist;
+    let cam_snap_z = (float)((int)(camera.position.z / loop_dist)) * loop_dist;
+    
+    let local_drift = (float)fmod((double)offset_x, (double)loop_dist);
+    
+    let c_r = 255;
+    let c_g = 255;
+    let c_b = 255;
+    let c_a = 200;
+    
+    if day_time < 0.166 {
+        let t = day_time / 0.166;
+        c_r = (int)(255.0 * t);
+        c_g = (int)(100.0 * t + 155.0 * t * t);
+        c_b = (int)(100.0 * t + 155.0 * t * t);
+        c_a = (int)(100.0 * t + 100.0);
+    } else if day_time < 0.5 {
+        c_r = 255; c_g = 255; c_b = 255; c_a = 200;
+    } else if day_time < 0.666 {
+        let t = (day_time - 0.5) / 0.166;
+        c_r = (int)(255.0 * (1.0 - t*0.5));
+        c_g = (int)(255.0 * (1.0 - t) + 100.0 * t);
+        c_b = (int)(255.0 * (1.0 - t));
+        c_a = (int)(200.0 * (1.0 - t*0.5));
+    } else {
+        c_r = 10; c_g = 10; c_b = 20; c_a = 50; 
+    }
+    
+    rl::BeginMode3D(camera);
+        rl::rlDisableBackfaceCulling(); 
+        rl::rlDisableDepthMask();
+        rl::rlSetBlendMode(rl::BLEND_ALPHA);
+        
+        let mat = rl::LoadMaterialDefault();
+        mat.maps[rl::MATERIAL_MAP_DIFFUSE].color = rl::Color{r: c_r, g: c_g, b: c_b, a: c_a};
+        
+        for x in -1..2 {
+             for z in -1..2 {
+                 let px = cam_snap_x + (float)x * loop_dist + local_drift;
+                 let pz = cam_snap_z + (float)z * loop_dist;
+                 
+                 rl::DrawMesh(mesh_clouds, mat, rl::MatrixTranslate(px, cloud_y, pz));
+             }
+        }
+        
+        rl::rlEnableDepthMask();
+        rl::rlEnableBackfaceCulling();
+    rl::EndMode3D();
+}

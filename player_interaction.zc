@@ -1,0 +1,286 @@
+//> Player Interactions & Scepter Mechanics
+import "raylib.h" as rl;
+import "rlgl.h";
+import "math.h";
+import "player.zc";
+import "chunk_core.zc";
+import "blocks.zc";
+import "raycast.zc";
+import "particles.zc";
+import "rendering.zc";
+import "persistence.zc";
+
+let destroy_timer: float = 0.0;
+let destroy_target_x: int = -999;
+let destroy_target_y: int = -999;
+let destroy_target_z: int = -999;
+
+fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_block: int) {
+    let screen_center = rl::Vector2{ x: (float)rl::GetScreenWidth() / 2.0, y: (float)rl::GetScreenHeight() / 2.0 };
+    let pick_ray = rl::GetScreenToWorldRay(screen_center, p.camera);
+
+    let hit = raycast(chunks, MAX_CHUNKS, pick_ray.position.x, pick_ray.position.y, pick_ray.position.z, 
+                      pick_ray.direction.x, pick_ray.direction.y, pick_ray.direction.z, 12.0);
+                      
+    if hit.hit != 0 {
+        let hx = (float)hit.x; let hy = (float)hit.y; let hz = (float)hit.z;
+        rl::DrawCubeWires(rl::Vector3{x: hx + 0.5, y: hy + 0.5, z: hz + 0.5}, 1.01, 1.01, 1.01, rl::BLACK);
+        
+        if rl::IsMouseButtonDown(rl::MOUSE_BUTTON_LEFT) {
+            let b_hit = get_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z);
+            if b_hit == BLOCK_POWER_SOURCE {
+                p.mana = p.mana + (30.0 * dt);
+                if p.mana > 100.0 { p.mana = 100.0; }
+            } else {
+                if p.mana >= 5.0 {
+                    if hit.x == destroy_target_x && hit.y == destroy_target_y && hit.z == destroy_target_z {
+                        destroy_timer = destroy_timer + dt;
+                        // rl::TraceLog(rl::LOG_INFO, "Destroying... Timer: %f", destroy_timer);
+                    } else {
+                        destroy_target_x = hit.x; destroy_target_y = hit.y; destroy_target_z = hit.z;
+                        destroy_timer = 0.0;
+                    }
+                    
+                    // --- Scepter Beam Animation ---
+                    let cam_origin = p.camera.position;
+                    let start_pos = cam_origin;
+                    
+                    let cy = (float)cos(p.yaw); let sy = (float)sin(p.yaw);
+                    let cp = (float)cos(p.pitch); let sp = (float)sin(p.pitch);
+                    
+                    let fx = cy * cp; let fz = sy * cp; let fy = -sp;
+                    let rx = -fz; let ry = 0.0; let rz = fx;
+                    let ux = -fx * fy; let uy = fx * fx + fz * fz; let uz = -fz * fy;
+                    
+                    // Push the beam start further forward so it doesn't overlap the scepter rendering
+                    let off_r = 0.5; let off_u = 0.28; let off_f = 0.8; 
+                    let time = (float)rl::GetTime();
+                    
+                    if p.vx != 0.0 || p.vz != 0.0 {
+                        off_r = off_r + (float)cos(time * 10.0) * 0.02;
+                        off_u = off_u + (float)sin(time * 10.0) * 0.03;
+                    }
+                    
+                    start_pos.x = start_pos.x + rx * off_r + ux * off_u + fx * off_f;
+                    start_pos.y = start_pos.y + ry * off_r + uy * off_u + fy * off_f;
+                    start_pos.z = start_pos.z + rz * off_r + uz * off_u + fz * off_f;
+                    
+                    let end_pos: rl::Vector3;
+                    if hit.hit == 1 {
+                        end_pos.x = cam_origin.x + fx * hit.distance;
+                        end_pos.y = cam_origin.y + fy * hit.distance;
+                        end_pos.z = cam_origin.z + fz * hit.distance;
+                    } else {
+                        end_pos.x = cam_origin.x + fx * 8.0;
+                        end_pos.y = cam_origin.y + fy * 8.0;
+                        end_pos.z = cam_origin.z + fz * 8.0;
+                    }
+
+                    // Beam core
+                    let core_col = rl::Color{ r: 200, g: 255, b: 255, a: 255 };
+                    let outer_col = rl::Color{ r: 0, g: 150, b: 255, a: 160 };
+                    
+                    let sh_beam = get_shader_beam();
+                    rl::BeginShaderMode(sh_beam);
+                    let loc_time = rl::GetShaderLocation(sh_beam, "time");
+                    rl::SetShaderValue(sh_beam, loc_time, &time, rl::SHADER_UNIFORM_FLOAT);
+                    
+                    rl::rlSetBlendMode(rl::BLEND_ADDITIVE); 
+                    rl::rlDisableDepthMask();
+                    
+                    // Thick energy aura
+                    rl::DrawCylinderEx(start_pos, end_pos, 0.08, 0.15, 8, outer_col);
+                    // Hot core
+                    rl::DrawCylinderEx(start_pos, end_pos, 0.02, 0.04, 8, core_col);
+                    
+                    rl::rlEnableDepthMask();
+                    rl::rlSetBlendMode(rl::BLEND_ALPHA);
+                    rl::EndShaderMode();
+                    
+                    // --- Block Shake & Feedback (Fortnite Style) ---
+                    let progress = destroy_timer / 3.0;
+                    if progress > 1.0 { progress = 1.0; }
+                    
+                    let center_x = (float)hit.x + 0.5;
+                    let center_y = (float)hit.y + 0.5;
+                    let center_z = (float)hit.z + 0.5;
+                    
+                    // Fortnite-style hit impact: block physically shrinks and shakes violently
+                    let pop_scale = 1.0;
+                    if progress > 0.9 {
+                        // Sudden expansion right before breaking
+                        pop_scale = 1.0 + (progress - 0.9) * 5.0; 
+                    } else {
+                        // Shrinks as it's damaged
+                        pop_scale = 1.0 - (progress * 0.4); 
+                    }
+                    
+                    let hit_pulse = (float)sin(time * 50.0) * 0.05 * progress;
+                    let final_scale = pop_scale + hit_pulse;
+                    
+                    let shake_amp = 0.05 * progress;
+                    let shake_x = (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * shake_amp;
+                    let shake_y = (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * shake_amp;
+                    let shake_z = (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * shake_amp;
+                    
+                    // Erratic rotations
+                    let rot_x = (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 20.0 * progress;
+                    let rot_y = (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 20.0 * progress;
+                    let rot_z = (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 20.0 * progress;
+
+                    rl::rlSetBlendMode(rl::BLEND_ADDITIVE);
+                    rl::rlDisableDepthMask();
+                    rl::rlDisableBackfaceCulling();
+                    
+                    rlPushMatrix();
+                    rlTranslatef(center_x + shake_x, center_y + shake_y, center_z + shake_z);
+                    
+                    // Apply rotations
+                    rl::rlRotatef(rot_x, 1.0, 0.0, 0.0);
+                    rl::rlRotatef(rot_y, 0.0, 1.0, 0.0);
+                    rl::rlRotatef(rot_z, 0.0, 0.0, 1.0);
+                    
+                    rlScalef(final_scale, final_scale, final_scale);
+                    
+                    // High-energy impact core
+                    let core_alpha = (char)(150.0 * progress + 105.0);
+                    let in_col = rl::Color{ r: 255, g: (char)(255.0 * (1.0 - progress)), b: (char)(255.0 * (1.0 - progress)), a: core_alpha };
+                    
+                    // Draw shrinking/shaking solid block
+                    rl::DrawCube(rl::Vector3{x:0.0, y:0.0, z:0.0}, 1.01, 1.01, 1.01, in_col);
+                    
+                    // Draw expanding wireframe hit-marker cage
+                    let wire_scale = 1.0 + (progress * 0.5) + ((float)sin(time * 20.0) * 0.1);
+                    let wire_col = rl::Color{ r: 255, g: 200, b: 0, a: (char)(255.0 * (1.0 - progress)) };
+                    rl::DrawCubeWires(rl::Vector3{x:0.0, y:0.0, z:0.0}, wire_scale, wire_scale, wire_scale, wire_col);
+                    
+                    // Energy sparks bursting out
+                    if progress > 0.2 && rl::GetRandomValue(0, 100) < (int)(progress * 40.0) {
+                         let sx = (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 2.0;
+                         let sy = (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 2.0;
+                         let sz = (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 2.0;
+                         rl::DrawLine3D(rl::Vector3{x:0.0, y:0.0, z:0.0}, rl::Vector3{x:sx, y:sy, z:sz}, rl::Color{r: 255, g: 150, b: 0, a: 200});
+                    }
+                    
+                    rlPopMatrix();
+                    rl::rlEnableBackfaceCulling();
+                    rl::rlEnableDepthMask();
+                    rl::rlSetBlendMode(rl::BLEND_ALPHA);
+                    
+                    // Show physical block particles breaking off
+                    if rl::GetRandomValue(0, 10) < (int)(progress * 5.0) + 1 {
+                        spawn_particle(center_x + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5), 
+                                       center_y + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5), 
+                                       center_z + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5), 
+                                       rl::Color{r: 150, g: 150, b: 150, a: 200});
+                    }
+
+                    // --- Block Destroy Event ---
+                    if destroy_timer > 3.0 {
+                        p.mana = p.mana - 5.0;
+                        spawn_explosion((float)hit.x + 0.5, (float)hit.y + 0.5, (float)hit.z + 0.5, 20, rl::Color{r: 150, g: 150, b: 150, a: 200});
+                        
+                        let fill_block = BLOCK_AIR;
+                        let n_up = get_block(chunks, MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
+                        let n_n = get_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z + 1);
+                        let n_s = get_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z - 1);
+                        let n_e = get_block(chunks, MAX_CHUNKS, hit.x + 1, hit.y, hit.z);
+                        let n_w = get_block(chunks, MAX_CHUNKS, hit.x - 1, hit.y, hit.z);
+                        
+                        if n_up == BLOCK_WATER || n_up == BLOCK_WATER_1 || n_up == BLOCK_WATER_2 ||
+                           n_n == BLOCK_WATER || n_n == BLOCK_WATER_1 || n_n == BLOCK_WATER_2 ||
+                           n_s == BLOCK_WATER || n_s == BLOCK_WATER_1 || n_s == BLOCK_WATER_2 ||
+                           n_e == BLOCK_WATER || n_e == BLOCK_WATER_1 || n_e == BLOCK_WATER_2 ||
+                           n_w == BLOCK_WATER || n_w == BLOCK_WATER_1 || n_w == BLOCK_WATER_2 {
+                             fill_block = BLOCK_WATER;
+                        }
+                        set_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z, fill_block);
+                        remove_plant_at(chunks, MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
+                        
+                        let above = get_block(chunks, MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
+                        if above == BLOCK_TALLGRASS || above == 10 || above == BLOCK_LEAVES {
+                            set_block(chunks, MAX_CHUNKS, hit.x, hit.y + 1, hit.z, BLOCK_AIR);
+                            remove_plant_at(chunks, MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
+                        }
+                        
+                        if get_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z + 1) == 11 { set_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z + 1, BLOCK_AIR); }
+                        if get_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z - 1) == 12 { set_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z - 1, BLOCK_AIR); }
+                        if get_block(chunks, MAX_CHUNKS, hit.x + 1, hit.y, hit.z) == 13 { set_block(chunks, MAX_CHUNKS, hit.x + 1, hit.y, hit.z, BLOCK_AIR); }
+                        if get_block(chunks, MAX_CHUNKS, hit.x - 1, hit.y, hit.z) == 14 { set_block(chunks, MAX_CHUNKS, hit.x - 1, hit.y, hit.z, BLOCK_AIR); }
+                        
+                        let cx = (int)floor((float)hit.x / 16.0); let cz = (int)floor((float)hit.z / 16.0);
+                        let idx = get_chunk_index(cx, cz);
+                        request_mesh_async(idx, 1);
+                        request_light_async(idx, 4, 1);
+                        chunks[idx].grass_deco_built = 0;
+                        request_save_async(&chunks[idx]);
+                        
+                        let idx_xm = get_chunk_index(cx - 1, cz); let idx_xp = get_chunk_index(cx + 1, cz);
+                        let idx_zm = get_chunk_index(cx, cz - 1); let idx_zp = get_chunk_index(cx, cz + 1);
+                        
+                        if chunks[idx_xm].x == cx - 1 && chunks[idx_xm].z == cz { request_mesh_async(idx_xm, 1); request_light_async(idx_xm, 4, 1); chunks[idx_xm].grass_deco_built = 0; }
+                        if chunks[idx_xp].x == cx + 1 && chunks[idx_xp].z == cz { request_mesh_async(idx_xp, 1); request_light_async(idx_xp, 4, 1); chunks[idx_xp].grass_deco_built = 0; }
+                        if chunks[idx_zm].x == cx && chunks[idx_zm].z == cz - 1 { request_mesh_async(idx_zm, 1); request_light_async(idx_zm, 4, 1); chunks[idx_zm].grass_deco_built = 0; }
+                        if chunks[idx_zp].x == cx && chunks[idx_zp].z == cz + 1 { request_mesh_async(idx_zp, 1); request_light_async(idx_zp, 4, 1); chunks[idx_zp].grass_deco_built = 0; }
+                        
+                        destroy_timer = 0.0; destroy_target_x = -999;
+                    }
+                } else {
+                    destroy_timer = 0.0; destroy_target_x = -999;
+                }
+            }
+        } else {
+            destroy_timer = 0.0; destroy_target_x = -999;
+        }
+        
+        // --- Block Placement ---
+        if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_RIGHT) {
+            let nx = hit.x + hit.face_x; let ny = hit.y + hit.face_y; let nz = hit.z + hit.face_z;
+            let dist_x = p.x - ((float)nx + 0.5); let dist_y = p.y + 1.6 - ((float)ny + 0.5); let dist_z = p.z - ((float)nz + 0.5);
+            
+            let min_dist = 1.0;
+            if selected_block == BLOCK_TORCH { min_dist = 0.5; }
+            
+            if (dist_x*dist_x + dist_y*dist_y + dist_z*dist_z) > min_dist {
+                if p.mana >= 10.0 {
+                    p.mana = p.mana - 10.0;
+                    let block_to_place = selected_block;
+                    if block_to_place == BLOCK_GRASS { block_to_place = BLOCK_DIRT; }
+                    
+                    if selected_block == BLOCK_TORCH {
+                        if hit.face_y == 1 { block_to_place = 10; }
+                        else if hit.face_y == -1 { block_to_place = BLOCK_AIR; }
+                        else {
+                            if hit.face_z == 1 { block_to_place = 12; }
+                            else if hit.face_z == -1 { block_to_place = 11; }
+                            else if hit.face_x == 1 { block_to_place = 14; }
+                            else if hit.face_x == -1 { block_to_place = 13; }
+                        }
+                    }
+                    
+                    set_block(chunks, MAX_CHUNKS, nx, ny, nz, block_to_place);
+                    
+                    let cx = (int)floor((float)nx / 16.0); let cz = (int)floor((float)nz / 16.0);
+                    let idx = get_chunk_index(cx, cz);
+                    
+                    request_mesh_async(idx, 1); request_light_async(idx, 4, 1); 
+                    chunks[idx].grass_deco_built = 0; request_save_async(&chunks[idx]);
+                    
+                    let cx_nx = (int)floor((float)(nx+1) / 16.0); let idx_nx = get_chunk_index(cx_nx, cz);
+                    if idx_nx != idx { request_mesh_async(idx_nx, 1); request_light_async(idx_nx, 4, 1); chunks[idx_nx].grass_deco_built = 0; }
+                    
+                    let cx_px = (int)floor((float)(nx-1) / 16.0); let idx_px = get_chunk_index(cx_px, cz);
+                    if idx_px != idx { request_mesh_async(idx_px, 1); request_light_async(idx_px, 4, 1); chunks[idx_px].grass_deco_built = 0; }
+                    
+                    let cz_nz = (int)floor((float)(nz+1) / 16.0); let idx_nz = get_chunk_index(cx, cz_nz);
+                    if idx_nz != idx { request_mesh_async(idx_nz, 1); request_light_async(idx_nz, 4, 1); chunks[idx_nz].grass_deco_built = 0; }
+                    
+                    let cz_pz = (int)floor((float)(nz-1) / 16.0); let idx_pz = get_chunk_index(cx, cz_pz);
+                    if idx_pz != idx { request_mesh_async(idx_pz, 1); request_light_async(idx_pz, 4, 1); chunks[idx_pz].grass_deco_built = 0; }
+                }
+            }
+        }
+    } else {
+        destroy_timer = 0.0; destroy_target_x = -999;
+    }
+}

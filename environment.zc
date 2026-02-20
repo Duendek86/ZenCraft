@@ -1,0 +1,105 @@
+//> Environment, Lighting and Day/Night Cycle
+import "raylib.h" as rl;
+import "math.h";
+import "assets.zc"; // Access to globals, textures, and uniform locations
+
+fn update_lighting_uniforms(dir: rl::Vector3, col: rl::Vector3, amb: rl::Vector3) {
+    rl::SetShaderValue(sh_lighting, loc_light_dir, &dir, rl::SHADER_UNIFORM_VEC3);
+    rl::SetShaderValue(sh_lighting, loc_light_col, &col, rl::SHADER_UNIFORM_VEC3);
+    rl::SetShaderValue(sh_lighting, loc_ambient, &amb, rl::SHADER_UNIFORM_VEC3);
+    
+    rl::SetShaderValue(sh_grass, loc_grass_light_dir, &dir, rl::SHADER_UNIFORM_VEC3);
+    rl::SetShaderValue(sh_grass, loc_grass_light_col, &col, rl::SHADER_UNIFORM_VEC3);
+    rl::SetShaderValue(sh_grass, loc_grass_ambient, &amb, rl::SHADER_UNIFORM_VEC3);
+}
+
+fn update_frame_uniforms(cam_pos: rl::Vector3, time: float) {
+    rl::SetShaderValue(sh_lighting, loc_view_pos, &cam_pos, rl::SHADER_UNIFORM_VEC3);
+    rl::SetShaderValue(sh_lighting, loc_time, &time, rl::SHADER_UNIFORM_FLOAT);
+    
+    rl::SetShaderValue(sh_grass, loc_grass_view_pos, &cam_pos, rl::SHADER_UNIFORM_VEC3);
+    rl::SetShaderValue(sh_grass, loc_grass_time, &time, rl::SHADER_UNIFORM_FLOAT);
+}
+
+fn set_grass_use_tex(use_tex: int) {
+    rl::SetShaderValue(sh_grass, loc_grass_use_tex, &use_tex, rl::SHADER_UNIFORM_INT);
+}
+
+fn update_day_night_cycle(day_time: float) {
+    let angle = (day_time * 2.0 * 3.14159); 
+    
+    let sun_y = (float)sin(angle);
+    let sun_x = (float)cos(angle);
+    let orbit_tilt = 0.5;
+    let sun_z = sun_y * orbit_tilt + 0.3;
+    
+    let dir = rl::Vector3{ x: sun_x, y: sun_y, z: sun_z };
+    let col = rl::Vector3{x: 0.0, y: 0.0, z: 0.0};
+    let amb = rl::Vector3{x: 0.0, y: 0.0, z: 0.0};
+    
+    if sun_y > 0.0 {
+        // DAYTIME
+        // Intensity ramps up quickly from the horizon using standard curve
+        let intensity = sun_y + 0.2; 
+        if intensity > 1.0 { intensity = 1.0; }
+        
+        // Color transition: At horizon, it's orange. At zenith, it's white.
+        col.x = 1.0 * intensity * sun_y;
+        col.y = (0.5 + 0.5 * sun_y) * intensity * sun_y;
+        col.z = (0.2 + 0.8 * sun_y) * intensity * sun_y;
+        
+        amb.x = 0.1 + 0.3 * sun_y;
+        amb.y = 0.1 + 0.3 * sun_y;
+        amb.z = 0.1 + 0.3 * sun_y;
+    } else {
+        // NIGHTTIME
+        dir.x = -sun_x;
+        dir.y = -sun_y;
+        dir.z = -sun_z;
+        
+        let moon_y = -sun_y; 
+        let intensity = moon_y + 0.2;
+        if intensity > 1.0 { intensity = 1.0; }
+        
+        // Moon is dimmer, bluish
+        col.x = 0.1 * intensity * moon_y;
+        col.y = 0.2 * intensity * moon_y;
+        col.z = 0.4 * intensity * moon_y;
+        
+        amb.x = 0.02 + 0.03 * moon_y;
+        amb.y = 0.02 + 0.03 * moon_y;
+        amb.z = 0.05 + 0.05 * moon_y;
+    }
+    
+    // Add warm horizon glow during sunrise/sunset
+    let horizon = 1.0;
+    if sun_y > 0.0 { horizon = 1.0 - sun_y; } else { horizon = 1.0 + sun_y; }
+    let glow = horizon * horizon * horizon * horizon; // pow 4
+    
+    amb.x = amb.x + glow * 0.15;
+    amb.y = amb.y + glow * 0.05;
+    amb.z = amb.z + glow * 0.01;
+
+    update_lighting_uniforms(dir, col, amb);
+}
+
+fn draw_sky(camera: rl::Camera3D, day_time: float) {
+    rl::BeginMode3D(camera);
+        let sun_angle = (day_time * 2.0 * 3.14159);
+        let sun_pos = rl::Vector3{
+            x: camera.position.x + (float)cos(sun_angle) * 400.0, 
+            y: camera.position.y + (float)sin(sun_angle) * 400.0, 
+            z: camera.position.z
+        };
+        let moon_pos = rl::Vector3{
+            x: camera.position.x - (float)cos(sun_angle) * 400.0, 
+            y: camera.position.y - (float)sin(sun_angle) * 400.0, 
+            z: camera.position.z 
+        };
+        
+        rl::rlDisableDepthMask();
+        rl::DrawBillboard(camera, tex_sun, sun_pos, 50.0, rl::WHITE);
+        rl::DrawBillboard(camera, tex_moon, moon_pos, 40.0, rl::WHITE);
+        rl::rlEnableDepthMask();
+    rl::EndMode3D();
+}

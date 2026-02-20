@@ -1,23 +1,17 @@
-
+//> Async Mesh Request Handler
 import "persistence_defs.zc";
-import "chunk.zc";
+import "chunk_core.zc";
 import "chunk_mesh.zc";
 
 fn handle_mesh_request(req: any, chunks: Chunk*, num_chunks: int) {
-    raw {
-        IORequest* r = (IORequest*)req;
-        if (chunks != NULL) {
-            Chunk* c = &chunks[r->target_idx];
-            // Compute meshes on CPU
-            // Note: This accesses neighbor chunks via get_block -> get_chunk_index.
-            // Main thread MUST ensure neighbor chunks are valid and locked!
-            
-            r->mesh_data = compute_chunk_mesh(c, chunks, num_chunks);
-            r->plant_mesh = compute_plant_mesh(c);
-            
-            r->io_status = 2; // COMPLETED
-        } else {
-            r->io_status = 3; // FAILED (No global chunks)
-        }
-    }
+    if chunks == NULL { return; }
+    
+    let r = (IORequest*)req;
+    let c = &chunks[r.target_idx];
+    
+    // Main thread MUST ensure neighbor chunks are valid and locked!
+    r.mesh_data = compute_chunk_mesh(c, chunks, num_chunks);
+    r.plant_mesh = compute_plant_mesh(c);
+    
+    r.io_status = IO_STATUS_COMPLETED;
 }

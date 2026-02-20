@@ -1,0 +1,165 @@
+//> spellbook.zc
+import "raylib.h" as rl;
+import "rlgl.h";
+
+struct SpellbookState {
+    show: int;
+    selected_spell: int; // 0 = Place Block
+    current_tab: int; // 0 = Blocks, 1 = Structures
+}
+
+// Function to draw the spellbook UI
+// Returns 1 if a selection changed, 0 otherwise
+fn draw_spellbook(state: SpellbookState*, selected_block: int*) {
+    let screen_w = rl::GetScreenWidth();
+    let screen_h = rl::GetScreenHeight();
+    let cx = screen_w / 2;
+    let cy = screen_h / 2;
+    
+    // Book Dimensions
+    let book_w = 600;
+    let book_h = 400;
+    let book_x = cx - book_w / 2;
+    let book_y = cy - book_h / 2;
+    
+    // Draw Book Background (Brown Cover, Cream Pages)
+    rl::DrawRectangle(book_x - 10, book_y - 10, book_w + 20, book_h + 20, rl::Color{r: 60, g: 40, b: 20, a: 255}); // Cover
+    rl::DrawRectangle(book_x, book_y, book_w / 2 - 5, book_h, rl::Color{r: 240, g: 230, b: 200, a: 255}); // Left Page
+    rl::DrawRectangle(book_x + book_w / 2 + 5, book_y, book_w / 2 - 5, book_h, rl::Color{r: 240, g: 230, b: 200, a: 255}); // Right Page
+    rl::DrawRectangle(book_x + book_w / 2 - 5, book_y, 10, book_h, rl::Color{r: 50, g: 30, b: 10, a: 255}); // Spine
+    
+    // --- LEFT PAGE: SPELLS ---
+    rl::DrawText("SPELLS", book_x + 80, book_y + 30, 20, rl::BLACK);
+    
+    let mx = rl::GetMouseX();
+    let my = rl::GetMouseY();
+    let clicked = rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_LEFT);
+    
+    // Spell 1: Place Block
+    let s1_x = book_x + 30;
+    let s1_y = book_y + 70;
+    let s1_w = 240;
+    let s1_h = 40;
+    
+    if (state.selected_spell == 0) {
+        rl::DrawRectangle(s1_x, s1_y, s1_w, s1_h, rl::Color{r: 200, g: 200, b: 255, a: 255}); // Highlight
+    }
+    rl::DrawRectangleLines(s1_x, s1_y, s1_w, s1_h, rl::BLACK);
+    rl::DrawText("Place Block", s1_x + 10, s1_y + 10, 20, rl::BLACK);
+    
+    if (clicked && mx >= s1_x && mx <= s1_x + s1_w && my >= s1_y && my <= s1_y + s1_h) {
+        state.selected_spell = 0;
+    }
+    
+    // --- RIGHT PAGE: INVENTORY ---
+    // Tabs
+    let tab_x = book_x + book_w/2 + 20;
+    let tab_y = book_y + 20;
+    let tab_w = 100;
+    let tab_h = 25;
+    
+    // Tab 1: Blocks
+    if (state.current_tab == 0) rl::DrawRectangle(tab_x, tab_y, tab_w, tab_h, rl::GOLD);
+    else rl::DrawRectangle(tab_x, tab_y, tab_w, tab_h, rl::GRAY);
+    rl::DrawText("Blocks", tab_x + 20, tab_y + 5, 20, rl::BLACK);
+    if (clicked && mx >= tab_x && mx <= tab_x + tab_w && my >= tab_y && my <= tab_y + tab_h) { state.current_tab = 0; }
+    
+    // Tab 2: Structures
+    if (state.current_tab == 1) rl::DrawRectangle(tab_x + 110, tab_y, tab_w, tab_h, rl::GOLD);
+    else rl::DrawRectangle(tab_x + 110, tab_y, tab_w, tab_h, rl::GRAY);
+    rl::DrawText("Structures", tab_x + 115, tab_y + 5, 20, rl::BLACK);
+    if (clicked && mx >= tab_x + 110 && mx <= tab_x + 110 + tab_w && my >= tab_y && my <= tab_y + tab_h) { state.current_tab = 1; }
+
+    
+    // Grid Setup
+    let grid_start_x = book_x + book_w/2 + 30;
+    let grid_start_y = book_y + 70;
+    let cell_size = 50;
+    let padding = 10;
+    
+    if (state.current_tab == 0) {
+        // --- BLOCKS TAB ---
+    
+    let col = 0;
+    let row = 0;
+    
+    for b in 1..15 { // Blocks 1 to 14
+        let display_block = b;
+        if (b >= 11 && b <= 14) continue; // Skip wall torches
+        
+        let cell_x = grid_start_x + col * (cell_size + padding);
+        let cell_y = grid_start_y + row * (cell_size + padding);
+        
+        // Highlight if selected
+        if (*selected_block == display_block) {
+            rl::DrawRectangle(cell_x - 3, cell_y - 3, cell_size + 6, cell_size + 6, rl::GOLD);
+        }
+        
+        rl::DrawRectangleLines(cell_x, cell_y, cell_size, cell_size, rl::BLACK);
+        
+        // Draw Block Preview
+        let b_col: rl::Color = rl::WHITE; // Explicit type check
+        if (display_block == 1) b_col = rl::BROWN;
+        else if (display_block == 2) b_col = rl::LIME;
+        else if (display_block == 3) b_col = rl::GRAY;
+        else if (display_block == 4) b_col = rl::Color{r: 101, g: 67, b: 33, a: 255}; // Wood
+        else if (display_block == 5) b_col = rl::DARKGREEN;
+        else if (display_block == 8) b_col = rl::BEIGE; // Sand
+        else if (display_block == 9) b_col = rl::SKYBLUE; // Glass
+        else if (display_block == 10) b_col = rl::YELLOW; // Torch
+        else b_col = rl::MAGENTA; 
+        
+        rl::DrawRectangle(cell_x + 5, cell_y + 5, cell_size - 10, cell_size - 10, b_col);
+        
+        // Selection Logic
+        if (clicked && mx >= cell_x && mx <= cell_x + cell_size && my >= cell_y && my <= cell_y + cell_size) {
+            *selected_block = display_block;
+        }
+        
+        col = col + 1;
+        if (col >= 4) {
+            col = 0;
+            row = row + 1;
+        }
+    }
+    } else {
+        // --- STRUCTURES TAB ---
+        // Item 1: Power Source
+        let ps_x = grid_start_x;
+        let ps_y = grid_start_y;
+        
+        if (*selected_block == 21) {
+             rl::DrawRectangle(ps_x - 3, ps_y - 3, cell_size + 6, cell_size + 6, rl::GOLD);
+        }
+        rl::DrawRectangleLines(ps_x, ps_y, cell_size, cell_size, rl::BLACK);
+        
+        // Icon (Purple Center)
+        rl::DrawRectangle(ps_x + 5, ps_y + 5, cell_size - 10, cell_size - 10, rl::PURPLE);
+        rl::DrawText("Power", ps_x + 5, ps_y + cell_size + 5, 10, rl::BLACK);
+        rl::DrawText("Source", ps_x + 5, ps_y + cell_size + 15, 10, rl::BLACK);
+        
+        if (clicked && mx >= ps_x && mx <= ps_x + cell_size && my >= ps_y && my <= ps_y + cell_size) {
+            *selected_block = 21; // BLOCK_POWER_SOURCE
+        }
+    }
+    }
+}
+
+impl SpellbookState {
+    static fn new() -> SpellbookState {
+        let s: SpellbookState;
+        s.show = 0;
+        s.selected_spell = 0;
+        s.current_tab = 0;
+        return s;
+    }
+    
+    fn toggle(self) {
+        self.show = !self.show;
+        if self.show {
+            rl::EnableCursor();
+        } else {
+            rl::DisableCursor();
+        }
+    }
+}
