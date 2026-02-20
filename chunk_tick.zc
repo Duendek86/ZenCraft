@@ -65,7 +65,7 @@ fn tick_chunk(c: Chunk*, chunks: Chunk*, num_chunks: int) {
         for lz in 0..16 {
             for ly in 0..CHUNK_HEIGHT {
                 let btype = c.blocks[lx][ly][lz];
-                if btype != BLOCK_WATER && btype != BLOCK_WATER_2 && btype != BLOCK_WATER_1 { continue; }
+                if btype != BLOCK_WATER && btype != BLOCK_WATER_2 && btype != BLOCK_WATER_1 && btype != BLOCK_WATER_0 { continue; }
                 
                 let gx = gx_base + lx; let gz = gz_base + lz;
                 
@@ -80,11 +80,15 @@ fn tick_chunk(c: Chunk*, chunks: Chunk*, num_chunks: int) {
 
                 let below_check = BLOCK_STONE;
                 if ly > 0 { below_check = c.blocks[lx][ly-1][lz]; }
-                if below_check == BLOCK_WATER || below_check == BLOCK_WATER_2 || below_check == BLOCK_WATER_1 { continue; }
-                if btype == BLOCK_WATER_1 { continue; }
+                if below_check == BLOCK_WATER || below_check == BLOCK_WATER_2 || below_check == BLOCK_WATER_1 || below_check == BLOCK_WATER_0 {
+                    continue; 
+                }
                 
-                let next_level = BLOCK_WATER_1;
+                if btype == BLOCK_WATER_0 { continue; }
+                
+                let next_level = BLOCK_WATER_0;
                 if btype == BLOCK_WATER { next_level = BLOCK_WATER_2; }
+                else if btype == BLOCK_WATER_2 { next_level = BLOCK_WATER_1; }
                 
                 if get_block(chunks, num_chunks, gx + 1, ly, gz) == BLOCK_AIR {
                     set_block(chunks, num_chunks, gx + 1, ly, gz, next_level); water_changed = 1;

@@ -46,7 +46,7 @@ fn check_collision(chunks: Chunk*, num_chunks: int, x: float, y: float, z: float
                 let block = get_block(chunks, num_chunks, ix, iy, iz);
                 
                 // Tall grass, torches, and all water levels are non-solid
-                if block != BLOCK_AIR && block != BLOCK_TALLGRASS && !(block >= 10 && block <= 14) && block != BLOCK_WATER && block != BLOCK_WATER_2 && block != BLOCK_WATER_1 {
+                if block != BLOCK_AIR && block != BLOCK_TALLGRASS && !(block >= 10 && block <= 14) && block != BLOCK_WATER && block != BLOCK_WATER_2 && block != BLOCK_WATER_1 && block != BLOCK_WATER_0 {
                     return 1;
                 }
             }

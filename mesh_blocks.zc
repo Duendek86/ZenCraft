@@ -10,9 +10,10 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
         res.has_opaque = 0;
         res.has_water = 0;
 
-        #define IS_TRANSPARENT_MESH(b) ((b) == 0 || ((b) >= 10 && (b) <= 14) || (b) == 17 || (b) == 4 || (b) == 6 || (b) == 8 || (b) == 15 || (b) == 16 || (b) == 18 || (b) == BLOCK_POWER_SOURCE || (b) == BLOCK_POWER_CRYSTAL)
-        #define IS_WATER_TYPE(b) ((b) == BLOCK_WATER || (b) == BLOCK_WATER_2 || (b) == BLOCK_WATER_1)
-        #define WATER_LEVEL(b) ((b) == BLOCK_WATER ? 3 : ((b) == BLOCK_WATER_2 ? 2 : ((b) == BLOCK_WATER_1 ? 1 : 0)))
+        // Water specific macros
+        #define IS_WATER_TYPE(b) ((b) == BLOCK_WATER || (b) == BLOCK_WATER_2 || (b) == BLOCK_WATER_1 || (b) == BLOCK_WATER_0)
+        #define WATER_LEVEL(b) ((b) == BLOCK_WATER ? 4 : ((b) == BLOCK_WATER_2 ? 3 : ((b) == BLOCK_WATER_1 ? 2 : ((b) == BLOCK_WATER_0 ? 1 : 0))))
+        #define IS_TRANSPARENT_MESH(b) ((b) == 0 || ((b) >= 10 && (b) <= 14) || (b) == 17 || (b) == 4 || (b) == 6 || IS_WATER_TYPE(b) || (b) == 18 || (b) == BLOCK_POWER_SOURCE || (b) == BLOCK_POWER_CRYSTAL)
         #define SHOULD_RENDER_FACE(neighbor_block) \
             (IS_WATER_TYPE(btype) ? \
               ((neighbor_block) == BLOCK_AIR || ((neighbor_block) >= 10 && (neighbor_block) <= 14) || (neighbor_block) == BLOCK_TALLGRASS || (neighbor_block) == BLOCK_LEAVES) : \
@@ -65,7 +66,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                          continue;
                     }
                     
-                    if (btype == BLOCK_WATER || btype == BLOCK_WATER_2 || btype == BLOCK_WATER_1) {
+                    if (btype == BLOCK_WATER || btype == BLOCK_WATER_2 || btype == BLOCK_WATER_1 || btype == BLOCK_WATER_0) {
                         int neighbor_above = get_block(chunks, num_chunks, b_gx, y + 1, b_gz);
                         int w_above = IS_WATER_TYPE(neighbor_above);
                         if (!w_above && IS_TRANSPARENT_MESH(neighbor_above)) { water_face_count++; }
@@ -169,7 +170,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                     if (btype == BLOCK_AIR || btype == BLOCK_POWER_SOURCE || btype == BLOCK_POWER_CRYSTAL) continue;
                     
                     int current_flag = 0;
-                    if (btype == BLOCK_WATER || btype == BLOCK_WATER_2 || btype == BLOCK_WATER_1) current_flag = 255;
+                    if (btype == BLOCK_WATER || btype == BLOCK_WATER_2 || btype == BLOCK_WATER_1 || btype == BLOCK_WATER_0) current_flag = 255;
                     else if (btype == BLOCK_LEAVES) current_flag = 100;
                     
                     int b_gx = gx_base + x;
@@ -386,31 +387,46 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                     }
                     
                     // --- WATER SPECIAL CASE ---
-                    if (btype == BLOCK_WATER || btype == BLOCK_WATER_2 || btype == BLOCK_WATER_1) {
-                        #define BLOCK_TO_WH(bt) ((bt) == BLOCK_WATER ? 0.9f : ((bt) == BLOCK_WATER_2 ? 0.6f : ((bt) == BLOCK_WATER_1 ? 0.3f : 0.0f)))
+                    if (btype == BLOCK_WATER || btype == BLOCK_WATER_2 || btype == BLOCK_WATER_1 || btype == BLOCK_WATER_0) {
+                        float get_wh(Chunk* _c, int _nc, int nx, int ny, int nz) {
+                            int _b = get_block(_c, _nc, nx, ny, nz);
+                            if (_b == BLOCK_WATER) return 0.9f;
+                            if (_b == BLOCK_WATER_2) return 0.6f;
+                            if (_b == BLOCK_WATER_1) return 0.3f;
+                            if (_b == BLOCK_WATER_0) return 0.05f;
+                            if (_b == BLOCK_AIR) {
+                                int _bb = get_block(_c, _nc, nx, ny-1, nz);
+                                if (_bb == BLOCK_WATER) return -0.1f;
+                                if (_bb == BLOCK_WATER_2) return -0.4f;
+                                if (_bb == BLOCK_WATER_1) return -0.7f;
+                                if (_bb == BLOCK_WATER_0) return -0.95f;
+                            }
+                            return -999.0f;
+                        }
+                        
                         float h00 = 0.0f, h10 = 0.0f, h11 = 0.0f, h01 = 0.0f;
                         int n00 = 0, n10 = 0, n11 = 0, n01 = 0;
-                        float _sh; int _sb;
+                        float _sh;
                         
-                        _sb = get_block(chunks, num_chunks, b_gx,   y, b_gz);   _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h00 += _sh; n00++; }
-                        _sb = get_block(chunks, num_chunks, b_gx-1, y, b_gz);   _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h00 += _sh; n00++; }
-                        _sb = get_block(chunks, num_chunks, b_gx,   y, b_gz-1); _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h00 += _sh; n00++; }
-                        _sb = get_block(chunks, num_chunks, b_gx-1, y, b_gz-1); _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h00 += _sh; n00++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz);   if(_sh > -10.0f) { h00 += _sh; n00++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx-1, y, b_gz);   if(_sh > -10.0f) { h00 += _sh; n00++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz-1); if(_sh > -10.0f) { h00 += _sh; n00++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx-1, y, b_gz-1); if(_sh > -10.0f) { h00 += _sh; n00++; }
                         
-                        _sb = get_block(chunks, num_chunks, b_gx+1, y, b_gz);   _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h10 += _sh; n10++; }
-                        _sb = get_block(chunks, num_chunks, b_gx,   y, b_gz);   _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h10 += _sh; n10++; }
-                        _sb = get_block(chunks, num_chunks, b_gx+1, y, b_gz-1); _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h10 += _sh; n10++; }
-                        _sb = get_block(chunks, num_chunks, b_gx,   y, b_gz-1); _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h10 += _sh; n10++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx+1, y, b_gz);   if(_sh > -10.0f) { h10 += _sh; n10++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz);   if(_sh > -10.0f) { h10 += _sh; n10++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx+1, y, b_gz-1); if(_sh > -10.0f) { h10 += _sh; n10++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz-1); if(_sh > -10.0f) { h10 += _sh; n10++; }
                         
-                        _sb = get_block(chunks, num_chunks, b_gx+1, y, b_gz+1); _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h11 += _sh; n11++; }
-                        _sb = get_block(chunks, num_chunks, b_gx,   y, b_gz+1); _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h11 += _sh; n11++; }
-                        _sb = get_block(chunks, num_chunks, b_gx+1, y, b_gz);   _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h11 += _sh; n11++; }
-                        _sb = get_block(chunks, num_chunks, b_gx,   y, b_gz);   _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h11 += _sh; n11++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx+1, y, b_gz+1); if(_sh > -10.0f) { h11 += _sh; n11++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz+1); if(_sh > -10.0f) { h11 += _sh; n11++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx+1, y, b_gz);   if(_sh > -10.0f) { h11 += _sh; n11++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz);   if(_sh > -10.0f) { h11 += _sh; n11++; }
                         
-                        _sb = get_block(chunks, num_chunks, b_gx,   y, b_gz+1); _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h01 += _sh; n01++; }
-                        _sb = get_block(chunks, num_chunks, b_gx-1, y, b_gz+1); _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h01 += _sh; n01++; }
-                        _sb = get_block(chunks, num_chunks, b_gx,   y, b_gz);   _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h01 += _sh; n01++; }
-                        _sb = get_block(chunks, num_chunks, b_gx-1, y, b_gz);   _sh = BLOCK_TO_WH(_sb); if(_sh > 0) { h01 += _sh; n01++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz+1); if(_sh > -10.0f) { h01 += _sh; n01++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx-1, y, b_gz+1); if(_sh > -10.0f) { h01 += _sh; n01++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz);   if(_sh > -10.0f) { h01 += _sh; n01++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx-1, y, b_gz);   if(_sh > -10.0f) { h01 += _sh; n01++; }
                         
                         if (n00 > 0) h00 /= (float)n00;
                         if (n10 > 0) h10 /= (float)n10;
@@ -420,12 +436,12 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         int water_flag = (btype == BLOCK_WATER) ? 255 : 192;
 
                         int neighbor_above = get_block(chunks, num_chunks, b_gx, y + 1, b_gz);
-                        int water_above = (neighbor_above == BLOCK_WATER || neighbor_above == BLOCK_WATER_2 || neighbor_above == BLOCK_WATER_1);
+                        int water_above = (neighbor_above == BLOCK_WATER || neighbor_above == BLOCK_WATER_2 || neighbor_above == BLOCK_WATER_1 || neighbor_above == BLOCK_WATER_0);
                         if (water_above) {
                             h00 = 1.0f; h10 = 1.0f; h11 = 1.0f; h01 = 1.0f;
                         }
                         
-                        if (neighbor_above != BLOCK_WATER && neighbor_above != BLOCK_WATER_2 && neighbor_above != BLOCK_WATER_1 && IS_TRANSPARENT_MESH(neighbor_above)) {
+                        if (neighbor_above != BLOCK_WATER && neighbor_above != BLOCK_WATER_2 && neighbor_above != BLOCK_WATER_1 && neighbor_above != BLOCK_WATER_0 && IS_TRANSPARENT_MESH(neighbor_above)) {
                             int light_val; CALC_LIGHT(b_gx, y + 1, b_gz, light_val);
                             SET_UV(0, 0); 
                             ADD_VERTEX_GENERIC(px, py+h00, pz,     0,1,0, u_min, v_min, light_val, water_flag);
@@ -435,10 +451,11 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                             ADD_QUAD_INDICES(1);
                         }
                         
-                        SET_UV(0, 0);
+                        #define HAS_WATER_ABOVE(nx, ny, nz) IS_WATER_TYPE(get_block(chunks, num_chunks, nx, ny + 1, nz))
+
                         int side_nb;
                         side_nb = get_block(chunks, num_chunks, b_gx + 1, y, b_gz);
-                        if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && WATER_LEVEL(btype) > WATER_LEVEL(side_nb))) {
+                        if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && !HAS_WATER_ABOVE(b_gx + 1, y, b_gz))) {
                              int light_val; CALC_LIGHT(b_gx + 1, y, b_gz, light_val);
                              ADD_VERTEX_GENERIC(px+1, py, pz,     1,0,0, u_min, v_max, light_val, water_flag);
                              ADD_VERTEX_GENERIC(px+1, py+h10, pz,   1,0,0, u_min, v_min, light_val, water_flag);
@@ -447,7 +464,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                              ADD_QUAD_INDICES(1);
                         }
                         side_nb = get_block(chunks, num_chunks, b_gx - 1, y, b_gz);
-                        if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && WATER_LEVEL(btype) > WATER_LEVEL(side_nb))) {
+                        if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && !HAS_WATER_ABOVE(b_gx - 1, y, b_gz))) {
                              int light_val; CALC_LIGHT(b_gx - 1, y, b_gz, light_val);
                              ADD_VERTEX_GENERIC(px, py, pz,     -1,0,0, u_min, v_max, light_val, water_flag);
                              ADD_VERTEX_GENERIC(px, py+h00, pz,   -1,0,0, u_min, v_min, light_val, water_flag);
@@ -456,7 +473,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                              ADD_QUAD_INDICES(1);
                         }
                         side_nb = get_block(chunks, num_chunks, b_gx, y, b_gz + 1);
-                        if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && WATER_LEVEL(btype) > WATER_LEVEL(side_nb))) {
+                        if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && !HAS_WATER_ABOVE(b_gx, y, b_gz + 1))) {
                              int light_val; CALC_LIGHT(b_gx, y, b_gz + 1, light_val);
                              ADD_VERTEX_GENERIC(px, py, pz+1,     0,0,1, u_min, v_max, light_val, water_flag);
                              ADD_VERTEX_GENERIC(px+1, py, pz+1,   0,0,1, u_max, v_max, light_val, water_flag);
@@ -465,7 +482,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                              ADD_QUAD_INDICES(1);
                         }
                         side_nb = get_block(chunks, num_chunks, b_gx, y, b_gz - 1);
-                        if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && WATER_LEVEL(btype) > WATER_LEVEL(side_nb))) {
+                        if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && !HAS_WATER_ABOVE(b_gx, y, b_gz - 1))) {
                              int light_val; CALC_LIGHT(b_gx, y, b_gz - 1, light_val);
                              ADD_VERTEX_GENERIC(px, py, pz,     0,0,-1, u_min, v_max, light_val, water_flag);
                              ADD_VERTEX_GENERIC(px+1, py, pz,   0,0,-1, u_max, v_max, light_val, water_flag);
@@ -485,6 +502,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                             }
                         }
                         #undef BLOCK_TO_WH
+                        #undef HAS_WATER_ABOVE
                         continue;
                     }
 

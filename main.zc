@@ -43,7 +43,7 @@ import "game_loading.zc";
 import "game_ui.zc";
 import "player_interaction.zc";
 
-def VERSION_TEXT = "v0.0.1.11 alpha-dev";
+def VERSION_TEXT = "v0.0.1.12 alpha-dev";
 def MAX_ZIBIS = 10;
 def SAVE_DIR = "world";
 
@@ -300,7 +300,7 @@ fn main() {
                 if show_settings { rl::EnableCursor(); } else { rl::DisableCursor(); }
             }
             
-            day_time = day_time + (dt / 120.0); // 120 seconds total for a full day+night cycle
+            day_time = day_time + (dt / 2400.0); // 2400 seconds total for a full day+night cycle
             if day_time > 1.0 { day_time = day_time - 1.0; }
             update_day_night_cycle(day_time);
             

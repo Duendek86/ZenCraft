@@ -277,11 +277,11 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                         let n_e = get_block(chunks, MAX_CHUNKS, hit.x + 1, hit.y, hit.z);
                         let n_w = get_block(chunks, MAX_CHUNKS, hit.x - 1, hit.y, hit.z);
                         
-                        if n_up == BLOCK_WATER || n_up == BLOCK_WATER_1 || n_up == BLOCK_WATER_2 ||
-                           n_n == BLOCK_WATER || n_n == BLOCK_WATER_1 || n_n == BLOCK_WATER_2 ||
-                           n_s == BLOCK_WATER || n_s == BLOCK_WATER_1 || n_s == BLOCK_WATER_2 ||
-                           n_e == BLOCK_WATER || n_e == BLOCK_WATER_1 || n_e == BLOCK_WATER_2 ||
-                           n_w == BLOCK_WATER || n_w == BLOCK_WATER_1 || n_w == BLOCK_WATER_2 {
+                        if n_up == BLOCK_WATER || n_up == BLOCK_WATER_1 || n_up == BLOCK_WATER_2 || n_up == BLOCK_WATER_0 ||
+                           n_n == BLOCK_WATER || n_n == BLOCK_WATER_1 || n_n == BLOCK_WATER_2 || n_n == BLOCK_WATER_0 ||
+                           n_s == BLOCK_WATER || n_s == BLOCK_WATER_1 || n_s == BLOCK_WATER_2 || n_s == BLOCK_WATER_0 ||
+                           n_e == BLOCK_WATER || n_e == BLOCK_WATER_1 || n_e == BLOCK_WATER_2 || n_e == BLOCK_WATER_0 ||
+                           n_w == BLOCK_WATER || n_w == BLOCK_WATER_1 || n_w == BLOCK_WATER_2 || n_w == BLOCK_WATER_0 {
                              fill_block = BLOCK_WATER;
                         }
                         set_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z, fill_block);

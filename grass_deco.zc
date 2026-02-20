@@ -38,7 +38,7 @@ fn build_grass_decorations(c: Chunk*, chunks: Chunk*, num_chunks: int) {
             for z in 0..16 {
                 if c.blocks[x][y][z] == BLOCK_GRASS {
                     let above = c.blocks[x][y + 1][z];
-                    if above == BLOCK_AIR || above == BLOCK_WATER || above == BLOCK_WATER_1 || above == BLOCK_WATER_2 {
+                    if above == BLOCK_AIR || above == BLOCK_WATER || above == BLOCK_WATER_1 || above == BLOCK_WATER_2 || above == BLOCK_WATER_0 {
                         grass_count++;
                     }
                 }
@@ -64,7 +64,7 @@ fn build_grass_decorations(c: Chunk*, chunks: Chunk*, num_chunks: int) {
             for z in 0..16 {
                 if c.blocks[x][y][z] == BLOCK_GRASS {
                     let above = c.blocks[x][y + 1][z];
-                    if above == BLOCK_AIR || above == BLOCK_WATER || above == BLOCK_WATER_1 || above == BLOCK_WATER_2 {
+                    if above == BLOCK_AIR || above == BLOCK_WATER || above == BLOCK_WATER_1 || above == BLOCK_WATER_2 || above == BLOCK_WATER_0 {
                         
                         let light_val = get_light_levels(chunks, num_chunks, gx_base + x, y + 1, gz_base + z);
                         let r_raw = (light_val & 0xF) * 17;

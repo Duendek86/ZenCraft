@@ -44,7 +44,7 @@ fn raycast(chunks: Chunk*, num_chunks: int, ox: float, oy: float, oz: float, dx:
         let b = get_block(chunks, num_chunks, ix, iy, iz);
         
         // Treat water as transparent/air for raycasting
-        if b != BLOCK_AIR && b != BLOCK_WATER && b != BLOCK_WATER_1 && b != BLOCK_WATER_2 {
+        if b != BLOCK_AIR && b != BLOCK_WATER && b != BLOCK_WATER_1 && b != BLOCK_WATER_2 && b != BLOCK_WATER_0 {
             r.hit = 1;
             r.x = ix;
             r.y = iy;
