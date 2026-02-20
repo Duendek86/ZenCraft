@@ -290,24 +290,63 @@ impl Player {
         // Hand (holding scepter)
         rl::DrawCube(rl::Vector3{x: ax, y: ay, z: az}, 0.1, 0.1, 0.1, rl::Color{r: 220, g: 180, b: 150, a: 255});
         
-        // --- DRAW SCEPTER (Vertical) ---
-        // Handle (Dark Wood) - Base at hand height, extending up
-        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.3, z: az}, 0.04, 0.7, 0.04, rl::Color{r: 80, g: 50, b: 25, a: 255});
+        // --- ORNATE SCEPTER ---
+        let gold = rl::Color{r: 255, g: 200, b: 40, a: 255};
+        let gold_dark = rl::Color{r: 200, g: 160, b: 30, a: 255};
+        let wood = rl::Color{r: 70, g: 42, b: 20, a: 255};
+        let wood_light = rl::Color{r: 100, g: 65, b: 35, a: 255};
         
-        // Handle Rings
-        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.15, z: az}, 0.05, 0.02, 0.05, rl::Color{r: 180, g: 150, b: 50, a: 255});
-        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.55, z: az}, 0.05, 0.02, 0.05, rl::Color{r: 180, g: 150, b: 50, a: 255});
+        // Handle - Tapered dark wood shaft
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.10, z: az}, 0.035, 0.25, 0.035, wood);
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.35, z: az}, 0.04, 0.25, 0.04, wood_light);
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.55, z: az}, 0.035, 0.15, 0.035, wood);
         
-        // Head Mount (Gold) - Top of handle
-        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.68, z: az}, 0.12, 0.12, 0.12, rl::Color{r: 255, g: 215, b: 0, a: 255});
+        // Gold grip rings (5 rings along handle)
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.00, z: az}, 0.055, 0.025, 0.055, gold); // Pommel
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.12, z: az}, 0.048, 0.015, 0.048, gold_dark);
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.22, z: az}, 0.05, 0.015, 0.05, gold);
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.35, z: az}, 0.052, 0.02, 0.052, gold_dark);
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.48, z: az}, 0.05, 0.015, 0.05, gold);
         
-        // Gem (Glowing Crystal) - Floating/Mounted on top
-        let pulse = 0.7 + 0.3 * (float)sin(time * 3.0);
-        let gem_alpha = (int)(180.0 + 75.0 * pulse);
-        let gem_size = 0.08 + 0.01 * pulse;
-        let gem_g = (int)(200.0 * pulse);
+        // Head platform (gold, wider)
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.62, z: az}, 0.10, 0.04, 0.10, gold);
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.65, z: az}, 0.08, 0.02, 0.08, gold_dark);
         
-        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.68, z: az}, gem_size, gem_size + 0.05, gem_size, rl::Color{r: 0, g: gem_g, b: 255, a: gem_alpha});
+        // Ornate cage prongs (4 gold prongs rising around gem)
+        let prong_w = 0.015;
+        let prong_h = 0.14;
+        let prong_off = 0.04;
+        rl::DrawCube(rl::Vector3{x: ax + prong_off, y: ay + 0.72, z: az}, prong_w, prong_h, prong_w, gold);
+        rl::DrawCube(rl::Vector3{x: ax - prong_off, y: ay + 0.72, z: az}, prong_w, prong_h, prong_w, gold);
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.72, z: az + prong_off}, prong_w, prong_h, prong_w, gold);
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.72, z: az - prong_off}, prong_w, prong_h, prong_w, gold);
+        
+        // Crown tips connecting prongs at top
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.80, z: az}, 0.09, 0.02, 0.09, gold_dark);
+        
+        // --- GLOWING GEM (Additive blend for bloom) ---
+        let pulse = 0.6 + 0.4 * (float)sin(time * 3.5);
+        let gem_size = 0.06 + 0.008 * pulse;
+        
+        // Solid gem core (always visible)
+        let gem_r = (int)(20.0 + 60.0 * pulse);
+        let gem_g = (int)(180.0 + 75.0 * pulse);
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.72, z: az}, gem_size, gem_size + 0.03, gem_size, rl::Color{r: gem_r, g: gem_g, b: 255, a: 255});
+        
+        // Additive glow layers (will trigger bloom)
+        rl::rlSetBlendMode(rl::BLEND_ADDITIVE);
+        rl::rlDisableDepthMask();
+        
+        // Inner glow
+        let glow_a = (int)(120.0 * pulse);
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.72, z: az}, gem_size + 0.03, gem_size + 0.06, gem_size + 0.03, rl::Color{r: 50, g: 200, b: 255, a: glow_a});
+        
+        // Outer soft glow
+        let outer_a = (int)(60.0 * pulse);
+        rl::DrawCube(rl::Vector3{x: ax, y: ay + 0.72, z: az}, gem_size + 0.08, gem_size + 0.10, gem_size + 0.08, rl::Color{r: 20, g: 100, b: 200, a: outer_a});
+        
+        rl::rlEnableDepthMask();
+        rl::rlSetBlendMode(rl::BLEND_ALPHA);
         
         rl::EndMode3D();
         

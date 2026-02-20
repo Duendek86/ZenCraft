@@ -1,0 +1,129 @@
+//> Bloom Post-Processing System
+import "raylib.h" as rl;
+import "rlgl.h";
+import "math.h";
+
+// --- State ---
+let bloom_scene_rt: rl::RenderTexture2D;
+let bloom_extract_rt: rl::RenderTexture2D;
+let bloom_blur_h_rt: rl::RenderTexture2D;
+let bloom_blur_v_rt: rl::RenderTexture2D;
+
+let sh_bloom_extract: rl::Shader;
+let sh_blur: rl::Shader;
+let sh_composite: rl::Shader;
+
+let loc_extract_threshold: int;
+let loc_blur_direction: int;
+let loc_composite_bloom_tex: int;
+let loc_composite_intensity: int;
+
+let bloom_initialized = 0;
+
+fn init_bloom(width: int, height: int) {
+    // Create RenderTextures
+    bloom_scene_rt = rl::LoadRenderTexture(width, height);
+    
+    // Bloom textures at half resolution for performance
+    let bw = width / 2;
+    let bh = height / 2;
+    bloom_extract_rt = rl::LoadRenderTexture(bw, bh);
+    bloom_blur_h_rt = rl::LoadRenderTexture(bw, bh);
+    bloom_blur_v_rt = rl::LoadRenderTexture(bw, bh);
+    
+    // Load shaders
+    let vs_data = embed "./assets/postprocess.vs";
+    let extract_fs = embed "./assets/bloom_extract.fs";
+    let blur_fs = embed "./assets/blur.fs";
+    let composite_fs = embed "./assets/composite.fs";
+    
+    sh_bloom_extract = load_shader_from_memory(vs_data.data, vs_data.len, extract_fs.data, extract_fs.len);
+    sh_blur = load_shader_from_memory(vs_data.data, vs_data.len, blur_fs.data, blur_fs.len);
+    sh_composite = load_shader_from_memory(vs_data.data, vs_data.len, composite_fs.data, composite_fs.len);
+    
+    // Get uniform locations
+    loc_extract_threshold = rl::GetShaderLocation(sh_bloom_extract, "threshold");
+    loc_blur_direction = rl::GetShaderLocation(sh_blur, "direction");
+    loc_composite_bloom_tex = rl::GetShaderLocation(sh_composite, "texture1");
+    loc_composite_intensity = rl::GetShaderLocation(sh_composite, "bloomIntensity");
+    
+    // Set default values
+    let threshold: float = 0.98;
+    if loc_extract_threshold != -1 { rl::SetShaderValue(sh_bloom_extract, loc_extract_threshold, &threshold, rl::SHADER_UNIFORM_FLOAT); }
+    
+    let intensity: float = 0.8;
+    if loc_composite_intensity != -1 { rl::SetShaderValue(sh_composite, loc_composite_intensity, &intensity, rl::SHADER_UNIFORM_FLOAT); }
+    
+    bloom_initialized = 1;
+}
+
+fn bloom_begin() {
+    if bloom_initialized == 0 { return; }
+    rl::BeginTextureMode(bloom_scene_rt);
+}
+
+fn bloom_end_and_draw() {
+    if bloom_initialized == 0 { return; }
+    rl::EndTextureMode();
+    
+    let bw = bloom_extract_rt.texture.width;
+    let bh = bloom_extract_rt.texture.height;
+    let sw = bloom_scene_rt.texture.width;
+    let sh_h = bloom_scene_rt.texture.height;
+    
+    // --- Pass 1: Extract bright pixels ---
+    rl::BeginTextureMode(bloom_extract_rt);
+    rl::ClearBackground(rl::BLACK);
+    rl::BeginShaderMode(sh_bloom_extract);
+    // Draw scene texture flipped (RenderTexture is upside down in OpenGL)
+    rl::DrawTexturePro(bloom_scene_rt.texture, 
+        rl::Rectangle{x: 0.0, y: 0.0, width: (float)sw, height: (float)(-sh_h)},
+        rl::Rectangle{x: 0.0, y: 0.0, width: (float)bw, height: (float)bh},
+        rl::Vector2{x: 0.0, y: 0.0}, 0.0, rl::WHITE);
+    rl::EndShaderMode();
+    rl::EndTextureMode();
+    
+    // --- Pass 2: Horizontal Blur ---
+    let dir_h = rl::Vector2{x: 1.0 / (float)bw, y: 0.0};
+    if loc_blur_direction != -1 { rl::SetShaderValue(sh_blur, loc_blur_direction, &dir_h, rl::SHADER_UNIFORM_VEC2); }
+    
+    rl::BeginTextureMode(bloom_blur_h_rt);
+    rl::ClearBackground(rl::BLACK);
+    rl::BeginShaderMode(sh_blur);
+    rl::DrawTexturePro(bloom_extract_rt.texture,
+        rl::Rectangle{x: 0.0, y: 0.0, width: (float)bw, height: (float)(-bh)},
+        rl::Rectangle{x: 0.0, y: 0.0, width: (float)bw, height: (float)bh},
+        rl::Vector2{x: 0.0, y: 0.0}, 0.0, rl::WHITE);
+    rl::EndShaderMode();
+    rl::EndTextureMode();
+    
+    // --- Pass 3: Vertical Blur ---
+    let dir_v = rl::Vector2{x: 0.0, y: 1.0 / (float)bh};
+    if loc_blur_direction != -1 { rl::SetShaderValue(sh_blur, loc_blur_direction, &dir_v, rl::SHADER_UNIFORM_VEC2); }
+    
+    rl::BeginTextureMode(bloom_blur_v_rt);
+    rl::ClearBackground(rl::BLACK);
+    rl::BeginShaderMode(sh_blur);
+    rl::DrawTexturePro(bloom_blur_h_rt.texture,
+        rl::Rectangle{x: 0.0, y: 0.0, width: (float)bw, height: (float)(-bh)},
+        rl::Rectangle{x: 0.0, y: 0.0, width: (float)bw, height: (float)bh},
+        rl::Vector2{x: 0.0, y: 0.0}, 0.0, rl::WHITE);
+    rl::EndShaderMode();
+    rl::EndTextureMode();
+    
+    // --- Pass 4: Composite (scene + bloom) ---
+    // Bind the bloom texture to texture slot 1
+    let bloom_tex_slot = 1;
+    if loc_composite_bloom_tex != -1 { rl::SetShaderValue(sh_composite, loc_composite_bloom_tex, &bloom_tex_slot, rl::SHADER_UNIFORM_INT); }
+    
+    rl::BeginShaderMode(sh_composite);
+    rl::SetShaderValueTexture(sh_composite, loc_composite_bloom_tex, bloom_blur_v_rt.texture);
+    rl::DrawTexturePro(bloom_scene_rt.texture,
+        rl::Rectangle{x: 0.0, y: 0.0, width: (float)sw, height: (float)(-sh_h)},
+        rl::Rectangle{x: 0.0, y: 0.0, width: (float)sw, height: (float)sh_h},
+        rl::Vector2{x: 0.0, y: 0.0}, 0.0, rl::WHITE);
+    rl::EndShaderMode();
+}
+
+fn get_bloom_scene_rt() -> rl::RenderTexture2D { return bloom_scene_rt; }
+fn is_bloom_ready() -> int { return bloom_initialized; }

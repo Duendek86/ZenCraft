@@ -105,15 +105,28 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                 rl::rlSetBlendMode(rl::BLEND_ADDITIVE); 
                 rl::rlDisableDepthMask();
                 
-                rl::DrawCylinderEx(start_pos, end_pos, 0.06, 0.1, 8, outer_col);
-                rl::DrawCylinderEx(start_pos, end_pos, 0.02, 0.03, 8, core_col);
+                // 4-layer beam for bloom: wide glow → outer → inner → white hot core
+                rl::DrawCylinderEx(start_pos, end_pos, 0.25, 0.30, 8, rl::Color{r: 0, g: 80, b: 0, a: 40});
+                rl::DrawCylinderEx(start_pos, end_pos, 0.12, 0.18, 8, rl::Color{r: 0, g: 200, b: 50, a: 120});
+                rl::DrawCylinderEx(start_pos, end_pos, 0.06, 0.10, 8, rl::Color{r: 100, g: 255, b: 100, a: 200});
+                rl::DrawCylinderEx(start_pos, end_pos, 0.02, 0.03, 8, rl::Color{r: 255, g: 255, b: 255, a: 255});
                 
-                // Spawn some reverse particles from the crystal to the player
-                if rl::GetRandomValue(0, 10) < 5 {
+                // Dense particle spawning along beam path
+                let dx = end_pos.x - start_pos.x; let dy = end_pos.y - start_pos.y; let dz = end_pos.z - start_pos.z;
+                for pi in 0..3 {
+                    let t = (float)rl::GetRandomValue(0, 100) / 100.0;
+                    let px = start_pos.x + dx * t + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.3;
+                    let py = start_pos.y + dy * t + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.3;
+                    let pz = start_pos.z + dz * t + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.3;
+                    spawn_particle(px, py, pz, rl::Color{r: 50, g: 255, b: 100, a: 255});
+                }
+                
+                // Impact burst at crystal
+                if rl::GetRandomValue(0, 10) < 6 {
                     spawn_particle(end_pos.x + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.5, 
                                    end_pos.y + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.5, 
                                    end_pos.z + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.5, 
-                                   rl::Color{r: 50, g: 255, b: 50, a: 255});
+                                   rl::Color{r: 150, g: 255, b: 150, a: 255});
                 }
                 
                 rl::rlEnableDepthMask();
@@ -178,10 +191,31 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                     rl::rlSetBlendMode(rl::BLEND_ADDITIVE); 
                     rl::rlDisableDepthMask();
                     
-                    // Thick energy aura
-                    rl::DrawCylinderEx(start_pos, end_pos, 0.08, 0.15, 8, outer_col);
-                    // Hot core
-                    rl::DrawCylinderEx(start_pos, end_pos, 0.02, 0.04, 8, core_col);
+                    // 4-layer beam: wide glow → outer → inner → white hot core  
+                    rl::DrawCylinderEx(start_pos, end_pos, 0.20, 0.25, 8, rl::Color{r: 0, g: 60, b: 120, a: 30});
+                    rl::DrawCylinderEx(start_pos, end_pos, 0.10, 0.15, 8, rl::Color{r: 0, g: 150, b: 255, a: 120});
+                    rl::DrawCylinderEx(start_pos, end_pos, 0.04, 0.08, 8, rl::Color{r: 100, g: 220, b: 255, a: 200});
+                    rl::DrawCylinderEx(start_pos, end_pos, 0.015, 0.03, 8, rl::Color{r: 255, g: 255, b: 255, a: 255});
+                    
+                    // Dense particle spawning along beam
+                    let bdx = end_pos.x - start_pos.x; let bdy = end_pos.y - start_pos.y; let bdz = end_pos.z - start_pos.z;
+                    if rl::GetRandomValue(0, 10) < 7 {
+                        for pi in 0..2 {
+                            let t = (float)rl::GetRandomValue(0, 100) / 100.0;
+                            let bpx = start_pos.x + bdx * t + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.2;
+                            let bpy = start_pos.y + bdy * t + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.2;
+                            let bpz = start_pos.z + bdz * t + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.2;
+                            spawn_particle(bpx, bpy, bpz, rl::Color{r: 100, g: 200, b: 255, a: 255});
+                        }
+                    }
+                    
+                    // Impact particles at target block
+                    if hit.hit == 1 && rl::GetRandomValue(0, 10) < 6 {
+                        spawn_particle(end_pos.x + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.4, 
+                                       end_pos.y + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.4, 
+                                       end_pos.z + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.4, 
+                                       rl::Color{r: 200, g: 230, b: 255, a: 255});
+                    }
                     
                     rl::rlEnableDepthMask();
                     rl::rlSetBlendMode(rl::BLEND_ALPHA);

@@ -44,13 +44,16 @@ void main()
     // Aplicamos el MISMO movimiento físico suave a AMBOS tipos de agua
     // para evitar que se separen los vértices en las uniones.
     if (uUseEntityLight == 0 && vertexColor.b > 0.7) {
-        // Onda grande y lenta (mar de fondo)
-        float swell = sin(worldPosCalculated.x * 0.3 + time * 0.5) * 0.03;
-        // Onda pequeña cruzada
-        float chop = cos(worldPosCalculated.z * 0.5 + time * 0.8) * 0.03;
+        // Large ocean swell
+        float swell = sin(worldPosCalculated.x * 0.25 + time * 0.6) * 0.045;
+        // Cross wave
+        float chop = cos(worldPosCalculated.z * 0.4 + time * 0.9) * 0.03;
+        // Fast ripples 
+        float ripple = sin(worldPosCalculated.x * 2.0 + worldPosCalculated.z * 1.5 + time * 3.0) * 0.012;
+        // Diagonal wave
+        float diag = sin((worldPosCalculated.x + worldPosCalculated.z) * 0.6 + time * 1.2) * 0.02;
         
-        // Movimiento vertical suave
-        pos.y += swell + chop;
+        pos.y += swell + chop + ripple + diag;
     }
     
     fragPosition = vec3(matModel * vec4(pos, 1.0));

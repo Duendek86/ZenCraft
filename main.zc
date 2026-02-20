@@ -42,8 +42,9 @@ import "player_interaction.zc";
 import "game_loading.zc";
 import "game_ui.zc";
 import "player_interaction.zc";
+import "bloom.zc";
 
-def VERSION_TEXT = "v0.0.1.12 alpha-dev";
+def VERSION_TEXT = "v0.0.1.14 alpha-dev";
 def MAX_ZIBIS = 10;
 def SAVE_DIR = "world";
 
@@ -60,6 +61,7 @@ fn main() {
 
     init_textures();
     init_clouds();
+    init_bloom(SCREEN_WIDTH, SCREEN_HEIGHT);
     
     // Array de chunks usando nuestro wrapper seguro
     let chunks = (Chunk*)sys_zdebug_malloc(sizeof(Chunk) * MAX_CHUNKS);
@@ -300,7 +302,7 @@ fn main() {
                 if show_settings { rl::EnableCursor(); } else { rl::DisableCursor(); }
             }
             
-            day_time = day_time + (dt / 2400.0); // 2400 seconds total for a full day+night cycle
+            day_time = day_time + (dt / 240.0); // 240 seconds total for a full day+night cycle
             if day_time > 1.0 { day_time = day_time - 1.0; }
             update_day_night_cycle(day_time);
             
@@ -314,6 +316,11 @@ fn main() {
             else if day_time < 0.5 { sky_r = 135; sky_g = 206; sky_b = 235; }
             else if day_time < 0.666 { let t = (day_time - 0.5) / 0.166; sky_r = (int)(135.0 * (1.0 - t)); sky_g = (int)(206.0 * (1.0 - t)); sky_b = (int)(235.0 * (1.0 - t) + 5.0 * t); }
 
+            rl::ClearBackground(rl::Color{r: sky_r, g: sky_g, b: sky_b, a: 255});
+            draw_sky(p.camera, day_time); draw_clouds(p.camera, wind_time, day_time);
+    
+            // --- Begin bloom scene capture ---
+            bloom_begin();
             rl::ClearBackground(rl::Color{r: sky_r, g: sky_g, b: sky_b, a: 255});
             draw_sky(p.camera, day_time); draw_clouds(p.camera, wind_time, day_time);
     
@@ -512,6 +519,9 @@ fn main() {
             }
             
             rl::EndMode3D();
+            
+            // --- End bloom scene capture and composite ---
+            bloom_end_and_draw();
             
             (&p).draw_arm((float)rl::GetTime());
             draw_hud(&p, selected_block, VERSION_TEXT);

@@ -115,64 +115,71 @@ void main()
 
     if (isWater) {
         // ==========================================
-        // ILUMINACIÓN DE AGUA AVANZADA
+        // WATER RENDERING - ENHANCED
         // ==========================================
         
-        // 1. Detectar tipo de agua
-        // Si el azul está entre 0.7 y 0.85 es flujo, si es > 0.9 es estática
+        // 1. Detect water type
         bool isFlowing = (fragColor.b < 0.85);
         
-        // 2. Obtener Normal del Agua (Unificada pero con comportamiento distinto)
+        // 2. Get water normal
         vec3 waterNormal = getWaterNormal(vWorldPos, time, isFlowing);
         
-        // Si es flujo, añadimos un poco de espuma simulada basada en la altura de la ola
+        // Foam on flowing water crests
         float foam = 0.0;
         if (isFlowing) {
-            foam = smoothstep(0.4, 0.7, waterNormal.y); // Crestas de olas más blancas
+            foam = smoothstep(0.35, 0.65, waterNormal.y);
         }
         
-        // 3. Colores Base (Gradient profundo)
-        // Agua profunda oscura y superficie más clara turquesa
-        vec3 colDeep = vec3(0.02, 0.05, 0.15);  // Azul marino oscuro
-        vec3 colShallow = vec3(0.0, 0.35, 0.5); // Turquesa
-        if (isFlowing) colShallow = vec3(0.2, 0.5, 0.6); // Flujo un poco más claro/espumoso
+        // 3. Enhanced water colors
+        vec3 colDeep = vec3(0.01, 0.04, 0.12);     // Deep navy
+        vec3 colShallow = vec3(0.05, 0.30, 0.45);   // Rich turquoise
+        if (isFlowing) colShallow = vec3(0.15, 0.45, 0.55);
         
-        // Mezcla basada en la normal (falso efecto de profundidad)
+        // Depth variation based on normal
         vec3 albedo = mix(colDeep, colShallow, waterNormal.y * 0.5 + 0.5);
         
-        // Añadir espuma en el flujo
-        if (isFlowing) albedo = mix(albedo, vec3(0.9, 0.95, 1.0), foam * 0.3);
+        // Foam whitening
+        if (isFlowing) albedo = mix(albedo, vec3(0.8, 0.9, 1.0), foam * 0.35);
 
-        // 4. Especular (El brillo del sol - Crucial para que se vea bien)
+        // 4. STRONG Sun Specular (visible sun stars on water)
         vec3 halfwayDir = normalize(lightDir + viewDir);
-        float specStrength = 1.0;
-        float shininess = 128.0; // Cuanto más alto, más pequeño y nítido el punto de luz
-        float spec = pow(max(dot(waterNormal, halfwayDir), 0.0), shininess);
-        vec3 specularColor = uLightCol * spec * specStrength;
+        float spec = pow(max(dot(waterNormal, halfwayDir), 0.0), 256.0);
+        vec3 specularColor = uLightCol * spec * 2.0;
+        
+        // Secondary wider specular for soft glow
+        float spec2 = pow(max(dot(waterNormal, halfwayDir), 0.0), 32.0);
+        specularColor += uLightCol * spec2 * 0.3;
 
-        // 5. Efecto Fresnel (Reflexión angular)
-        // Si miras perpendicular (abajo), ves el fondo (transparente).
-        // Si miras rasante, ves el cielo (reflejo).
+        // 5. Fresnel
         float fresnel = pow(1.0 - max(dot(viewDir, waterNormal), 0.0), 4.0);
         
-        // Color del cielo aproximado (dinámico según el sol)
-        // Usamos uLightCol (color del sol) para que de noche sea oscuro
         vec3 skyColor = uLightCol * vec3(0.4, 0.6, 0.9); 
         
-        // Mezclamos el color base del agua con el reflejo del cielo según Fresnel
-        vec3 waterFinal = mix(albedo * (uAmbient + 0.05), skyColor, fresnel * 0.6);
+        // Mix water base with sky reflection via Fresnel
+        vec3 waterFinal = mix(albedo * (uAmbient + 0.05), skyColor, fresnel * 0.65);
         
-        // Añadimos el brillo del sol encima
+        // Add sun specular on top
         waterFinal += specularColor;
         
-        // Iluminación básica de sombras (Sky light attenuation)
-        float skyLight = pow(fragColor.g, 2.0); // Canal verde es luz de cielo
-        waterFinal *= max(skyLight, 0.1); // Nunca totalmente negro
+        // 6. Crystal glow on water too
+        vec3 crystalGlow = vec3(0.0);
+        for(int i=0; i<uCrystalCount; i++) {
+             float dist = distance(vWorldPos, uCrystalPoints[i]);
+             if (dist < 10.0) {
+                 float intensity = pow(1.0 - (dist / 10.0), 2.0) * 0.5;
+                 crystalGlow += vec3(0.1, 0.8, 0.3) * intensity;
+             }
+        }
+        waterFinal += crystalGlow;
+        
+        // Sky light attenuation
+        float skyLight = pow(fragColor.g, 2.0);
+        waterFinal *= max(skyLight, 0.1);
 
         resultColor = waterFinal;
         
-        // Ajuste de Alpha: Más transparente en el centro, más opaco en ángulos rasantes
-        finalAlpha = clamp(0.4 + fresnel * 0.5 + foam * 0.3, 0.0, 1.0);
+        // Alpha: more opaque at grazing angles, more transparent looking down
+        finalAlpha = clamp(0.45 + fresnel * 0.5 + foam * 0.25, 0.0, 0.92);
         
     } else {
         // ==========================================

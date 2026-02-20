@@ -12,8 +12,8 @@ struct Particle {
     active: int;
 }
 
-def MAX_PARTICLES = 500;
-let particles: Particle[500];
+def MAX_PARTICLES = 1000;
+let particles: Particle[1000];
 
 fn init_particles() {
     for i in 0..MAX_PARTICLES {
@@ -34,11 +34,11 @@ fn spawn_particle(x: float, y: float, z: float, color: rl::Color) {
             particles[i].vy = ((float)rl::GetRandomValue(-50, 200) / 100.0) * 3.0; 
             particles[i].vz = ((float)rl::GetRandomValue(-100, 100) / 100.0) * 4.0;
             
-            particles[i].life = 1.0; // 1 second
+            particles[i].life = 0.6; // Short life for sparkle effect
             particles[i].color = color;
             
             // Unified RNG (No more rand() from C)
-            particles[i].size = 0.1 + ((float)rl::GetRandomValue(0, 10) / 50.0);
+            particles[i].size = 0.05 + ((float)rl::GetRandomValue(0, 10) / 100.0);
             particles[i].active = 1;
             return;
         }
@@ -58,9 +58,17 @@ fn update_particles(dt: float) {
            particles[i].y = particles[i].y + (particles[i].vy * dt);
            particles[i].z = particles[i].z + (particles[i].vz * dt);
            
-           particles[i].vy = particles[i].vy - (9.0 * dt); // Gravity
+           particles[i].vy = particles[i].vy - (6.0 * dt); // Lighter gravity
            
-           particles[i].life = particles[i].life - (dt * 1.5); // Fade faster
+           // Air friction
+           particles[i].vx = particles[i].vx * (1.0 - 2.0 * dt);
+           particles[i].vz = particles[i].vz * (1.0 - 2.0 * dt);
+           
+           // Shrink over time
+           particles[i].size = particles[i].size * (1.0 - 1.5 * dt);
+           if particles[i].size < 0.01 { particles[i].size = 0.01; }
+           
+           particles[i].life = particles[i].life - (dt * 2.5); // Faster fade
            if particles[i].life <= 0.0 {
                particles[i].active = 0;
            }

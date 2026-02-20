@@ -36,25 +36,27 @@ void main()
     float n1 = noise(flowPos);
     float n2 = noise(flowPos * 2.5 + vec3(time * 5.0, 0.0, time * 2.0));
     
-    // Core energy stream
-    float energy = pow(n1 * 0.6 + n2 * 0.4, 1.5) * 2.5;
+    // Core energy stream - boosted for HDR/bloom
+    float energy = pow(n1 * 0.6 + n2 * 0.4, 1.2) * 3.5;
     
     // Oscillating pulse
     float pulse = sin(worldPos.y * 5.0 - time * 20.0) * 0.5 + 0.5;
-    energy *= 0.5 + 0.5 * pulse;
+    energy *= 0.6 + 0.4 * pulse;
     
     // Base color from vertex (used for outer/core distinction)
     vec3 baseCol = fragColor.rgb;
     
-    vec3 finalGlow = baseCol + vec3(0.5, 0.8, 1.0) * energy;
+    // HDR glow - multiply beyond 1.0 for bloom to pick up
+    vec3 energyColor = vec3(0.3, 0.8, 1.0) * energy;
+    vec3 finalGlow = baseCol * 1.5 + energyColor;
     
     // Add white hot core where energy is highest
-    if(energy > 1.2) {
-        finalGlow = mix(finalGlow, vec3(1.0, 1.0, 1.0), (energy - 1.2) * 2.0);
+    if(energy > 1.0) {
+        finalGlow = mix(finalGlow, vec3(2.0, 2.5, 3.0), (energy - 1.0) * 0.5);
     }
     
     // Soft transparent edges based on energy
-    float alpha = clamp(fragColor.a * (0.3 + energy * 0.8), 0.0, 1.0);
+    float alpha = clamp(fragColor.a * (0.4 + energy * 0.7), 0.0, 1.0);
     
     finalColor = vec4(finalGlow, alpha);
 }
