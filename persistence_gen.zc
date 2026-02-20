@@ -169,37 +169,48 @@ fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
 
                 if place_tree { 
                      // Smaller Trees: Trunk 3-5 blocks
-                     if cx > 2 && cx < 13 && cz > 2 && cz < 13 {
-                        // Tree
-                        let th = 3 + (my_rand(&seed) % 3); // 3, 4, 5
-                        for i in 0..th {
-                            if h+1+i < CHUNK_HEIGHT {
-                                data.blocks[cx][h+1+i][cz] = BLOCK_LOG;
+                     if cx >= 2 && cx <= 13 && cz >= 2 && cz <= 13 {
+                        let rng_tree = (cx * 31 + cz * 17 + x * 101) % 5;
+                        let tree_h = 5 + (rng_tree % 4);
+                        
+                        // Trunk
+                        for th in 0..tree_h {
+                            if h + 1 + th < CHUNK_HEIGHT { 
+                                 data.blocks[cx][h + 1 + th][cz] = BLOCK_LOG; 
                             }
                         }
-                        // Leaves (Classic Minecraft Style - 5x5 at bottom, 3x3 at top)
-                        let leaves_start = h + th - 2; // Start leaves 2 blocks below top
-                        let leaves_end = h + th + 1;   // 1 block above top
                         
-                        for ly in leaves_start..leaves_end {
-                             if ly >= CHUNK_HEIGHT { continue; }
-                             
-                             let radius = 2;
-                             if ly == leaves_end - 1 { radius = 1; } // Top layer narrower
-                             if ly == leaves_end { radius = 1; } // Very top
-                             
-                             for lx in (cx-radius)..(cx+radius+1) {
-                                 for lz in (cz-radius)..(cz+radius+1) {
-                                     // Skip corners for rounded look (optional)
-                                     let dx = lx - cx;
-                                     let dz = lz - cz;
-                                     if (dx*dx + dz*dz) > (radius*radius + 1) { continue; }
+                        // 4 layers of leaves
+                        let top = h + 1 + tree_h;
+                        for ly in 0..4 {
+                            let radius = 2;
+                            if ly == 0 || ly == 3 { radius = 1; }
+                            
+                            for lx in -radius..radius+1 {
+                                for lz in -radius..radius+1 {
+                                     // Cut corners
+                                     if radius == 2 && abs(lx) == 2 && abs(lz) == 2 { continue; }
+                                     if lx == 0 && lz == 0 && ly < 3 { continue; } // Trunk
                                      
-                                     if data.blocks[lx][ly][lz] == BLOCK_AIR {
-                                         data.blocks[lx][ly][lz] = BLOCK_LEAVES;
+                                     // Height limit
+                                     if (top - ly) <= (h + 2) { continue; }
+                                     
+                                     let tx = cx + lx;
+                                     let tz = cz + lz;
+                                     let ty = top - ly;
+                                     
+                                     if tx >= 0 && tx < 16 && tz >= 0 && tz < 16 && ty < CHUNK_HEIGHT {
+                                         if data.blocks[tx][ty][tz] == BLOCK_AIR {
+                                             data.blocks[tx][ty][tz] = BLOCK_LEAVES;
+                                         }
                                      }
-                                 }
-                             }
+                                }
+                            }
+                        }
+                        
+                        // Top cap cross
+                        if top + 1 < CHUNK_HEIGHT {
+                             if data.blocks[cx][top+1][cz] == BLOCK_AIR { data.blocks[cx][top+1][cz] = BLOCK_LEAVES; }
                         }
                     }
                 }

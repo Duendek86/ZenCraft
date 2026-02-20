@@ -7,8 +7,8 @@ import "persistence.zc";
 
 fn draw_hud(p: Player*, selected_block: int, version: char*) {
     raw { rlDisableDepthTest(); }
-    let sw = rl::GetScreenWidth(); let sh = rl::GetScreenHeight();
-    let cx = sw / 2; let cy = sh / 2;
+    let screen_w = rl::GetScreenWidth(); let screen_h = rl::GetScreenHeight();
+    let cx = screen_w / 2; let cy = screen_h / 2;
     
     // Crosshair
     rl::DrawRectangle(cx - 6, cy - 2, 12, 4, rl::BLACK);
@@ -20,7 +20,7 @@ fn draw_hud(p: Player*, selected_block: int, version: char*) {
     
     // Stats Bars
     let bar_w = 200; let bar_h = 20; let bar_x = 20;
-    let bar_y_health = sh - 50; let bar_y_mana = sh - 25;
+    let bar_y_health = screen_h - 50; let bar_y_mana = screen_h - 25;
     
     rl::DrawRectangle(bar_x, bar_y_health, bar_w, bar_h, rl::GRAY);
     rl::DrawRectangle(bar_x, bar_y_health, (int)((float)bar_w * (p.health / 100.0)), bar_h, rl::RED);
@@ -33,7 +33,7 @@ fn draw_hud(p: Player*, selected_block: int, version: char*) {
     rl::DrawText(rl::TextFormat("%.0f", p.mana), bar_x + 5, bar_y_mana + 2, 20, rl::WHITE);
 
     let v_width = rl::MeasureText(version, 20);
-    rl::DrawText(version, sw - v_width - 10, 10, 20, rl::WHITE);
+    rl::DrawText(version, screen_w - v_width - 10, 10, 20, rl::WHITE);
 
     rl::DrawText("Select: 1-8", 10, 60, 20, rl::WHITE);
     rl::DrawText(rl::TextFormat("Block: %d", selected_block), 10, 90, 20, rl::WHITE);
@@ -74,43 +74,77 @@ fn draw_debug_info(p: Player*, chunks: Chunk*, dt: float, day_time: float, draw_
 }
 
 fn draw_settings_menu(draw_distance: int*, grass_dist: float*) {
-    let sw = rl::GetScreenWidth(); let sh = rl::GetScreenHeight();
+    let screen_w = rl::GetScreenWidth(); let screen_h = rl::GetScreenHeight();
     let mx = rl::GetMouseX(); let my = rl::GetMouseY();
     let clicked = rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_LEFT);
+    let click_held = rl::IsMouseButtonDown(rl::MOUSE_BUTTON_LEFT);
     
-    let menu_x = sw/2 - 150; let menu_y = sh/2 - 100;
-    let menu_w = 300; let menu_h = 200;
+    // Centered, larger main panel
+    let menu_w = 400; let menu_h = 240;
+    let menu_x = screen_w/2 - menu_w/2; let menu_y = screen_h/2 - menu_h/2;
     
-    rl::DrawRectangle(menu_x, menu_y, menu_w, menu_h, rl::Color{r: 0, g: 0, b: 0, a: 200});
-    rl::DrawRectangleLines(menu_x, menu_y, menu_w, menu_h, rl::WHITE);
-    rl::DrawText("CONFIGURATION", menu_x + 80, menu_y + 10, 20, rl::WHITE);
+    // Background with soft gradient (simulated via semi-transparent rectangles)
+    rl::DrawRectangle(menu_x, menu_y, menu_w, menu_h, rl::Color{r: 30, g: 30, b: 35, a: 230});
+    rl::DrawRectangleLines(menu_x, menu_y, menu_w, menu_h, rl::Color{r: 100, g: 100, b: 110, a: 255});
+    rl::DrawRectangleLines(menu_x - 1, menu_y - 1, menu_w + 2, menu_h + 2, rl::BLACK); // Shadow border
     
-    rl::DrawText("Grass Deco:", menu_x + 20, menu_y + 50, 20, rl::WHITE);
+    // Header
+    rl::DrawRectangle(menu_x, menu_y, menu_w, 40, rl::Color{r: 45, g: 45, b: 55, a: 255});
+    rl::DrawText("GAME SETTINGS", menu_x + menu_w/2 - rl::MeasureText("GAME SETTINGS", 20)/2, menu_y + 10, 20, rl::RAYWHITE);
+    rl::DrawLine(menu_x, menu_y + 40, menu_x + menu_w, menu_y + 40, rl::Color{r: 100, g: 100, b: 110, a: 255});
+    
+    // --- Grass Deco Toggle ---
+    rl::DrawText("Grass Decorations", menu_x + 30, menu_y + 80, 20, rl::LIGHTGRAY);
     let is_on = *grass_dist > 0.1;
-    let btn_col = rl::RED; let btn_text = "OFF";
-    if is_on { btn_col = rl::LIME; btn_text = "ON"; }
     
-    rl::DrawRectangle(menu_x + 180, menu_y + 45, 60, 30, btn_col);
-    rl::DrawText(btn_text, menu_x + 195, menu_y + 50, 20, rl::BLACK);
+    let btn_grass_rect = rl::Rectangle{x: (float)(menu_x + 280), y: (float)(menu_y + 75), width: 80.0, height: 30.0};
+    let btn_grass_hover = rl::CheckCollisionPointRec(rl::Vector2{x: (float)mx, y: (float)my}, btn_grass_rect);
     
-    if clicked == 1 && mx >= menu_x + 180 && mx <= menu_x + 240 && my >= menu_y + 45 && my <= menu_y + 75 {
-        if is_on { *grass_dist = 0.0; } else { *grass_dist = 2000.0; }
+    let g_col = rl::RED; let g_text = "OFF";
+    if is_on { g_col = rl::LIME; g_text = "ON"; }
+    
+    // Button background & hover effect
+    if btn_grass_hover { rl::DrawRectangleRec(btn_grass_rect, rl::ColorTint(g_col, rl::WHITE)); }
+    else { rl::DrawRectangleRec(btn_grass_rect, g_col); }
+    
+    rl::DrawRectangleLinesEx(btn_grass_rect, 2.0, rl::BLACK);
+    rl::DrawText(g_text, (int)btn_grass_rect.x + 40 - rl::MeasureText(g_text, 18)/2, (int)btn_grass_rect.y + 6, 18, rl::BLACK);
+    
+    if clicked == 1 && btn_grass_hover {
+        if is_on { *grass_dist = 0.0; } else { *grass_dist = 64.0; } // Safe grass distance
     }
     
-    rl::DrawText("Render Distance:", menu_x + 20, menu_y + 90, 20, rl::WHITE);
-    rl::DrawText(rl::TextFormat("%d", *draw_distance), menu_x + 180, menu_y + 90, 20, rl::WHITE);
+    // --- Render Distance ---
+    rl::DrawText("Render Distance", menu_x + 30, menu_y + 130, 20, rl::LIGHTGRAY);
+    rl::DrawText(rl::TextFormat("%d Chunks", *draw_distance), menu_x + 30, menu_y + 155, 15, rl::GRAY);
     
-    rl::DrawRectangle(menu_x + 150, menu_y + 90, 20, 20, rl::GRAY);
-    rl::DrawText("-", menu_x + 155, menu_y + 90, 20, rl::WHITE);
-    if clicked == 1 && mx >= menu_x + 150 && mx <= menu_x + 170 && my >= menu_y + 90 && my <= menu_y + 110 {
-        if *draw_distance > 2 { *draw_distance = *draw_distance - 1; }
+    let btn_minus_rect = rl::Rectangle{x: (float)(menu_x + 240), y: (float)(menu_y + 125), width: 40.0, height: 40.0};
+    let btn_plus_rect = rl::Rectangle{x: (float)(menu_x + 320), y: (float)(menu_y + 125), width: 40.0, height: 40.0};
+    
+    let minus_hover = rl::CheckCollisionPointRec(rl::Vector2{x: (float)mx, y: (float)my}, btn_minus_rect);
+    let plus_hover = rl::CheckCollisionPointRec(rl::Vector2{x: (float)mx, y: (float)my}, btn_plus_rect);
+    
+    // Minus Button
+    if minus_hover { rl::DrawRectangleRec(btn_minus_rect, rl::LIGHTGRAY); } else { rl::DrawRectangleRec(btn_minus_rect, rl::GRAY); }
+    rl::DrawRectangleLinesEx(btn_minus_rect, 2.0, rl::BLACK);
+    rl::DrawText("-", (int)btn_minus_rect.x + 20 - rl::MeasureText("-", 20)/2, (int)btn_minus_rect.y + 10, 20, rl::BLACK);
+    
+    // Plus Button
+    if plus_hover { rl::DrawRectangleRec(btn_plus_rect, rl::LIGHTGRAY); } else { rl::DrawRectangleRec(btn_plus_rect, rl::GRAY); }
+    rl::DrawRectangleLinesEx(btn_plus_rect, 2.0, rl::BLACK);
+    rl::DrawText("+", (int)btn_plus_rect.x + 20 - rl::MeasureText("+", 20)/2, (int)btn_plus_rect.y + 10, 20, rl::BLACK);
+    
+    // Current Value display
+    rl::DrawText(rl::TextFormat("%d", *draw_distance), (int)btn_minus_rect.x + 55, (int)btn_minus_rect.y + 10, 20, rl::WHITE);
+    
+    if clicked == 1 {
+        if minus_hover && *draw_distance > 2 { *draw_distance = *draw_distance - 1; }
+        // Clamp to 10 to prevent exceeding 1024 MAX_CHUNKS (10 radius = 21x21 = 441 chunks)
+        // With unload_dist = 12 -> 25x25 = 625 slots needed. Very safe.
+        if plus_hover && *draw_distance < 10 { *draw_distance = *draw_distance + 1; }
     }
     
-    rl::DrawRectangle(menu_x + 210, menu_y + 90, 20, 20, rl::GRAY);
-    rl::DrawText("+", menu_x + 215, menu_y + 90, 20, rl::WHITE);
-    if clicked == 1 && mx >= menu_x + 210 && mx <= menu_x + 230 && my >= menu_y + 90 && my <= menu_y + 110 {
-        if *draw_distance < 15 { *draw_distance = *draw_distance + 1; }
-    }
-    
-    rl::DrawText("F1 to Close", menu_x + 100, menu_y + 170, 10, rl::GRAY);
+    // --- Footer ---
+    rl::DrawLine(menu_x, menu_y + menu_h - 40, menu_x + menu_w, menu_y + menu_h - 40, rl::Color{r: 100, g: 100, b: 110, a: 255});
+    rl::DrawText("Press F1 to Resume", menu_x + menu_w/2 - rl::MeasureText("Press F1 to Resume", 15)/2, menu_y + menu_h - 25, 15, rl::GRAY);
 }

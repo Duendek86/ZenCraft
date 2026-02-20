@@ -165,65 +165,39 @@ impl Zibi {
 
     fn draw(self, chunks: Chunk*, num_chunks: int, day_time: float) {
         if self.active == 0 { return; }
-        
-        // --- ZIBI RENDERING (SHREK STYLE) ---
+        // --- ZIBI RENDERING ---
         
         // --- Lighting Calc ---
         let lx = (int)floor(self.x);
         let ly = (int)floor(self.y + 0.8);
         let lz = (int)floor(self.z);
-        
         let packed_light = get_light_levels(chunks, num_chunks, lx, ly, lz);
-        let block_light = (float)(packed_light & 0xF);
-        let sky_light = (float)((packed_light >> 4) & 0xF);
         
-        let sun_str = 0.0;
+        // Base Colors mapped for DrawCube
+        let c_skin = rl::Color{ r: 108, g: 202, b: 85, a: 255 };
+        let c_tunic = rl::Color{ r: 141, g: 90, b: 50, a: 255 };
+        let c_pants = rl::Color{ r: 75, g: 50, b: 41, a: 255 };
+        let c_shoes = rl::Color{ r: 56, g: 94, b: 46, a: 255 };
+        let c_white = rl::WHITE;
         
-        if day_time < 0.5 { // Dawn -> Sunset
-             if day_time < 0.166 { 
-                 sun_str = 0.05 + (day_time/0.166)*0.95; 
-             }
-             else if day_time < 0.5 { 
-                 sun_str = 1.0;
-             }
-             else if day_time < 0.666 { 
-                 sun_str = 1.0 - ((day_time-0.5)/0.166)*0.99;
-             }
-             else { 
-                 sun_str = 0.01;
-             }
-        } else {
-             // Fallback/Safety
-             if day_time < 0.666 { sun_str = 0.05; }
-             else { sun_str = 0.01; }
-        }
+        let sh = get_shader_lighting();
+        let loc_use_entity = rl::GetShaderLocation(sh, "uUseEntityLight");
+        let loc_entity_light = rl::GetShaderLocation(sh, "uEntityLight");
         
-        // Combine lights
-        let effective_sky = (sky_light / 15.0) * sun_str;
-        let effective_block = (block_light / 15.0);
-        effective_block = (float)pow(effective_block, 1.2);
+        rl::BeginShaderMode(sh);
         
-        let intensity = effective_sky + effective_block;
-        if intensity > 1.0 { intensity = 1.0; }
-        if intensity < 0.001 { intensity = 0.001; } // Minimum ambient (Darker)
-        
-        // Colors based on the image
-        let c_skin = rl::Color{ r: (int)(104.0*intensity), g: (int)(194.0*intensity), b: (int)(58.0*intensity), a: 255 };
-        let c_tunic = rl::Color{ r: (int)(120.0*intensity), g: (int)(86.0*intensity), b: (int)(50.0*intensity), a: 255 };
-        let c_pants = rl::Color{ r: (int)(56.0*intensity), g: (int)(42.0*intensity), b: (int)(29.0*intensity), a: 255 };
-        let c_white = rl::Color{ r: (int)(255.0*intensity), g: (int)(255.0*intensity), b: (int)(255.0*intensity), a: 255 };
-        let c_black = rl::BLACK;
+        let use_ent = 1;
+        if loc_use_entity != -1 { rl::SetShaderValue(sh, loc_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+        let el = rl::Vector2{x: (float)(packed_light & 0xF) / 15.0, y: (float)((packed_light >> 4) & 0xF) / 15.0};
+        if loc_entity_light != -1 { rl::SetShaderValue(sh, loc_entity_light, &el, rl::SHADER_UNIFORM_VEC2); }
         
         // Animation variables
         let limb_swing = 0.0;
         if self.state == 1 { 
-            // Fast oscillation for short steps
             limb_swing = (float)sin(self.anim_time * 12.0);
         }
 
         rl::rlPushMatrix();
-        
-        // Global Position and Rotation
         rl::rlTranslatef(self.x, self.y, self.z);
         rl::rlRotatef(self.yaw * 57.2958, 0.0, -1.0, 0.0);
         rl::rlScalef(0.5, 0.5, 0.5);
@@ -234,7 +208,7 @@ impl Zibi {
         rl::rlTranslatef(0.0, 0.6, 0.15);
         rl::rlRotatef(limb_swing * 40.0, 0.0, 0.0, 1.0);
         rl::DrawCube(rl::Vector3{x: 0.0, y: -0.3, z: 0.0}, 0.25, 0.6, 0.2, c_pants);
-        rl::DrawCube(rl::Vector3{x: 0.05, y: -0.65, z: 0.0}, 0.35, 0.1, 0.22, c_skin);
+        rl::DrawCube(rl::Vector3{x: 0.05, y: -0.65, z: 0.0}, 0.35, 0.1, 0.22, c_shoes);
         rl::rlPopMatrix();
         
         // Right Leg (-Z)
@@ -242,7 +216,7 @@ impl Zibi {
         rl::rlTranslatef(0.0, 0.6, -0.15);
         rl::rlRotatef(-limb_swing * 40.0, 0.0, 0.0, 1.0); 
         rl::DrawCube(rl::Vector3{x: 0.0, y: -0.3, z: 0.0}, 0.25, 0.6, 0.2, c_pants);
-        rl::DrawCube(rl::Vector3{x: 0.05, y: -0.65, z: 0.0}, 0.35, 0.1, 0.22, c_skin);
+        rl::DrawCube(rl::Vector3{x: 0.05, y: -0.65, z: 0.0}, 0.35, 0.1, 0.22, c_shoes);
         rl::rlPopMatrix();
 
         // --- 2. BODY (Tunic) ---
@@ -269,25 +243,31 @@ impl Zibi {
         let head_y = 1.55;
         rl::DrawCube(rl::Vector3{x: 0.0, y: head_y, z: 0.0}, 0.45, 0.55, 0.5, c_skin);
         
-        // Ears (Trumpets)
-        // Left (+Z)
-        rl::DrawCube(rl::Vector3{x: 0.0, y: head_y + 0.1, z: 0.3}, 0.08, 0.08, 0.2, c_skin);
+        // Orejas (Trompetas) - Lados Z
+        // Izquierda (+Z)
+        rl::DrawCube(rl::Vector3{x: 0.0, y: head_y + 0.1, z: 0.3}, 0.08, 0.08, 0.2, c_skin); 
         rl::DrawCube(rl::Vector3{x: 0.0, y: head_y + 0.1, z: 0.4}, 0.15, 0.15, 0.05, c_skin); 
-        // Right (-Z)
-        rl::DrawCube(rl::Vector3{x: 0.0, y: head_y + 0.1, z: -0.3}, 0.08, 0.08, 0.2, c_skin);
+        // Derecha (-Z)
+        rl::DrawCube(rl::Vector3{x: 0.0, y: head_y + 0.1, z: -0.3}, 0.08, 0.08, 0.2, c_skin); 
         rl::DrawCube(rl::Vector3{x: 0.0, y: head_y + 0.1, z: -0.4}, 0.15, 0.15, 0.05, c_skin); 
 
-        // Face (Eyes)
-        // Left Eye (+Z)
+        // Cara (Ojos) - Frente +X
+        // Ojo Izq (+Z side of face)
         rl::DrawCube(rl::Vector3{x: 0.23, y: head_y + 0.05, z: 0.12}, 0.05, 0.12, 0.12, c_white);
-        rl::DrawCube(rl::Vector3{x: 0.26, y: head_y + 0.05, z: 0.12}, 0.02, 0.04, 0.04, c_black); 
-        // Right Eye (-Z)
-        rl::DrawCube(rl::Vector3{x: 0.23, y: head_y + 0.05, z: -0.12}, 0.05, 0.12, 0.12, c_white);
-        rl::DrawCube(rl::Vector3{x: 0.26, y: head_y + 0.05, z: -0.12}, 0.02, 0.04, 0.04, c_black); 
+        rl::DrawCube(rl::Vector3{x: 0.26, y: head_y + 0.05, z: 0.12}, 0.02, 0.04, 0.04, c_shoes); 
         
-        // Mouth
-        rl::DrawCube(rl::Vector3{x: 0.23, y: head_y - 0.15, z: 0.0}, 0.02, 0.03, 0.2, c_pants);
+        // Ojo Der (-Z side of face)
+        rl::DrawCube(rl::Vector3{x: 0.23, y: head_y + 0.05, z: -0.12}, 0.05, 0.12, 0.12, c_white);
+        rl::DrawCube(rl::Vector3{x: 0.26, y: head_y + 0.05, z: -0.12}, 0.02, 0.04, 0.04, c_shoes); 
+
+        // Boca
+        rl::DrawCube(rl::Vector3{x: 0.235, y: head_y - 0.15, z: 0.0}, 0.03, 0.03, 0.2, c_shoes);
         
         rl::rlPopMatrix();
+        
+        rl::EndShaderMode();
+        
+        use_ent = 0;
+        if loc_use_entity != -1 { rl::SetShaderValue(sh, loc_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
     }
 }

@@ -73,10 +73,9 @@ fn get_block(chunks: Chunk*, num_chunks: int, x: int, y: int, z: int) -> int {
         return chunks[idx].blocks[lx][y][lz];
     }
     
-    // EL FIX MAESTRO: Si el bloque está fuera del mundo cargado, 
-    // devolvemos un bloque de "Barrera" (255) en lugar de Aire.
-    // Esto impide que el agua y la luz intenten calcularse hacia el infinito.
-    return 255; 
+    // EL FIX: Devolvemos Aire en lugar de barrera para que las caras 
+    // en los bordes de los chunks cargados (como la pantalla de título) se dibujen.
+    return BLOCK_AIR; 
 }
 
 fn set_block(chunks: Chunk*, num_chunks: int, x: int, y: int, z: int, type: int) {

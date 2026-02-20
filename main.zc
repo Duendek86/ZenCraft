@@ -42,7 +42,7 @@ import "game_loading.zc";
 import "game_ui.zc";
 import "player_interaction.zc";
 
-def VERSION_TEXT = "v0.0.1.9 alpha-dev";
+def VERSION_TEXT = "v0.0.1.10 alpha-dev";
 def MAX_ZIBIS = 10;
 def SAVE_DIR = "world";
 
@@ -299,7 +299,7 @@ fn main() {
                 if show_settings { rl::EnableCursor(); } else { rl::DisableCursor(); }
             }
             
-            day_time = day_time + (dt / 2400.0);
+            day_time = day_time + (dt / 120.0); // 120 seconds total for a full day+night cycle
             if day_time > 1.0 { day_time = day_time - 1.0; }
             update_day_night_cycle(day_time);
             
@@ -341,32 +341,34 @@ fn main() {
                     if dist_x <= draw_distance && dist_z <= draw_distance {
                          if c.skull_count > 0 {
                              let model = get_model_skull();
+                             
+                             let sh = get_shader_lighting();
+                             rl::BeginShaderMode(sh);
+                             
+                             
+
+                             let loc_entity_light = rl::GetShaderLocation(sh, "uEntityLight");
+                             let loc_use_entity   = rl::GetShaderLocation(sh, "uUseEntityLight");
+        
+                             let use_ent = 1;
+                             if loc_use_entity != -1 { rl::SetShaderValue(sh, loc_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+                             
                              for s in 0..c.skull_count {
-                                 let pos = rl::Vector3{x: (float)(c.x * 16) + c.skulls[s].x, y: c.skulls[s].y + 0.25, z: (float)(c.z * 16) + c.skulls[s].z};
+                                 let pos = rl::Vector3{x: (float)(c.x * 16) + c.skulls[s].x, y: c.skulls[s].y + 0.1, z: (float)(c.z * 16) + c.skulls[s].z};
                                  
-                                 // Lighting Calculation
                                  let lx = (int)floor(pos.x); let ly = (int)floor(pos.y); let lz = (int)floor(pos.z);
                                  let packed_light = get_light_levels(chunks, MAX_CHUNKS, lx, ly, lz);
-                                 let block_light = (float)(packed_light & 0xF);
-                                 let sky_light = (float)((packed_light >> 4) & 0xF);
                                  
-                                 let sun_str = 0.0;
-                                 if day_time < 0.5 { 
-                                     if day_time < 0.166 { sun_str = 0.05 + (day_time/0.166)*0.95; }
-                                     else if day_time < 0.5 { sun_str = 1.0; }
-                                 } else {
-                                     if day_time < 0.666 { sun_str = 1.0 - ((day_time-0.5)/0.166)*0.99; }
-                                     else { sun_str = 0.01; }
-                                 }
+                                 let el = rl::Vector2{x: (float)(packed_light & 0xF) / 15.0, y: (float)((packed_light >> 4) & 0xF) / 15.0};
+                                 if loc_entity_light != -1 { rl::SetShaderValue(sh, loc_entity_light, &el, rl::SHADER_UNIFORM_VEC2); }
                                  
-                                 let intensity = ((sky_light / 15.0) * sun_str) + (block_light / 15.0);
-                                 if intensity > 1.0 { intensity = 1.0; }
-                                 if intensity < 0.1 { intensity = 0.1; } // Min ambient
-                                 
-                                 let tint = rl::Color{r: (int)(255.0*intensity), g: (int)(255.0*intensity), b: (int)(255.0*intensity), a: 255};
-                                 
-                                 rl::DrawModelEx(model, pos, rl::Vector3{x: 0.0, y: 1.0, z: 0.0}, c.skulls[s].rotation, rl::Vector3{x: 1.0, y: 1.0, z: 1.0}, tint);
+                                 rl::DrawModelEx(model, pos, rl::Vector3{x: 0.0, y: 1.0, z: 0.0}, c.skulls[s].rotation, rl::Vector3{x: 1.0, y: 1.0, z: 1.0}, rl::WHITE);
                              }
+                             
+                             rl::EndShaderMode();
+                             
+                             use_ent = 0;
+                             if loc_use_entity != -1 { rl::SetShaderValue(sh, loc_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
                         }
                     }
                 }

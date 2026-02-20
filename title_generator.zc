@@ -165,7 +165,7 @@ fn generate_title_chunk(data: ChunkData*, chunk_x: int, chunk_z: int) {
             let gx = chunk_x * 16 + cx;
             let gz = chunk_z * 16 + cz;
             
-            // --- INVERTED SHAPE: ISLAND ---
+            // --- INVERTED SHAPE: ISLAND + CLIFF ---
             let dist = sqrt((float)(gx*gx + gz*gz));
             
             // Base Noise
@@ -174,6 +174,17 @@ fn generate_title_chunk(data: ChunkData*, chunk_x: int, chunk_z: int) {
             // Island Formula: Max Height minus Distance
             let island_base = 14.0 - (dist * 0.6);
             let h = (int)(island_base + (n_terrain * 4.0));
+            
+            // --- NEW: Stone Cliff in the corner (-X, -Z) ---
+            let is_cliff = 0;
+            if gx < -2 && gz < -2 {
+                let cliff_dist = sqrt((float)((gx+10)*(gx+10) + (gz+10)*(gz+10)));
+                let cliff_h = (int)(23.0 - cliff_dist * 1.8);
+                if cliff_h > h { 
+                    h = cliff_h; 
+                    is_cliff = 1;
+                }
+            }
             
             // Clamp limits
             if h < 2 { h = 2; } // Ocean floor minimum
@@ -191,7 +202,9 @@ fn generate_title_chunk(data: ChunkData*, chunk_x: int, chunk_z: int) {
                         type = BLOCK_STONE; 
                     } else {
                         // Surface Layer
-                        if h <= WATER_LEVEL + 1 { 
+                        if is_cliff == 1 {
+                             type = BLOCK_STONE; // Cliffs are bare rock
+                        } else if h <= WATER_LEVEL + 1 { 
                             type = BLOCK_SAND; // Beach level
                         } else { 
                             type = BLOCK_GRASS; // High ground
@@ -201,6 +214,18 @@ fn generate_title_chunk(data: ChunkData*, chunk_x: int, chunk_z: int) {
                 // Water
                 else if cy <= WATER_LEVEL {
                     type = BLOCK_WATER;
+                }
+                
+                // --- NEW: Waterfall Cave ---
+                if is_cliff == 1 && cy >= 15 && cy <= 19 {
+                    // Hollow out a small cave inside the cliff
+                    if gx > -10 && gx < -5 && gz > -10 && gz < -5 {
+                         type = BLOCK_AIR;
+                    }
+                    // Origin of the waterfall
+                    if gx == -6 && gz == -8 && cy == 15 {
+                         type = BLOCK_WATER;
+                    }
                 }
 
                 // Text Overlay
@@ -223,6 +248,7 @@ fn generate_title_chunk(data: ChunkData*, chunk_x: int, chunk_z: int) {
                 // Avoid putting trees inside the text
                 if gz < 7 || gz > 9 {
                     let n_veg = title_smooth_noise((float)gx * 0.5, (float)gz * 0.5);
+                    let rng_tree = (gx * 31 + gz * 17) % 5; // Simple rng for tree shape
                     
                     // Tallgrass
                     if n_veg > 0.2 && (gx+gz)%3 != 0 { 
@@ -232,10 +258,38 @@ fn generate_title_chunk(data: ChunkData*, chunk_x: int, chunk_z: int) {
                     }
                     
                     // Trees
-                    if n_veg > 0.7 {
+                    if n_veg > 0.72 {
                         // Spacing check
-                        if cx > 2 && cx < 13 && cz > 2 && cz < 13 {
-                            title_draw_classic_tree(data, cx, h+1, cz);
+                        if cx >= 2 && cx <= 13 && cz >= 2 && cz <= 13 {
+                            let tree_h = 5 + (rng_tree % 4);
+                            
+                            // Trunk
+                            for th in 0..tree_h {
+                                title_set_block_raw(data, cx, h+1+th, cz, BLOCK_LOG);
+                            }
+                            
+                            // Better Leaves
+                            let top = h + 1 + tree_h;
+                            // 4 layers of leaves going down from the top
+                            for ly in 0..4 {
+                                let radius = 2;
+                                if ly == 0 || ly == 3 { radius = 1; }
+                                
+                                for lx in -radius..radius+1 {
+                                    for lz in -radius..radius+1 {
+                                         // Cut corners for a rounder shape
+                                         if radius == 2 && rl::abs(lx) == 2 && rl::abs(lz) == 2 { continue; }
+                                         if lx == 0 && lz == 0 && ly < 3 { continue; } // Trunk goes here
+                                         
+                                         // Don't draw leaves lower than 2 blocks above ground
+                                         if (top - ly) <= (h + 2) { continue; }
+                                         
+                                         title_set_block_raw(data, cx+lx, top-ly, cz+lz, BLOCK_LEAVES);
+                                    }
+                                }
+                            }
+                            // Top cap cross
+                            title_set_block_raw(data, cx, top+1, cz, BLOCK_LEAVES);
                         }
                     }
                 }

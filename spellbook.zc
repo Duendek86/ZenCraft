@@ -11,10 +11,10 @@ struct SpellbookState {
 // Function to draw the spellbook UI
 // Returns 1 if a selection changed, 0 otherwise
 fn draw_spellbook(state: SpellbookState*, selected_block: int*) {
-    let sw = rl::GetScreenWidth();
-    let sh = rl::GetScreenHeight();
-    let cx = sw / 2;
-    let cy = sh / 2;
+    let screen_w = rl::GetScreenWidth();
+    let screen_h = rl::GetScreenHeight();
+    let cx = screen_w / 2;
+    let cy = screen_h / 2;
     
     // Book Dimensions
     let book_w = 600;

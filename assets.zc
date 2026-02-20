@@ -244,7 +244,11 @@ fn init_textures() {
     rl::SetShaderValue(sh_grass, loc_grass_ambient, &a, rl::SHADER_UNIFORM_VEC3);
 
     model_skull = rl::LoadModel("assets/3DModels/skull.glb");
-    model_skull.materials[0].shader = sh_lighting;
+    
+    
+    for i in 0..model_skull.materialCount {
+        model_skull.materials[i].shader = sh_lighting;
+    }
 }
 
 fn get_tex_atlas() -> rl::Texture2D { return tex_atlas; }

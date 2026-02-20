@@ -111,38 +111,48 @@ impl Chunk {
                     let r = rl::GetRandomValue(0, 99); // Usamos Raylib RNG
                     
                     if r < 10 {
-                        if cx > 1 && cx < 14 && cz > 1 && cz < 14 {
-                            let tree_h = 5;
-                            for k in 0..tree_h {
-                                if h + 1 + k < CHUNK_HEIGHT { c.blocks[cx][h + 1 + k][cz] = BLOCK_LOG; }
+                        if cx >= 2 && cx <= 13 && cz >= 2 && cz <= 13 {
+                            let rng_tree = (cx * 31 + cz * 17 + x * 101) % 5;
+                            let tree_h = 5 + (rng_tree % 4);
+                            
+                            // Trunk
+                            for th in 0..tree_h {
+                                if h + 1 + th < CHUNK_HEIGHT { 
+                                     c.blocks[cx][h + 1 + th][cz] = BLOCK_LOG; 
+                                }
                             }
                             
-                            let ly = h + 1 + tree_h - 2;
-                            for ly_off in 0..2 {
-                                let chy = ly + ly_off;
-                                if chy < CHUNK_HEIGHT {
-                                    for lx in -2..3 {
-                                        for lz in -2..3 {
-                                            if abs(lx) == 2 && abs(lz) == 2 { continue; }
-                                            let tx = cx + lx;
-                                            let tz = cz + lz;
-                                            if tx >= 0 && tx < 16 && tz >= 0 && tz < 16 {
-                                                if c.blocks[tx][chy][tz] == BLOCK_AIR {
-                                                    c.blocks[tx][chy][tz] = BLOCK_LEAVES;
-                                                }
-                                            }
-                                        }
+                            // 4 layers of leaves
+                            let top = h + 1 + tree_h;
+                            for ly in 0..4 {
+                                let radius = 2;
+                                if ly == 0 || ly == 3 { radius = 1; }
+                                
+                                for lx in -radius..radius+1 {
+                                    for lz in -radius..radius+1 {
+                                         // Cut corners
+                                         if radius == 2 && abs(lx) == 2 && abs(lz) == 2 { continue; }
+                                         if lx == 0 && lz == 0 && ly < 3 { continue; } // Trunk
+                                         
+                                         // Height limit
+                                         if (top - ly) <= (h + 2) { continue; }
+                                         
+                                         let tx = cx + lx;
+                                         let tz = cz + lz;
+                                         let ty = top - ly;
+                                         
+                                         if tx >= 0 && tx < 16 && tz >= 0 && tz < 16 && ty < CHUNK_HEIGHT {
+                                             if c.blocks[tx][ty][tz] == BLOCK_AIR {
+                                                 c.blocks[tx][ty][tz] = BLOCK_LEAVES;
+                                             }
+                                         }
                                     }
                                 }
                             }
                             
-                            let th = h + 1 + tree_h;
-                            if th < CHUNK_HEIGHT {
-                                c.blocks[cx][th][cz] = BLOCK_LEAVES;
-                                if cx + 1 < 16 { c.blocks[cx + 1][th][cz] = BLOCK_LEAVES; }
-                                if cx - 1 >= 0 { c.blocks[cx - 1][th][cz] = BLOCK_LEAVES; }
-                                if cz + 1 < 16 { c.blocks[cx][th][cz + 1] = BLOCK_LEAVES; }
-                                if cz - 1 >= 0 { c.blocks[cx][th][cz - 1] = BLOCK_LEAVES; }
+                            // Top cap cross
+                            if top + 1 < CHUNK_HEIGHT {
+                                 if c.blocks[cx][top+1][cz] == BLOCK_AIR { c.blocks[cx][top+1][cz] = BLOCK_LEAVES; }
                             }
                         }
                     } else if r < 20 {

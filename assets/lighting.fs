@@ -15,6 +15,9 @@ uniform vec3 uLightCol; // Color del sol
 uniform vec3 uAmbient;  // Color ambiental
 uniform vec3 viewPos;
 uniform float time;
+uniform vec4 colDiffuse;
+uniform int uUseEntityLight;
+uniform vec2 uEntityLight;
 
 // Función de ruido simple para simular agua sin texturas externas
 float hash(vec2 p) { return fract(1e4 * sin(17.0 * p.x + p.y * 0.1) * (0.1 + abs(sin(p.y * 13.0 + p.x)))); }
@@ -84,7 +87,17 @@ vec3 getWaterNormal(vec3 pos, float t, bool isFlowing) {
 
 void main()
 {
-    vec4 texelColor = texture(texture0, fragTexCoord);
+    vec4 baseColorMod = colDiffuse;
+    if (baseColorMod.a == 0.0) { baseColorMod = vec4(1.0); }
+    
+    vec4 texelColor = texture(texture0, fragTexCoord) * baseColorMod;
+    
+    // Si estamos usando luz de entidad, asumimos que fragColor es el color real del vértice
+    // y lo multiplicamos por el color de la textura (que será blanco por defecto para primitivas).
+    if (uUseEntityLight > 0) {
+        texelColor *= fragColor;
+    }
+    
     if (texelColor.a < 0.5) discard;
 
     vec3 normal = normalize(fragNormal);
@@ -93,8 +106,8 @@ void main()
     vec3 resultColor = vec3(0.0);
     float finalAlpha = texelColor.a;
 
-    // Detectar si es agua (Vertex color Blue > 0.7)
-    bool isWater = fragColor.b > 0.7;
+    // Detectar si es agua (Vertex color Blue > 0.7), pero solo si no es una entidad
+    bool isWater = (uUseEntityLight == 0) && (fragColor.b > 0.7);
 
     if (isWater) {
         // ==========================================
@@ -161,8 +174,8 @@ void main()
         // ==========================================
         // ILUMINACIÓN TERRENO ESTÁNDAR (Simplificada)
         // ==========================================
-        float blockLight = fragColor.r;
-        float skyLight = fragColor.g;
+        float blockLight = (uUseEntityLight > 0) ? uEntityLight.x : fragColor.r;
+        float skyLight = (uUseEntityLight > 0) ? uEntityLight.y : fragColor.g;
 
         // Difusa
         float diff = max(dot(normal, lightDir), 0.0);
@@ -186,10 +199,6 @@ void main()
     vec3 fogColor = mix(uAmbient, uLightCol, 0.5);
     if (length(fogColor) < 0.1) fogColor = vec3(0.01, 0.01, 0.02);
     resultColor = mix(fogColor, resultColor, vVisibility);
-
-    // Tone Mapping & Gamma REMOVED for vibrant colors
-    // resultColor = resultColor / (resultColor + vec3(1.0));
-    // resultColor = pow(resultColor, vec3(1.0/2.2));
     
     // Clamp to avoid artifacts
     resultColor = clamp(resultColor, 0.0, 1.0);

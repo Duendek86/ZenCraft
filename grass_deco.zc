@@ -69,11 +69,9 @@ fn build_grass_decorations(c: Chunk*, chunks: Chunk*, num_chunks: int) {
                         let light_val = get_light_levels(chunks, num_chunks, gx_base + x, y + 1, gz_base + z);
                         let r_raw = (light_val & 0xF) * 17;
                         let g_raw = ((light_val >> 4) & 0xF) * 17;
-                        let r_bright = 160 + (r_raw * 95 / 255); 
-                        let g_bright = 160 + (g_raw * 95 / 255);
-
-                        let light_r = (char)r_bright; let light_g = (char)g_bright;
-                        let base_r = (char)(r_bright * 9 / 10); let base_g = (char)(g_bright * 9 / 10);
+                        
+                        let light_r = (char)r_raw; let light_g = (char)g_raw;
+                        let base_r = light_r; let base_g = light_g;
                         
                         let seed = (gx_base + x) * 31337 + (gz_base + z) * 4231 + y * 739;
                         
