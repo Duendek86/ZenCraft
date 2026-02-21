@@ -168,6 +168,10 @@ fn request_save_async(c: Chunk*) {
                     sys_memcpy((any)io_queue[i].data.plants, (any)c.plants, 1024);
                     io_queue[i].data.skull_count = c.skull_count;
                     sys_memcpy((any)io_queue[i].data.skulls, (any)c.skulls, sizeof(Skull) * 4);
+                    io_queue[i].data.obelisk_count = c.obelisk_count;
+                    sys_memcpy((any)io_queue[i].data.obelisks, (any)c.obelisks, sizeof(Obelisk) * 32);
+                    io_queue[i].data.chest_count = c.chest_count;
+                    sys_memcpy((any)io_queue[i].data.chests, (any)c.chests, sizeof(ChestData) * 8);
                     return;
                 }
             }
@@ -192,6 +196,10 @@ fn request_save_async(c: Chunk*) {
         sys_memcpy((any)io_queue[slot].data.plants, (any)c.plants, 1024);
         io_queue[slot].data.skull_count = c.skull_count;
         sys_memcpy((any)io_queue[slot].data.skulls, (any)c.skulls, sizeof(Skull) * 4);
+        io_queue[slot].data.obelisk_count = c.obelisk_count;
+        sys_memcpy((any)io_queue[slot].data.obelisks, (any)c.obelisks, sizeof(Obelisk) * 32);
+        io_queue[slot].data.chest_count = c.chest_count;
+        sys_memcpy((any)io_queue[slot].data.chests, (any)c.chests, sizeof(ChestData) * 8);
         
         io_queue[slot].io_status = IO_STATUS_PENDING;
     }
@@ -409,6 +417,10 @@ fn poll_async_results() {
                         sys_memcpy((any)chunks[idx].plants, (any)queue[i].data.plants, 1024);
                         chunks[idx].skull_count = queue[i].data.skull_count;
                         sys_memcpy((any)chunks[idx].skulls, (any)queue[i].data.skulls, sizeof(Skull) * 4);
+                        chunks[idx].obelisk_count = queue[i].data.obelisk_count;
+                        sys_memcpy((any)chunks[idx].obelisks, (any)queue[i].data.obelisks, sizeof(Obelisk) * 32);
+                        chunks[idx].chest_count = queue[i].data.chest_count;
+                        sys_memcpy((any)chunks[idx].chests, (any)queue[i].data.chests, sizeof(ChestData) * 8);
                         
                         if chunks[idx].mesh_built == 1 { rl::UnloadModel(chunks[idx].chunk_model); }
                         if chunks[idx].water_mesh_built == 1 { rl::UnloadModel(chunks[idx].water_model); }
@@ -433,29 +445,56 @@ fn poll_async_results() {
     }
 }
 
-fn save_player_data(x: float, y: float, z: float, block: int, yaw: float, pitch: float) {
+fn save_player_data(x: float, y: float, z: float, block: int, yaw: float, pitch: float, wave_number: int, wave_spawned: int, day_time: float, zibis: any) {
     if rl::DirectoryExists(world_dir_path) == false { rl::MakeDirectory(world_dir_path); }
     
     let pd: PlayerSaveData;
     pd.x = x; pd.y = y; pd.z = z; pd.selected_block = block; pd.yaw = yaw; pd.pitch = pitch;
+    pd.wave_number = wave_number; pd.wave_spawned_today = wave_spawned; pd.day_time = day_time;
+    
+    if zibis != NULL {
+        sys_memcpy((any)pd.zibis, zibis, sizeof(ZibiSaveData) * 64);
+    } else {
+        raw { memset(pd.zibis, 0, sizeof(ZibiSaveData) * 64); }
+    }
     
     let path = rl::TextFormat("%s/player.dat", world_dir_path);
-    rl::SaveFileData(path, &pd, sizeof(PlayerSaveData));
+    // Write the raw struct
+    raw {
+        FILE *f = fopen(path, "wb");
+        if(f) {
+            fwrite(&pd, sizeof(PlayerSaveData), 1, f);
+            fclose(f);
+        }
+    }
 }
 
-fn load_player_data(x_ptr: any, y_ptr: any, z_ptr: any, block_ptr: any, yaw_ptr: any, pitch_ptr: any) -> int {
+fn load_player_data(x_ptr: any, y_ptr: any, z_ptr: any, block_ptr: any, yaw_ptr: any, pitch_ptr: any, wave_ptr: any, spawned_ptr: any, time_ptr: any, zibis_ptr: any) -> int {
     let path = rl::TextFormat("%s/player.dat", world_dir_path);
     let bytesRead = 0;
     
     let data = rl::LoadFileData(path, &bytesRead);
-    if data != NULL && bytesRead == sizeof(PlayerSaveData) {
-        let pd = (PlayerSaveData*)data;
+    if data != NULL && bytesRead > 0 { // Backwards compatible read
+        let pd: PlayerSaveData;
+        raw { memset(&pd, 0, sizeof(PlayerSaveData)); }
+        let read_size = bytesRead;
+        raw { if(read_size > sizeof(PlayerSaveData)) read_size = sizeof(PlayerSaveData); }
+        sys_memcpy((any)&pd, (any)data, read_size);
+        
         let x = (float*)x_ptr; *x = pd.x;
         let y = (float*)y_ptr; *y = pd.y;
         let z = (float*)z_ptr; *z = pd.z;
         let block = (int*)block_ptr; *block = pd.selected_block;
         let yaw = (float*)yaw_ptr; *yaw = pd.yaw;
         let pitch = (float*)pitch_ptr; *pitch = pd.pitch;
+        
+        if wave_ptr != NULL { let wave = (int*)wave_ptr; *wave = pd.wave_number; }
+        if spawned_ptr != NULL { let spawned = (int*)spawned_ptr; *spawned = pd.wave_spawned_today; }
+        if time_ptr != NULL { let dt = (float*)time_ptr; *dt = pd.day_time; }
+        
+        if zibis_ptr != NULL {
+            sys_memcpy(zibis_ptr, (any)pd.zibis, sizeof(ZibiSaveData) * 64);
+        }
         
         rl::UnloadFileData(data);
         return 1;
@@ -493,7 +532,10 @@ fn load_chunk_into(c_ptr: any, cx: int, cz: int) {
                     fseek(f, 0, SEEK_END); long filesize = ftell(f);
                     if (offset + stored_size <= filesize) {
                         fseek(f, offset, SEEK_SET);
-                        if(fread(data_ptr, sizeof(ChunkData), 1, f) == 1) loaded = 1;
+                        memset(data_ptr, 0, sizeof(ChunkData));
+                        int read_size = stored_size;
+                        if(read_size > sizeof(ChunkData)) read_size = sizeof(ChunkData);
+                        if(fread(data_ptr, 1, read_size, f) == read_size) loaded = 1;
                     }
                 }
                 fclose(f);
@@ -504,7 +546,11 @@ fn load_chunk_into(c_ptr: any, cx: int, cz: int) {
                 sprintf(filename, "%s/chunk_%d_%d.dat", world_dir_path, cx, cz);
                 FILE *f2 = fopen(filename, "rb");
                 if(f2) {
-                    if(fread(data_ptr, sizeof(ChunkData), 1, f2) == 1) loaded = 1;
+                    fseek(f2, 0, SEEK_END); long stored_size = ftell(f2); fseek(f2, 0, SEEK_SET);
+                    memset(data_ptr, 0, sizeof(ChunkData));
+                    int read_size = stored_size;
+                    if(read_size > sizeof(ChunkData)) read_size = sizeof(ChunkData);
+                    if(read_size > 0 && fread(data_ptr, 1, read_size, f2) == read_size) loaded = 1;
                     fclose(f2);
                 }
             }
@@ -525,6 +571,10 @@ fn load_chunk_into(c_ptr: any, cx: int, cz: int) {
         sys_memcpy((any)c.plants, (any)data_ptr.plants, 1024);
         c.skull_count = data_ptr.skull_count;
         sys_memcpy((any)c.skulls, (any)data_ptr.skulls, sizeof(Skull) * 4);
+        c.obelisk_count = data_ptr.obelisk_count;
+        sys_memcpy((any)c.obelisks, (any)data_ptr.obelisks, sizeof(Obelisk) * 32);
+        c.chest_count = data_ptr.chest_count;
+        sys_memcpy((any)c.chests, (any)data_ptr.chests, sizeof(ChestData) * 8);
         
         rl::MemFree(data_ptr);
     }

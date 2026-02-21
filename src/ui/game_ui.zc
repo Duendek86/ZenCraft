@@ -32,8 +32,7 @@ fn draw_hud(p: Player*, selected_block: int, version: char*) {
     rl::DrawRectangleLines(bar_x, bar_y_mana, bar_w, bar_h, rl::BLACK);
     rl::DrawText(rl::TextFormat("%.0f", p.mana), bar_x + 5, bar_y_mana + 2, 20, rl::WHITE);
 
-    let v_width = rl::MeasureText(version, 20);
-    rl::DrawText(version, screen_w - v_width - 10, 10, 20, rl::WHITE);
+    rl::DrawText(version, 10, screen_h - 75, 16, rl::Color{r: 200, g: 200, b: 200, a: 180});
 
     rl::DrawText("Select: 1-8", 10, 60, 20, rl::WHITE);
     rl::DrawText(rl::TextFormat("Block: %d", selected_block), 10, 90, 20, rl::WHITE);

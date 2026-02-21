@@ -24,7 +24,13 @@ fn get_recharge_target_x() -> int { return recharge_target_x; }
 fn get_recharge_target_y() -> int { return recharge_target_y; }
 fn get_recharge_target_z() -> int { return recharge_target_z; }
 
-fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_block: int, selected_spell: int) {
+fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_block: int, selected_spell: int, wolves: ShadowWolf*, max_wolves: int, zibis: Zibi*, max_zibis: int) {
+    // --- Passive Mana Regeneration (0.5 mana/s when not using beam) ---
+    if destroy_timer <= 0.0 && recharge_timer <= 0.0 {
+        p.mana = p.mana + 0.5 * dt;
+        if p.mana > 100.0 { p.mana = 100.0; }
+    }
+    
     let screen_center = rl::Vector2{ x: (float)rl::GetScreenWidth() / 2.0, y: (float)rl::GetScreenHeight() / 2.0 };
     let pick_ray = rl::GetScreenToWorldRay(screen_center, p.camera);
 
@@ -35,7 +41,7 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
     if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_RIGHT) && selected_spell == 1 {
         if p.mana >= get_fireball_mana_cost() {
             p.mana = p.mana - get_fireball_mana_cost();
-            spawn_fireball(pick_ray.position.x, pick_ray.position.y, pick_ray.position.z,
+            spawn_fireball(1, pick_ray.position.x, pick_ray.position.y, pick_ray.position.z,
                            pick_ray.direction.x, pick_ray.direction.y, pick_ray.direction.z);
         }
     }
@@ -51,16 +57,21 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
             // If we hit the invisible crystal, find the base
             if b_hit == BLOCK_POWER_CRYSTAL {
                  let below1 = get_block(chunks, MAX_CHUNKS, hit.x, hit.y - 1, hit.z);
-                 if below1 == BLOCK_POWER_SOURCE { base_y = hit.y - 1; }
+                 if below1 == BLOCK_OBELISK { base_y = hit.y - 1; }
                  else {
                      let below2 = get_block(chunks, MAX_CHUNKS, hit.x, hit.y - 2, hit.z);
-                     if below2 == BLOCK_POWER_SOURCE { base_y = hit.y - 2; }
+                     if below2 == BLOCK_OBELISK { base_y = hit.y - 2; }
                  }
-            } else if b_hit == BLOCK_POWER_SOURCE {
-                 base_y = hit.y;
+            } else if b_hit == BLOCK_OBELISK {
+                base_y = hit.y;
+            }
+            
+            let is_power_source = 0;
+            if b_hit == BLOCK_OBELISK || b_hit == BLOCK_POWER_CRYSTAL {
+                is_power_source = 1;
             }
 
-            if b_hit == BLOCK_POWER_SOURCE || b_hit == BLOCK_POWER_CRYSTAL {
+            if is_power_source == 1 {
                 destroy_timer = 0.0; destroy_target_x = -999;
                 if hit.x == recharge_target_x && base_y == recharge_target_y && hit.z == recharge_target_z {
                     recharge_timer = recharge_timer + dt;
@@ -69,9 +80,41 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                     recharge_timer = 0.0;
                 }
 
-                p.mana = p.mana + (30.0 * dt);
-                if p.mana > 100.0 { p.mana = 100.0; }
+                let actual_drain = 0.0;
+                let bcx = (int)floor((float)recharge_target_x / 16.0);
+                let bcz = (int)floor((float)recharge_target_z / 16.0);
+                let bidx = get_chunk_index(bcx, bcz);
                 
+                if chunks[bidx].x == bcx && chunks[bidx].z == bcz {
+                    for si in 0..chunks[bidx].obelisk_count {
+                        let rel_x = recharge_target_x - (bcx * 16);
+                        let rel_z = recharge_target_z - (bcz * 16);
+                        if (int)chunks[bidx].obelisks[si].x == rel_x && 
+                           (int)chunks[bidx].obelisks[si].y == recharge_target_y && 
+                           (int)chunks[bidx].obelisks[si].z == rel_z {
+                            
+                            let drain = 30.0 * dt;
+                            let c_max_drain = 100.0 - p.mana;
+                            if drain > c_max_drain { drain = c_max_drain; }
+                            
+                            let c_mana = chunks[bidx].obelisks[si].mana;
+                            if c_mana >= drain {
+                                c_mana -= drain;
+                                actual_drain = drain;
+                            } else {
+                                actual_drain = c_mana;
+                                c_mana = 0.0;
+                            }
+                            chunks[bidx].obelisks[si].mana = c_mana;
+                            break;
+                        }
+                    }
+                }
+                
+                if actual_drain > 0.0 {
+                    p.mana = p.mana + actual_drain;
+                    if p.mana > 100.0 { p.mana = 100.0; }
+                }
                 // --- Recharge Beam Animation ---
                 let cam_origin = p.camera.position;
                 let start_pos = cam_origin;
@@ -144,10 +187,12 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
             } else {
                 recharge_timer = 0.0; recharge_target_x = -999;
                 
-                if p.mana >= 5.0 {
+                if p.mana >= 1.0 {
                     if base_x == destroy_target_x && base_y == destroy_target_y && base_z == destroy_target_z {
                         destroy_timer = destroy_timer + dt;
-                        // rl::TraceLog(rl::LOG_INFO, "Destroying... Timer: %f", destroy_timer);
+                        // Continuous mana drain while beam is active (3 mana/sec)
+                        p.mana = p.mana - 3.0 * dt;
+                        if p.mana < 0.0 { p.mana = 0.0; }
                     } else {
                         destroy_target_x = base_x; destroy_target_y = base_y; destroy_target_z = base_z;
                         destroy_timer = 0.0;
@@ -230,6 +275,21 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                     rl::rlSetBlendMode(rl::BLEND_ALPHA);
                     rl::EndShaderMode();
                     
+                    // --- Beam Damage to Entities ---
+                    let beam_dmg = 5.0 * dt; // small DPS
+                    for wi in 0..max_wolves {
+                        let dx = wolves[wi].x - end_pos.x;
+                        let dy = wolves[wi].y - end_pos.y;
+                        let dz = wolves[wi].z - end_pos.z;
+                        if (dx*dx + dy*dy + dz*dz) < 2.25 { wolves[wi].take_damage((int)beam_dmg + 1); }
+                    }
+                    for zi in 0..max_zibis {
+                        let dx = zibis[zi].x - end_pos.x;
+                        let dy = zibis[zi].y - end_pos.y;
+                        let dz = zibis[zi].z - end_pos.z;
+                        if (dx*dx + dy*dy + dz*dz) < 2.25 { zibis[zi].take_damage((int)beam_dmg + 1); }
+                    }
+                    
                     // --- Block Shake & Feedback (Fortnite Style) ---
                     let progress = destroy_timer / 3.0;
                     if progress > 1.0 { progress = 1.0; }
@@ -310,7 +370,6 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
 
                     // --- Block Destroy Event ---
                     if destroy_timer > 3.0 {
-                        p.mana = p.mana - 5.0;
                         spawn_explosion((float)hit.x + 0.5, (float)hit.y + 0.5, (float)hit.z + 0.5, 20, rl::Color{r: 150, g: 150, b: 150, a: 200});
                         
                         let fill_block = BLOCK_AIR;
@@ -331,7 +390,7 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                         remove_plant_at(chunks, MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
                         
                         // Collect block into scepter inventory
-                        if b_hit != BLOCK_WATER && b_hit != BLOCK_WATER_0 && b_hit != BLOCK_WATER_1 && b_hit != BLOCK_WATER_2 && b_hit != BLOCK_POWER_SOURCE && b_hit != BLOCK_POWER_CRYSTAL && b_hit != BLOCK_AIR {
+                        if b_hit != BLOCK_WATER && b_hit != BLOCK_WATER_0 && b_hit != BLOCK_WATER_1 && b_hit != BLOCK_WATER_2 && b_hit != BLOCK_OBELISK && b_hit != BLOCK_POWER_CRYSTAL && b_hit != BLOCK_AIR {
                             scepter_add_item(b_hit);
                         }
                         
@@ -342,7 +401,7 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                         }
                         
                         // Destroy all 3 blocks if it was a power crystal setup
-                        if b_hit == BLOCK_POWER_SOURCE || b_hit == BLOCK_POWER_CRYSTAL {
+                        if b_hit == BLOCK_OBELISK || b_hit == BLOCK_POWER_CRYSTAL {
                              set_block(chunks, MAX_CHUNKS, hit.x, base_y + 1, hit.z, BLOCK_AIR);
                              set_block(chunks, MAX_CHUNKS, hit.x, base_y + 2, hit.z, BLOCK_AIR);
                              if b_hit == BLOCK_POWER_CRYSTAL { set_block(chunks, MAX_CHUNKS, hit.x, base_y, hit.z, BLOCK_AIR); }
@@ -429,7 +488,7 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                     }
                     
                     let can_place = 1;
-                    if block_to_place == BLOCK_POWER_SOURCE {
+                    if block_to_place == BLOCK_OBELISK {
                          if ny + 2 >= CHUNK_HEIGHT { can_place = 0; }
                          else {
                               let up1 = get_block(chunks, MAX_CHUNKS, nx, ny + 1, nz);
@@ -440,7 +499,7 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
 
                     if can_place == 1 {
                         set_block(chunks, MAX_CHUNKS, nx, ny, nz, block_to_place);
-                        if block_to_place == BLOCK_POWER_SOURCE {
+                        if block_to_place == BLOCK_OBELISK {
                              set_block(chunks, MAX_CHUNKS, nx, ny + 1, nz, BLOCK_POWER_CRYSTAL);
                              set_block(chunks, MAX_CHUNKS, nx, ny + 2, nz, BLOCK_POWER_CRYSTAL);
                         }

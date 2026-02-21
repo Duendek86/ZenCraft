@@ -39,6 +39,7 @@ import "ui/spellbook.zc";
 import "entities/fireball.zc";
 import "entities/shadow_wolf.zc";
 import "entities/player_interaction.zc";
+import "entities/obelisk.zc";
 
 // Import modules from the refactoring
 import "ui/game_loading.zc";
@@ -102,10 +103,15 @@ fn main() {
     
     let day_time = 0.2;
     let title_start_time = rl::GetTime();
+    
+    // --- Wave System ---
+    let wave_number = 0;
+    let wave_spawned_today = 0;
+    let was_night = 0;
 
     while rl::WindowShouldClose() == 0 {
         if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_LEFT) {
-            if show_settings == 0 && show_spellbook == 0 { rl::DisableCursor(); }
+            if show_settings == 0 && show_spellbook == 0 && is_chest_ui_open() == 0 && is_scepter_ui_open() == 0 { rl::DisableCursor(); }
         }
 
         let dt = rl::GetFrameTime();
@@ -161,9 +167,54 @@ fn main() {
             process_loading_step(chunks, draw_distance);
             
             if loading_is_done == 1 {
-                p = Player::new(load_start_x, load_start_y, load_start_z);
-                p.yaw = load_start_yaw; p.pitch = load_start_pitch;
-                for i in 0..MAX_ZIBIS { zibis[i].active = 0; }
+                let px = load_start_x; let py = load_start_y; let pz = load_start_z;
+                let pb = 1; let pyaw = load_start_yaw; let ppitch = load_start_pitch;
+                
+                let zibis_save: ZibiSaveData[64];
+                let has_save = load_player_data(&px, &py, &pz, &pb, &pyaw, &ppitch, &wave_number, &wave_spawned_today, &day_time, &zibis_save);
+                if has_save == 0 { py = 64.0; } else {
+                    // Restore Zibis
+                    for zi in 0..MAX_ZIBIS {
+                        zibis[zi].active = zibis_save[zi].active;
+                        zibis[zi].state = zibis_save[zi].state;
+                        zibis[zi].hp = zibis_save[zi].hp;
+                        zibis[zi].x = zibis_save[zi].x;
+                        zibis[zi].y = zibis_save[zi].y;
+                        zibis[zi].z = zibis_save[zi].z;
+                        zibis[zi].vx = zibis_save[zi].vx;
+                        zibis[zi].vz = zibis_save[zi].vz;
+                        zibis[zi].yaw = zibis_save[zi].yaw;
+                        zibis[zi].state_timer = zibis_save[zi].state_timer;
+                        zibis[zi].work_timer = zibis_save[zi].work_timer;
+                        zibis[zi].home_chunk_x = zibis_save[zi].home_chunk_x;
+                        zibis[zi].home_chunk_z = zibis_save[zi].home_chunk_z;
+                        zibis[zi].obelisk_idx = zibis_save[zi].obelisk_idx;
+                        
+                        zibis[zi].hurt_flash = 0.0;
+                        zibis[zi].anim_time = 0.0;
+                        zibis[zi].combat_target_x = 0.0;
+                        zibis[zi].combat_target_z = 0.0;
+                        zibis[zi].combat_timer = 0.0;
+                        zibis[zi].attack_cooldown = 0.0;
+                        zibis[zi].prev_state = 0;
+                        zibis[zi].invincibility_timer = 0.0;
+                        
+                        // Re-assign obelisk target so workers don't wander off
+                        if zibis[zi].active == 1 {
+                            if zibis[zi].state == ZIBI_WORKER || zibis[zi].state == ZIBI_WALK_TO_OBELISK {
+                                if zibis[zi].find_obelisk(chunks, MAX_CHUNKS) == 0 {
+                                    zibis[zi].state = ZIBI_FOLLOW_PLAYER;
+                                    zibis[zi].state_timer = 3.0;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                p = Player::new(px, py, pz);
+                p.yaw = pyaw; p.pitch = ppitch;
+                selected_block = pb;
+                
                 current_state = STATE_GAME;
                 rl::DisableCursor();
             }
@@ -236,7 +287,8 @@ fn main() {
             if first_frame == 1 { init_particles(); first_frame = 0; }
             poll_async_results();
             update_particles(dt);
-            update_fireballs(dt, chunks, MAX_CHUNKS);
+            update_fireballs(dt, chunks, MAX_CHUNKS, &wolves[0], MAX_WOLVES, &zibis[0], MAX_ZIBIS);
+            update_obelisks(chunks, MAX_CHUNKS, dt);
             
             let mesh_requests = 0;
             for i in 0..MAX_CHUNKS {
@@ -256,8 +308,13 @@ fn main() {
                 show_spellbook = !show_spellbook;
                 if show_spellbook { rl::EnableCursor(); } else { rl::DisableCursor(); }
             }
+            if rl::IsKeyPressed(rl::KEY_I) {
+                if is_chest_ui_open() == 0 && show_spellbook == 0 && show_settings == 0 { // Don't allow overlapping UIs
+                     toggle_scepter_ui();
+                }
+            }
 
-            if show_settings == 0 && show_spellbook == 0 {
+            if show_settings == 0 && show_spellbook == 0 && is_scepter_ui_open() == 0 {
                 (&p).update(chunks, MAX_CHUNKS, dt);
                 
                 if rl::IsKeyPressed(rl::KEY_ONE) { selected_block = BLOCK_DIRT; }
@@ -275,7 +332,7 @@ fn main() {
             for i in 0..MAX_ZIBIS {
                 if zibis[i].active == 1 {
                     active_zibis++;
-                    if zibis[i].update(chunks, MAX_CHUNKS, dt, p.x, p.y, p.z) == 0 { active_zibis--; }
+                    if zibis[i].update(chunks, MAX_CHUNKS, dt, p.x, p.y, p.z, day_time, &wolves[0], MAX_WOLVES) == 0 { active_zibis--; }
                     if zibis[i].state == ZIBI_WORKER { worker_count++; }
                 }
             }
@@ -291,17 +348,40 @@ fn main() {
                 }
             }
 
-            // --- ShadowWolf Night Spawning ---
+            // --- Wave-Based Night Spawning ---
             let is_night = (day_time > 0.5);  // Night is second half of day cycle
             let active_wolves = 0;
             for wi in 0..MAX_WOLVES { if wolves[wi].active == 1 { active_wolves++; } }
             
-            if is_night && active_wolves < MAX_WOLVES && rl::GetRandomValue(0, 200) < 3 {
-                let wolf_slot = -1;
-                for wi in 0..MAX_WOLVES { if wolves[wi].active == 0 { wolf_slot = wi; break; } }
-                if wolf_slot != -1 {
-                    let spawn_angle = ((float)rl::GetRandomValue(0, 360)) * 0.0174533;
-                    let spawn_dist = (float)rl::GetRandomValue(30, 60);
+            // Detect night start: spawn wave
+            if is_night && was_night == 0 {
+                // Night just started! Spawn a wave.
+                wave_number++;
+                wave_spawned_today = 1;
+                
+                // Find highest obelisk level
+                let max_obelisk_level = 0;
+                for ci in 0..MAX_CHUNKS {
+                    if chunks[ci].x == -9999 { continue; }
+                    for si in 0..chunks[ci].obelisk_count {
+                        if chunks[ci].obelisks[si].level > max_obelisk_level {
+                            max_obelisk_level = chunks[ci].obelisks[si].level;
+                        }
+                    }
+                }
+                
+                // Wave size: base 2 + obelisk_level * 1, capped at MAX_WOLVES
+                let wave_size = 2 + max_obelisk_level;
+                if wave_size > MAX_WOLVES { wave_size = MAX_WOLVES; }
+                
+                // Spawn all wolves at once in a ring around the player
+                for ws in 0..wave_size {
+                    let wolf_slot = -1;
+                    for wi in 0..MAX_WOLVES { if wolves[wi].active == 0 { wolf_slot = wi; break; } }
+                    if wolf_slot == -1 { break; } // No free slots
+                    
+                    let spawn_angle = ((float)ws / (float)wave_size) * 6.2832; // evenly distributed 360°
+                    let spawn_dist = (float)rl::GetRandomValue(30, 50);
                     let sx = p.x + (float)cos(spawn_angle) * spawn_dist;
                     let sz = p.z + (float)sin(spawn_angle) * spawn_dist;
                     let wcx = (int)floor(sx / 16.0); let wcz = (int)floor(sz / 16.0);
@@ -322,6 +402,12 @@ fn main() {
                     }
                 }
             }
+            
+            // Reset at dawn
+            if !is_night && was_night == 1 {
+                wave_spawned_today = 0;
+            }
+            was_night = is_night;
             
             // --- Update ShadowWolves ---
             for wi in 0..MAX_WOLVES {
@@ -381,12 +467,12 @@ fn main() {
                 if c.x != -9999 {
                     let dist_x = abs(c.x - pcx); let dist_z = abs(c.z - pcz);
                     if dist_x <= draw_distance && dist_z <= draw_distance && crystal_count < 16 {
-                         for s in 0..c.power_source_count {
+                         for s in 0..c.obelisk_count {
                               if crystal_count >= 16 { break; }
                               // Position of the glowing crystal float
-                              crystal_points[crystal_count * 3 + 0] = (float)(c.x * 16) + c.power_sources[s].x;
-                              crystal_points[crystal_count * 3 + 1] = c.power_sources[s].y + 1.2;
-                              crystal_points[crystal_count * 3 + 2] = (float)(c.z * 16) + c.power_sources[s].z;
+                              crystal_points[crystal_count * 3 + 0] = (float)(c.x * 16) + c.obelisks[s].x;
+                              crystal_points[crystal_count * 3 + 1] = c.obelisks[s].y + 1.2;
+                              crystal_points[crystal_count * 3 + 2] = (float)(c.z * 16) + c.obelisks[s].z;
                               crystal_count++;
                          }
                     }
@@ -455,9 +541,9 @@ fn main() {
                         }
                     }
 
-                    // Render Power Sources
+                    // Render Obelisks
                     if dist_x <= draw_distance && dist_z <= draw_distance {
-                         if c.power_source_count > 0 {
+                         if c.obelisk_count > 0 {
                              let model_base = get_model_obelisco_base();
                              let model_cristal = get_model_obelisco_cristal();
                              
@@ -477,8 +563,8 @@ fn main() {
                              
                              let time_now = (float)rl::GetTime();
                              
-                             for s in 0..c.power_source_count {
-                                 let pos = rl::Vector3{x: (float)(c.x * 16) + c.power_sources[s].x, y: c.power_sources[s].y, z: (float)(c.z * 16) + c.power_sources[s].z};
+                             for s in 0..c.obelisk_count {
+                                 let pos = rl::Vector3{x: (float)(c.x * 16) + c.obelisks[s].x, y: c.obelisks[s].y, z: (float)(c.z * 16) + c.obelisks[s].z};
                                  
                                  let lx = (int)floor(pos.x); let ly = (int)floor(pos.y); let lz = (int)floor(pos.z);
                                  let packed_light = get_light_levels(chunks, MAX_CHUNKS, lx, ly, lz);
@@ -503,9 +589,9 @@ fn main() {
                                  let ry = get_recharge_target_y();
                                  let rz = get_recharge_target_z();
                                  
-                                 let bcx = c.x * 16 + (int)c.power_sources[s].x;
-                                 let bcy = (int)c.power_sources[s].y;
-                                 let bcz = c.z * 16 + (int)c.power_sources[s].z;
+                                 let bcx = c.x * 16 + (int)c.obelisks[s].x;
+                                 let bcy = (int)c.obelisks[s].y;
+                                 let bcz = c.z * 16 + (int)c.obelisks[s].z;
                                  
                                  if bcx == rx && bcy == ry && bcz == rz {
                                      let r_timer = get_recharge_timer();
@@ -557,8 +643,8 @@ fn main() {
             draw_particles();
             draw_fireballs();
             
-            if show_settings == 0 && show_spellbook == 0 && is_chest_ui_open() == 0 {
-                handle_player_interaction(&p, chunks, dt, selected_block, spellbook.selected_spell);
+            if show_settings == 0 && show_spellbook == 0 && is_chest_ui_open() == 0 && is_scepter_ui_open() == 0 {
+                handle_player_interaction(&p, chunks, dt, selected_block, spellbook.selected_spell, &wolves[0], MAX_WOLVES, &zibis[0], MAX_ZIBIS);
             }
             
             rl::EndMode3D();
@@ -568,17 +654,98 @@ fn main() {
             
             (&p).draw_arm((float)rl::GetTime());
             draw_hud(&p, selected_block, VERSION_TEXT);
+            draw_obelisk_ui(chunks, MAX_CHUNKS, &zibis[0], MAX_ZIBIS, p.camera);
+            
+            // Draw Entity HP Bars
+            for i in 0..MAX_ZIBIS {
+                if zibis[i].active == 1 && zibis[i].hp < 30 {
+                   let ui_pos = rl::Vector3{x: zibis[i].x, y: zibis[i].y + 1.2, z: zibis[i].z};
+                   let dx = ui_pos.x - p.camera.position.x; let dy = ui_pos.y - p.camera.position.y; let dz = ui_pos.z - p.camera.position.z;
+                   let fwd_x = p.camera.target.x - p.camera.position.x; let fwd_y = p.camera.target.y - p.camera.position.y; let fwd_z = p.camera.target.z - p.camera.position.z;
+                   if (dx*fwd_x + dy*fwd_y + dz*fwd_z) > 0.0 {
+                       let screen_pos = rl::GetWorldToScreenEx(ui_pos, p.camera, SCREEN_WIDTH, SCREEN_HEIGHT);
+                       let pct = (float)zibis[i].hp / 30.0;
+                       if pct < 0.0 { pct = 0.0; }
+                       let bw = 40; let bh = 6;
+                       let bx = (int)screen_pos.x - bw/2; let by = (int)screen_pos.y;
+                       rl::DrawRectangle(bx, by, bw, bh, rl::RED);
+                       rl::DrawRectangle(bx, by, (int)((float)bw * pct), bh, rl::GREEN);
+                   }
+                }
+            }
+            for i in 0..MAX_WOLVES {
+                if wolves[i].active == 1 && wolves[i].hp < 50 { // WOLF_HP isn't exported globally easily, hardcoded to 50
+                   let ui_pos = rl::Vector3{x: wolves[i].x, y: wolves[i].y + 1.5, z: wolves[i].z};
+                   let dx = ui_pos.x - p.camera.position.x; let dy = ui_pos.y - p.camera.position.y; let dz = ui_pos.z - p.camera.position.z;
+                   let fwd_x = p.camera.target.x - p.camera.position.x; let fwd_y = p.camera.target.y - p.camera.position.y; let fwd_z = p.camera.target.z - p.camera.position.z;
+                   if (dx*fwd_x + dy*fwd_y + dz*fwd_z) > 0.0 {
+                       let screen_pos = rl::GetWorldToScreenEx(ui_pos, p.camera, SCREEN_WIDTH, SCREEN_HEIGHT);
+                       let pct = (float)wolves[i].hp / 50.0;
+                       if pct < 0.0 { pct = 0.0; }
+                       let bw = 50; let bh = 8;
+                       let bx = (int)screen_pos.x - bw/2; let by = (int)screen_pos.y;
+                       rl::DrawRectangle(bx, by, bw, bh, rl::RED);
+                       rl::DrawRectangle(bx, by, (int)((float)bw * pct), bh, rl::GREEN);
+                   }
+                }
+            }
             
             if show_debug_info { draw_debug_info(&p, chunks, dt, day_time, draw_distance, worker_count, active_wolves); }
             if show_settings { draw_settings_menu(&draw_distance, &grass_dist); }
             if show_spellbook { draw_spellbook(&spellbook, &selected_block); }
             draw_chest_ui(chunks);
+            draw_scepter_ui();
+            
+            // --- Wave Counter HUD ---
+            if wave_number > 0 {
+                let screen_w = rl::GetScreenWidth();
+                let wave_txt = rl::TextFormat("Wave %d", wave_number);
+                let tw = rl::MeasureText(wave_txt, 24);
+                let hx = screen_w - tw - 20;
+                let hy = 15;
+                
+                // Background pill
+                rl::DrawRectangle(hx - 10, hy - 5, tw + 20, 34, rl::Color{r: 20, g: 10, b: 30, a: 180});
+                rl::DrawRectangleLines(hx - 10, hy - 5, tw + 20, 34, rl::Color{r: 180, g: 80, b: 80, a: 200});
+                
+                let wave_col = rl::Color{r: 255, g: 100, b: 100, a: 255};
+                if active_wolves == 0 && is_night { wave_col = rl::Color{r: 100, g: 255, b: 100, a: 255}; } // Green if cleared
+                rl::DrawText(wave_txt, hx, hy, 24, wave_col);
+                
+                // Show enemies remaining during night
+                if is_night {
+                    let enemies_txt = rl::TextFormat("Enemies: %d", active_wolves);
+                    let etw = rl::MeasureText(enemies_txt, 16);
+                    rl::DrawRectangle(screen_w - etw - 30, hy + 34, etw + 20, 24, rl::Color{r: 20, g: 10, b: 30, a: 150});
+                    rl::DrawText(enemies_txt, screen_w - etw - 20, hy + 37, 16, rl::Color{r: 200, g: 200, b: 200, a: 220});
+                }
+            }
 
             rl::EndDrawing();
         }
     }
 
-    if current_state == STATE_GAME { save_player_data(p.x, p.y, p.z, selected_block, p.yaw, p.pitch); }
+    // Save all to disk at the end
+    if current_state == STATE_GAME {
+        let zibis_save: ZibiSaveData[64];
+        for zi in 0..MAX_ZIBIS {
+            zibis_save[zi].active = zibis[zi].active;
+            zibis_save[zi].state = zibis[zi].state;
+            zibis_save[zi].hp = zibis[zi].hp;
+            zibis_save[zi].x = zibis[zi].x;
+            zibis_save[zi].y = zibis[zi].y;
+            zibis_save[zi].z = zibis[zi].z;
+            zibis_save[zi].vx = zibis[zi].vx;
+            zibis_save[zi].vz = zibis[zi].vz;
+            zibis_save[zi].yaw = zibis[zi].yaw;
+            zibis_save[zi].state_timer = zibis[zi].state_timer;
+            zibis_save[zi].work_timer = zibis[zi].work_timer;
+            zibis_save[zi].home_chunk_x = zibis[zi].home_chunk_x;
+            zibis_save[zi].home_chunk_z = zibis[zi].home_chunk_z;
+            zibis_save[zi].obelisk_idx = zibis[zi].obelisk_idx;
+        }
+        save_player_data(p.x, p.y, p.z, selected_block, p.yaw, p.pitch, wave_number, wave_spawned_today, day_time, &zibis_save);
+    }
     
     for i in 0..MAX_CHUNKS {
         if chunks[i].x != -9999 {

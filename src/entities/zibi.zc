@@ -8,7 +8,8 @@ import "math.h";
 def ZIBI_FREED = 0;              // Just released from cage
 def ZIBI_WALK_TO_OBELISK = 1;    // Walking toward obelisk
 def ZIBI_WORKER = 2;             // Idle worker at obelisk
-def ZIBI_FLEEING = 3;            // No obelisk nearby, fleeing
+def ZIBI_FOLLOW_PLAYER = 3;      // No obelisk nearby, player follow mode
+def ZIBI_COMBAT = 4;             // Fighting back against an attacker
 
 struct Zibi {
     x: float;
@@ -36,6 +37,22 @@ struct Zibi {
     active: int;
     hp: int;
     hurt_flash: float;
+    
+    // Combat
+    combat_target_x: float;
+    combat_target_z: float;
+    combat_timer: float;
+    attack_cooldown: float;
+    prev_state: int; // state to return to after combat
+    
+    // Worker fields
+    work_timer: float;
+    home_chunk_x: int;
+    home_chunk_z: int;
+    obelisk_idx: int;
+    
+    // Invincibility (post-cage-break)
+    invincibility_timer: float;
 }
 
 // Zibi Constants
@@ -76,15 +93,41 @@ impl Zibi {
         inst.active = 1;
         inst.hp = 30;
         inst.hurt_flash = 0.0;
+        inst.combat_target_x = 0.0;
+        inst.combat_target_z = 0.0;
+        inst.combat_timer = 0.0;
+        inst.attack_cooldown = 0.0;
+        inst.prev_state = 0;
+        inst.invincibility_timer = 0.0;
+        if state == ZIBI_FREED { inst.invincibility_timer = 4.0; } // 4s invincibility after freeing
         return inst;
     }
 
     fn take_damage(self, amount: int) {
+        if self.invincibility_timer > 0.0 { return; } // Immune!
         self.hp -= amount;
         self.hurt_flash = 0.3;
         if self.hp <= 0 {
             self.active = 0;
         }
+    }
+
+    fn take_damage_from(self, amount: int, attacker_x: float, attacker_z: float) {
+        if self.invincibility_timer > 0.0 { return; } // Immune!
+        self.hp -= amount;
+        self.hurt_flash = 0.3;
+        if self.hp <= 0 {
+            self.active = 0;
+            return;
+        }
+        // Enter combat mode — fight back!
+        if self.state != ZIBI_COMBAT {
+            self.prev_state = self.state;
+        }
+        self.state = ZIBI_COMBAT;
+        self.combat_target_x = attacker_x;
+        self.combat_target_z = attacker_z;
+        self.combat_timer = 5.0; // stay in combat for 5s
     }
 
     // Find nearest obelisk, returns 1 if found
@@ -93,10 +136,10 @@ impl Zibi {
         let found = 0;
         for i in 0..num_chunks {
             if chunks[i].x == -9999 { continue; }
-            for s in 0..chunks[i].power_source_count {
-                let ox = (float)(chunks[i].x * 16) + chunks[i].power_sources[s].x;
-                let oy = chunks[i].power_sources[s].y;
-                let oz = (float)(chunks[i].z * 16) + chunks[i].power_sources[s].z;
+            for s in 0..chunks[i].obelisk_count {
+                let ox = (float)(chunks[i].x * 16) + chunks[i].obelisks[s].x;
+                let oy = chunks[i].obelisks[s].y;
+                let oz = (float)(chunks[i].z * 16) + chunks[i].obelisks[s].z;
                 let dx = ox - self.x;
                 let dy = oy - self.y;
                 let dz = oz - self.z;
@@ -115,9 +158,12 @@ impl Zibi {
 
     // Returns 1 if still active, 0 if despawned
     fn update(self, chunks: Chunk*, num_chunks: int, dt: float,
-              player_x: float, player_y: float, player_z: float) -> int {
+              player_x: float, player_y: float, player_z: float, day_time: float,
+              wolves: ShadowWolf*, max_wolves: int) -> int {
         if self.active == 0 { return 0; }
         if self.hurt_flash > 0.0 { self.hurt_flash -= dt; }
+        if self.attack_cooldown > 0.0 { self.attack_cooldown -= dt; }
+        if self.invincibility_timer > 0.0 { self.invincibility_timer -= dt; }
         
         // --- Check if in loaded chunk ---
         let cx = (int)floor(self.x / 16.0);
@@ -146,13 +192,13 @@ impl Zibi {
                     // Obelisk nearby — walk to it
                     self.state = ZIBI_WALK_TO_OBELISK;
                 } else {
-                    // Too far — flee
-                    self.state = ZIBI_FLEEING;
-                    self.state_timer = 10.0;
+                    // Too far — follow player
+                    self.state = ZIBI_FOLLOW_PLAYER;
+                    self.state_timer = 3.0;
                 }
             } else {
-                self.state = ZIBI_FLEEING;
-                self.state_timer = 10.0;
+                self.state = ZIBI_FOLLOW_PLAYER;
+                self.state_timer = 3.0; // Check for obelisk every 3s while following
             }
         }
 
@@ -178,14 +224,13 @@ impl Zibi {
 
         // === STATE: WORKER — idle at obelisk ===
         if self.state == ZIBI_WORKER {
-            self.vx = 0.0;
-            self.vz = 0.0;
-            
             // Small idle movement: occasionally shift position slightly
             if self.state_timer <= 0.0 {
                 let r = rl::GetRandomValue(0, 100);
                 if r < 30 {
                     // Idle stand
+                    self.vx = 0.0;
+                    self.vz = 0.0;
                     self.state_timer = (float)rl::GetRandomValue(20, 50) / 10.0;
                 } else {
                     // Small wander near obelisk
@@ -208,27 +253,122 @@ impl Zibi {
             }
         }
 
-        // === STATE: FLEEING — run away from player, despawn ===
-        if self.state == ZIBI_FLEEING {
-            let fdx = self.x - player_x;
-            let fdz = self.z - player_z;
-            let flee_dist = (float)sqrt(fdx*fdx + fdz*fdz);
-            
-            if flee_dist > 0.1 {
-                self.yaw = (float)atan2(fdz, fdx);
-                self.vx = (fdx / flee_dist) * ZIBI_SPEED * 1.5;
-                self.vz = (fdz / flee_dist) * ZIBI_SPEED * 1.5;
+        // === STATE: FOLLOW PLAYER — no obelisks nearby ===
+        if self.state == ZIBI_FOLLOW_PLAYER {
+            // Re-check for obelisks periodically
+            if self.state_timer <= 0.0 {
+                self.state_timer = 3.0;
+                if self.find_obelisk(chunks, num_chunks) == 1 {
+                    self.state = ZIBI_WALK_TO_OBELISK;
+                }
             }
             
-            // Despawn after timer or distance
-            if self.state_timer <= 0.0 || flee_dist > 80.0 {
-                self.active = 0;
-                return 0;
+            let is_night = (day_time > 0.5);
+            let found_light = 0;
+            let target_lx = 0.0;
+            let target_lz = 0.0;
+            
+            if is_night {
+                let best_light = 0;
+                let bx = (int)floor(self.x);
+                let bz = (int)floor(self.z);
+                let by = (int)floor(self.y + 0.8);
+                
+                // Scan 5x5 blocks around zibi for highest light level
+                for sx in -6..7 {
+                    for sz in -6..7 {
+                        let packed_light = get_light_levels(chunks, num_chunks, bx + sx, by, bz + sz);
+                        let l_val = packed_light & 0xF; // Extract single light component to judge brightness
+                        if l_val > best_light {
+                            best_light = l_val;
+                            target_lx = (float)(bx + sx) + 0.5; // center of block
+                            target_lz = (float)(bz + sz) + 0.5;
+                        }
+                    }
+                }
+                
+                if best_light >= 8 {
+                    found_light = 1;
+                }
+            }
+            
+            let dx = player_x - self.x;
+            let dz = player_z - self.z;
+            
+            if found_light == 1 {
+                // Ignore player, walk to light
+                dx = target_lx - self.x;
+                dz = target_lz - self.z;
+            }
+            
+            let dist_to_target = (float)sqrt(dx*dx + dz*dz);
+            
+            if dist_to_target > 1.5 { // follow light or player if far
+                self.yaw = (float)atan2(dz, dx);
+                self.vx = (dx / dist_to_target) * ZIBI_SPEED * (found_light ? 1.0 : 1.5);
+                self.vz = (dz / dist_to_target) * ZIBI_SPEED * (found_light ? 1.0 : 1.5);
+            } else { // stop when close
+                self.vx = 0.0;
+                self.vz = 0.0;
+                
+                // turn to face randomly or stand still
+                if rl::GetRandomValue(0, 100) < 5 {
+                     self.yaw = (float)atan2(dz, dx);
+                }
+            }
+            
+            // Despawn if getting lost completely (only relative to player)
+            let p_dx = player_x - self.x;
+            let p_dz = player_z - self.z;
+            if (float)sqrt(p_dx*p_dx + p_dz*p_dz) > 120.0 {
+                 self.active = 0;
+                 return 0;
+            }
+        }
+        // === STATE: COMBAT — fight back against attacker ===
+        if self.state == ZIBI_COMBAT {
+            self.combat_timer -= dt;
+            if self.combat_timer <= 0.0 {
+                // Return to previous state
+                self.state = self.prev_state;
+            } else {
+                let dx = self.combat_target_x - self.x;
+                let dz = self.combat_target_z - self.z;
+                let dist_to_target = (float)sqrt(dx*dx + dz*dz);
+                
+                if dist_to_target > 1.2 {
+                    self.yaw = (float)atan2(dz, dx);
+                    self.vx = (dx / dist_to_target) * ZIBI_SPEED * 1.8;
+                    self.vz = (dz / dist_to_target) * ZIBI_SPEED * 1.8;
+                } else {
+                    self.vx = 0.0;
+                    self.vz = 0.0;
+                }
+                
+                // Attack nearby wolves
+                if self.attack_cooldown <= 0.0 {
+                    for wi in 0..max_wolves {
+                        if wolves[wi].active == 1 {
+                            let wdx = wolves[wi].x - self.x;
+                            let wdz = wolves[wi].z - self.z;
+                            let wdist = (float)sqrt(wdx*wdx + wdz*wdz);
+                            if wdist < 1.5 {
+                                wolves[wi].take_damage(3);
+                                self.attack_cooldown = 1.0;
+                                // Update combat target to this wolf
+                                self.combat_target_x = wolves[wi].x;
+                                self.combat_target_z = wolves[wi].z;
+                                self.combat_timer = 5.0; // refresh combat
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         }
 
         // --- Physics & Movement ---
-        if self.state == ZIBI_WALK_TO_OBELISK || self.state == ZIBI_FLEEING || self.state == ZIBI_WORKER {
+        if self.state == ZIBI_WALK_TO_OBELISK || self.state == ZIBI_FOLLOW_PLAYER || self.state == ZIBI_WORKER || self.state == ZIBI_COMBAT {
             // Smart obstacle avoidance
             let front_x = self.x + self.vx * 0.6;
             let front_z = self.z + self.vz * 0.6;
@@ -338,6 +478,13 @@ impl Zibi {
             c_tunic = rl::Color{ r: 200, g: 170, b: 60, a: 255 };
         }
         
+        // Invincibility glow (golden shimmer)
+        if self.invincibility_timer > 0.0 {
+            let shimmer = (int)(180.0 + 75.0 * (float)sin(self.anim_time * 8.0));
+            c_skin = rl::Color{ r: 255, g: shimmer, b: 50, a: 255 };
+            c_tunic = rl::Color{ r: 255, g: shimmer, b: 80, a: 255 };
+        }
+        
         // Hurt flash
         if self.hurt_flash > 0.0 {
             c_skin = rl::Color{ r: 255, g: 100, b: 100, a: 255 };
@@ -356,7 +503,7 @@ impl Zibi {
         
         // Animation variables
         let limb_swing = 0.0;
-        let is_moving = (self.state == ZIBI_WALK_TO_OBELISK || self.state == ZIBI_FLEEING || (self.state == ZIBI_WORKER && (float)sqrt(self.vx*self.vx + self.vz*self.vz) > 0.3));
+        let is_moving = (self.state == ZIBI_WALK_TO_OBELISK || self.state == ZIBI_COMBAT || (self.state == ZIBI_FOLLOW_PLAYER && (float)sqrt(self.vx*self.vx + self.vz*self.vz) > 0.3) || (self.state == ZIBI_WORKER && (float)sqrt(self.vx*self.vx + self.vz*self.vz) > 0.3));
         if is_moving { 
             limb_swing = (float)sin(self.anim_time * 12.0);
         }
@@ -401,6 +548,17 @@ impl Zibi {
         rl::rlRotatef(limb_swing * 40.0, 0.0, 0.0, 1.0);
         rl::DrawCube(rl::Vector3{x: 0.0, y: -0.25, z: 0.0}, 0.18, 0.6, 0.18, c_skin);
         rl::DrawCube(rl::Vector3{x: 0.0, y: 0.0, z: 0.0}, 0.2, 0.25, 0.2, c_tunic);
+        
+        // --- PICKAXE (only in combat) ---
+        if self.state == ZIBI_COMBAT {
+            // Handle (wooden stick)
+            rl::DrawCube(rl::Vector3{x: 0.0, y: -0.7, z: 0.0}, 0.08, 0.8, 0.08, rl::Color{r: 139, g: 90, b: 43, a: 255});
+            // Pickaxe head (iron-gray)
+            rl::DrawCube(rl::Vector3{x: 0.0, y: -1.05, z: 0.0}, 0.4, 0.08, 0.12, rl::Color{r: 160, g: 170, b: 180, a: 255});
+            // Pointed tip
+            rl::DrawCube(rl::Vector3{x: 0.2, y: -1.1, z: 0.0}, 0.12, 0.06, 0.08, rl::Color{r: 140, g: 150, b: 160, a: 255});
+        }
+        
         rl::rlPopMatrix();
 
         // --- 4. HEAD ---

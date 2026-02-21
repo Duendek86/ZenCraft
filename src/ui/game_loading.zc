@@ -20,7 +20,7 @@ let raw_load_progress: float = 0.0;
 
 fn process_loading_step(chunks: Chunk*, draw_distance: int) {
     if player_is_loaded == 0 {
-        save_was_found = load_player_data((any)&load_start_x, (any)&load_start_y, (any)&load_start_z, (any)&load_start_yaw, (any)&load_start_pitch, (any)&load_start_yaw); // Pasamos un dummy pointer para el bloque seleccionado
+        save_was_found = load_player_data((any)&load_start_x, (any)&load_start_y, (any)&load_start_z, (any)&load_start_yaw, (any)&load_start_pitch, (any)&load_start_yaw, NULL, NULL, NULL, NULL); // Pasamos un dummy pointer para el bloque seleccionado
         rl::DisableCursor();
         player_is_loaded = 1;
     }

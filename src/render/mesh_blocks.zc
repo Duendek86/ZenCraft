@@ -13,7 +13,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
         // Water specific macros
         #define IS_WATER_TYPE(b) ((b) == BLOCK_WATER || (b) == BLOCK_WATER_2 || (b) == BLOCK_WATER_1 || (b) == BLOCK_WATER_0)
         #define WATER_LEVEL(b) ((b) == BLOCK_WATER ? 4 : ((b) == BLOCK_WATER_2 ? 3 : ((b) == BLOCK_WATER_1 ? 2 : ((b) == BLOCK_WATER_0 ? 1 : 0))))
-        #define IS_TRANSPARENT_MESH(b) ((b) == 0 || ((b) >= 10 && (b) <= 14) || (b) == 17 || (b) == 4 || (b) == 6 || IS_WATER_TYPE(b) || (b) == 18 || (b) == BLOCK_POWER_SOURCE || (b) == BLOCK_POWER_CRYSTAL || (b) == BLOCK_CAGE || (b) == BLOCK_CHEST)
+        #define IS_TRANSPARENT_MESH(b) ((b) == 0 || ((b) >= 10 && (b) <= 14) || (b) == 17 || (b) == 4 || (b) == 6 || IS_WATER_TYPE(b) || (b) == 18 || (b) == BLOCK_OBELISK || (b) == BLOCK_POWER_CRYSTAL || (b) == BLOCK_CAGE || (b) == BLOCK_CHEST)
         #define SHOULD_RENDER_FACE(neighbor_block) \
             (IS_WATER_TYPE(btype) ? \
               ((neighbor_block) == BLOCK_AIR || ((neighbor_block) >= 10 && (neighbor_block) <= 14) || (neighbor_block) == BLOCK_TALLGRASS || (neighbor_block) == BLOCK_LEAVES) : \
@@ -25,7 +25,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
         int face_count = 0;
         int water_face_count = 0;
         
-        res.power_source_count = 0;
+        res.obelisk_count = 0;
         
         for (int x = 0; x < 16; x++) {
             for (int y = 0; y < CHUNK_HEIGHT; y++) {
@@ -36,13 +36,17 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                     int b_gx = gx_base + x;
                     int b_gz = gz_base + z;
                     
-                    if (btype == BLOCK_POWER_SOURCE) {
-                         if (res.power_source_count < 32) {
-                             res.power_sources[res.power_source_count].x = (float)x + 0.5f;
-                             res.power_sources[res.power_source_count].y = (float)y;
-                             res.power_sources[res.power_source_count].z = (float)z + 0.5f;
-                             res.power_sources[res.power_source_count].hp = 200;
-                             res.power_source_count++;
+                    if (btype == BLOCK_OBELISK) {
+                         if (res.obelisk_count < 32) {
+                             res.obelisks[res.obelisk_count].x = (float)x + 0.5f;
+                             res.obelisks[res.obelisk_count].y = (float)y;
+                             res.obelisks[res.obelisk_count].z = (float)z + 0.5f;
+                             res.obelisks[res.obelisk_count].hp = 200;
+                             res.obelisks[res.obelisk_count].max_hp = 200;
+                             res.obelisks[res.obelisk_count].level = 1;
+                             res.obelisks[res.obelisk_count].mana = 0.0f;
+                             res.obelisks[res.obelisk_count].max_mana = 100.0f;
+                             res.obelisk_count++;
                          }
                          continue;
                     }
@@ -168,7 +172,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
             for (int y = 0; y < CHUNK_HEIGHT; y++) {
                 for (int z = 0; z < 16; z++) {
                     int btype = c->blocks[x][y][z];
-                    if (btype == BLOCK_AIR || btype == BLOCK_POWER_SOURCE || btype == BLOCK_POWER_CRYSTAL || btype == BLOCK_CHEST) continue;
+                    if (btype == BLOCK_AIR || btype == BLOCK_OBELISK || btype == BLOCK_POWER_CRYSTAL || btype == BLOCK_CHEST) continue;
                     
                     int current_flag = 0;
                     if (btype == BLOCK_WATER || btype == BLOCK_WATER_2 || btype == BLOCK_WATER_1 || btype == BLOCK_WATER_0) current_flag = 255;
@@ -576,7 +580,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
                         else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
                         else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
-                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
+                        else if (btype == BLOCK_OBELISK) { SET_UV(1, 2); }
                         else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
                         else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
                         else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
@@ -600,7 +604,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
                         else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
                         else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
-                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
+                        else if (btype == BLOCK_OBELISK) { SET_UV(1, 2); }
                         else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
                         else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
                         else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
@@ -624,7 +628,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
                         else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
                         else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
-                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
+                        else if (btype == BLOCK_OBELISK) { SET_UV(1, 2); }
                         else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
                         else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
                         else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
@@ -648,7 +652,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
                         else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
                         else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
-                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
+                        else if (btype == BLOCK_OBELISK) { SET_UV(1, 2); }
                         else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
                         else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
                         else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
@@ -672,7 +676,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
                         else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
                         else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
-                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
+                        else if (btype == BLOCK_OBELISK) { SET_UV(1, 2); }
                         else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
                         else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
                         else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
@@ -696,7 +700,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
                         else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
                         else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
-                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
+                        else if (btype == BLOCK_OBELISK) { SET_UV(1, 2); }
                         else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
                         else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
                         else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }

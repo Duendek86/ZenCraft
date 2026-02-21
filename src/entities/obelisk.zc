@@ -1,0 +1,134 @@
+//> obelisk.zc
+import "../world/chunk.zc";
+import "zibi.zc";
+import "raylib.h" as rl;
+import "math.h";
+
+// Updates all obelisks, handles mana generation
+fn update_obelisks(chunks: Chunk*, num_chunks: int, dt: float) {
+    for ci in 0..num_chunks {
+        if chunks[ci].x == -9999 { continue; }
+        
+        for si in 0..chunks[ci].obelisk_count {
+            // Obelisk regeneration rate increases with level
+            let level = chunks[ci].obelisks[si].level;
+            
+            // max mana = level * 100
+            let m_mana = (float)(level * 100);
+            chunks[ci].obelisks[si].max_mana = m_mana;
+            
+            let c_mana = chunks[ci].obelisks[si].mana;
+            if (c_mana < m_mana) {
+                // Generate 5 mana per second, scaled by level
+                let regen = 5.0 * (float)level * dt;
+                c_mana += regen;
+                
+                if (c_mana > m_mana) {
+                    c_mana = m_mana;
+                }
+                chunks[ci].obelisks[si].mana = c_mana;
+            }
+        }
+    }
+}
+
+// Draws the floating UI over each obelisk
+fn draw_obelisk_ui(chunks: Chunk*, num_chunks: int, zibis: Zibi*, num_zibis: int, camera: rl::Camera) {
+    for ci in 0..num_chunks {
+        if chunks[ci].x == -9999 { continue; }
+        
+        for si in 0..chunks[ci].obelisk_count {
+            let ox = (float)(chunks[ci].x * 16) + chunks[ci].obelisks[si].x;
+            let oy = chunks[ci].obelisks[si].y;
+            let oz = (float)(chunks[ci].z * 16) + chunks[ci].obelisks[si].z;
+            
+            // Center top of the obelisk
+            let ui_pos = rl::Vector3{x: ox, y: oy + 2.5, z: oz};
+            
+            // Check distance to camera
+            let dx = ui_pos.x - camera.position.x;
+            let dy = ui_pos.y - camera.position.y;
+            let dz = ui_pos.z - camera.position.z;
+            let dist = (float)sqrt(dx*dx + dy*dy + dz*dz);
+            
+            if dist > 30.0 { continue; } // Don't draw if too far
+            
+            // Get screen position
+            let screen_pos = rl::GetWorldToScreenEx(ui_pos, camera, rl::GetScreenWidth(), rl::GetScreenHeight());
+            
+            // Raylib GetWorldToScreen returns Vector2. Wait, GetWorldToScreen return Vector2, but sometimes we need to know if it's behind the camera.
+            // Let's check if the obelisk is somewhat in front of the camera via dot product.
+            let fwd_x = camera.target.x - camera.position.x;
+            let fwd_y = camera.target.y - camera.position.y;
+            let fwd_z = camera.target.z - camera.position.z;
+            let dot = dx * fwd_x + dy * fwd_y + dz * fwd_z;
+            
+            if dot > 0.0 { // Obelisk is in front of the camera
+                let draw_x = (int)screen_pos.x;
+                let draw_y = (int)screen_pos.y;
+                
+                // Count workers
+                let workers = 0;
+                for zi in 0..num_zibis {
+                    // if active and worker state and target is this obelisk
+                    if zibis[zi].active == 1 && zibis[zi].state == 2 /* ZIBI_WORKER */ {
+                        let zx = zibis[zi].target_x;
+                        let zy = zibis[zi].target_y;
+                        let zz = zibis[zi].target_z;
+                        
+                        let tx = ox - zx;
+                        let ty = oy - zy;
+                        let tz = oz - zz;
+                        
+                        if (float)sqrt(tx*tx + ty*ty + tz*tz) < 1.0 {
+                            workers++;
+                        }
+                    }
+                }
+                
+                // --- DRAW UI ---
+                let panel_w = 240;
+                let panel_h = 80;
+                
+                let hp_bar_h = 0;
+                let cur_hp = chunks[ci].obelisks[si].hp;
+                let max_hp = chunks[ci].obelisks[si].max_hp;
+                let has_damage = cur_hp < max_hp;
+                
+                let sx = draw_x - panel_w / 2;
+                let sy = draw_y - panel_h;
+                
+                // HP Bar (Draw above the panel)
+                if has_damage {
+                    let hp_pct = (float)cur_hp / (float)max_hp;
+                    if hp_pct < 0.0 { hp_pct = 0.0; }
+                    rl::DrawRectangle(sx, sy - 25, panel_w, 20, rl::RED);
+                    rl::DrawRectangle(sx, sy - 25, (int)((float)panel_w * hp_pct), 20, rl::GREEN);
+                }
+                
+                // Background
+                rl::DrawRectangle(sx, sy, panel_w, panel_h, rl::Color{r: 30, g: 30, b: 30, a: 200});
+                
+                let cur_y = sy + 10;
+                
+                // Level & Mana
+                let level = chunks[ci].obelisks[si].level;
+                let mana = chunks[ci].obelisks[si].mana;
+                let max_mana = chunks[ci].obelisks[si].max_mana;
+                let pct = mana / max_mana;
+                
+                rl::DrawText(rl::TextFormat("Lv.%d", level), sx + 10, cur_y, 20, rl::WHITE);
+                
+                // Mana Bar
+                rl::DrawRectangle(sx + 80, cur_y, 140, 20, rl::DARKGRAY);
+                rl::DrawRectangle(sx + 80, cur_y, (int)(140.0 * pct), 20, rl::PURPLE);
+                cur_y += 30;
+                
+                // Workers
+                rl::DrawText(rl::TextFormat("Zibis: %d", workers), sx + 10, cur_y, 20, rl::YELLOW);
+                cur_y += 30;
+            }
+            }
+        }
+    }
+}

@@ -44,9 +44,27 @@ fn upload_chunk_mesh(c: Chunk*, meshes: ChunkMeshes) {
         c.water_mesh_built = 0; 
     }
     
-    c.power_source_count = meshes.power_source_count;
-    for i in 0..meshes.power_source_count {
-        c.power_sources[i] = meshes.power_sources[i];
+    let old_count = c.obelisk_count;
+    if old_count > 32 { old_count = 32; }
+    
+    for i in 0..meshes.obelisk_count {
+        for j in 0..old_count {
+            if (int)c.obelisks[j].x == (int)meshes.obelisks[i].x &&
+               (int)c.obelisks[j].y == (int)meshes.obelisks[i].y &&
+               (int)c.obelisks[j].z == (int)meshes.obelisks[i].z {
+                 meshes.obelisks[i].hp = c.obelisks[j].hp;
+                 meshes.obelisks[i].mana = c.obelisks[j].mana;
+                 meshes.obelisks[i].level = c.obelisks[j].level;
+                 meshes.obelisks[i].max_hp = c.obelisks[j].max_hp;
+                 meshes.obelisks[i].max_mana = c.obelisks[j].max_mana;
+                 break;
+            }
+        }
+    }
+    
+    c.obelisk_count = meshes.obelisk_count;
+    for i in 0..meshes.obelisk_count {
+        c.obelisks[i] = meshes.obelisks[i];
     }
     
     c.mesh_dirty = 0;

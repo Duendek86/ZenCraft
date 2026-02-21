@@ -116,3 +116,147 @@ fn get_block_name(btype: int) -> any {
     if btype == BLOCK_CHEST { return "Chest"; }
     return "Block";
 }
+
+// --- Scepter Inventory UI ---
+
+let show_scepter_ui: int = 0;
+let inv_held_slot: int = -1; // Slot currently picked up (-1 = none)
+
+fn toggle_scepter_ui() {
+    show_scepter_ui = !show_scepter_ui;
+    if show_scepter_ui {
+        rl::EnableCursor();
+        inv_held_slot = -1; // Reset held item when opening
+    } else {
+        rl::DisableCursor();
+        inv_held_slot = -1;
+    }
+}
+
+fn is_scepter_ui_open() -> int {
+    return show_scepter_ui;
+}
+
+// Draw a single inventory slot (imported visually from chest_ui)
+fn draw_scepter_inv_slot(x: int, y: int, size: int, stack: ItemStack*, hovered: int) {
+    let bg = rl::Color{r: 40, g: 40, b: 50, a: 220};
+    if hovered == 1 { bg = rl::Color{r: 70, g: 70, b: 90, a: 240}; }
+    rl::DrawRectangle(x, y, size, size, bg);
+    rl::DrawRectangleLines(x, y, size, size, rl::Color{r: 100, g: 100, b: 120, a: 255});
+    
+    if stack.block_type != BLOCK_AIR && stack.count > 0 {
+        let ic = get_block_color(stack.block_type);
+        let pad = 6;
+        rl::DrawRectangle(x + pad, y + pad, size - pad*2, size - pad*2, ic);
+        let dark = rl::Color{r: (int)((float)ic.r * 0.6), g: (int)((float)ic.g * 0.6), b: (int)((float)ic.b * 0.6), a: 255};
+        rl::DrawRectangle(x + pad, y + size - pad - 4, size - pad*2, 4, dark);
+        
+        if stack.count > 1 {
+            let txt = rl::TextFormat("%d", stack.count);
+            let tw = rl::MeasureText(txt, 14);
+            rl::DrawText(txt, x + size - tw - 4, y + size - 16, 14, rl::WHITE);
+        }
+    }
+}
+
+fn draw_scepter_ui() {
+    if show_scepter_ui == 0 { return; }
+    
+    let screen_w = rl::GetScreenWidth();
+    let screen_h = rl::GetScreenHeight();
+    
+    rl::DrawRectangle(0, 0, screen_w, screen_h, rl::Color{r: 0, g: 0, b: 0, a: 150});
+    
+    let slot_size = 48;
+    let cols = 9;
+    let padding = 20;
+    
+    let panel_w = cols * slot_size + padding * 2 + (cols - 1) * 4;
+    let panel_h = 380;
+    let lx = (screen_w - panel_w) / 2;
+    let ly = (screen_h - panel_h) / 2;
+    
+    let mx = rl::GetMouseX();
+    let my = rl::GetMouseY();
+    let left_click = rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_LEFT);
+    let right_click = rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_RIGHT);
+    
+    rl::DrawRectangle(lx - 4, ly - 4, panel_w + 8, panel_h + 8, rl::Color{r: 30, g: 25, b: 45, a: 240});
+    rl::DrawRectangle(lx, ly, panel_w, panel_h, rl::Color{r: 50, g: 45, b: 65, a: 230});
+    rl::DrawRectangleLines(lx - 4, ly - 4, panel_w + 8, panel_h + 8, rl::Color{r: 130, g: 100, b: 200, a: 255});
+    
+    let title_s = "SCEPTER INVENTORY";
+    let tw_s = rl::MeasureText(title_s, 22);
+    rl::DrawText(title_s, lx + (panel_w - tw_s) / 2, ly + 10, 22, rl::Color{r: 200, g: 180, b: 255, a: 255});
+    
+    let slot_y_start = ly + 45;
+    for i in 0..INV_SLOTS {
+        let col = i % cols;
+        let row = i / cols;
+        let sx = lx + padding + col * (slot_size + 4);
+        let sy = slot_y_start + row * (slot_size + 4);
+        
+        let hovered = (mx >= sx && mx < sx + slot_size && my >= sy && my < sy + slot_size);
+        
+        // Highlight held slot
+        let is_held = (inv_held_slot == i);
+        if is_held {
+            rl::DrawRectangle(sx, sy, slot_size, slot_size, rl::Color{r: 80, g: 60, b: 120, a: 240});
+            rl::DrawRectangleLines(sx, sy, slot_size, slot_size, rl::Color{r: 200, g: 150, b: 255, a: 255});
+        } else {
+            draw_scepter_inv_slot(sx, sy, slot_size, &scepter_inv.slots[i], hovered);
+        }
+        
+        // Left click: pick up or swap
+        if hovered && left_click {
+            if inv_held_slot == -1 {
+                // Pick up from this slot
+                if scepter_inv.slots[i].block_type != BLOCK_AIR && scepter_inv.slots[i].count > 0 {
+                    inv_held_slot = i;
+                }
+            } else {
+                // Swap held slot with this slot
+                let tmp_type = scepter_inv.slots[i].block_type;
+                let tmp_count = scepter_inv.slots[i].count;
+                scepter_inv.slots[i].block_type = scepter_inv.slots[inv_held_slot].block_type;
+                scepter_inv.slots[i].count = scepter_inv.slots[inv_held_slot].count;
+                scepter_inv.slots[inv_held_slot].block_type = tmp_type;
+                scepter_inv.slots[inv_held_slot].count = tmp_count;
+                inv_held_slot = -1;
+            }
+        }
+        
+        // Right click: delete item from slot
+        if hovered && right_click {
+            if scepter_inv.slots[i].block_type != BLOCK_AIR {
+                scepter_inv.slots[i].block_type = BLOCK_AIR;
+                scepter_inv.slots[i].count = 0;
+                if inv_held_slot == i { inv_held_slot = -1; }
+            }
+        }
+        
+        // Tooltip on hover (not when holding)
+        if hovered && scepter_inv.slots[i].block_type != BLOCK_AIR && inv_held_slot == -1 {
+            let name = get_block_name(scepter_inv.slots[i].block_type);
+            rl::DrawText(rl::TextFormat("%s", name), mx + 15, my - 5, 16, rl::YELLOW);
+        }
+    }
+    
+    // Draw held item at cursor
+    if inv_held_slot != -1 && scepter_inv.slots[inv_held_slot].block_type != BLOCK_AIR {
+        let ic = get_block_color(scepter_inv.slots[inv_held_slot].block_type);
+        rl::DrawRectangle(mx - 16, my - 16, 32, 32, ic);
+        rl::DrawRectangleLines(mx - 16, my - 16, 32, 32, rl::WHITE);
+        if scepter_inv.slots[inv_held_slot].count > 1 {
+            rl::DrawText(rl::TextFormat("%d", scepter_inv.slots[inv_held_slot].count), mx + 8, my + 8, 14, rl::WHITE);
+        }
+    }
+    
+    let hint = "LClick: Move | RClick: Delete | I/ESC: Close";
+    let hw = rl::MeasureText(hint, 16);
+    rl::DrawText(hint, (screen_w - hw) / 2, ly + panel_h + 20, 16, rl::Color{r: 180, g: 180, b: 180, a: 200});
+    
+    if rl::IsKeyPressed(rl::KEY_ESCAPE) {
+        toggle_scepter_ui();
+    }
+}

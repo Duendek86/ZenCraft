@@ -27,6 +27,10 @@ struct ChunkData {
     skulls: Skull[4];
     skull_count: int;
     light_calculated: int; 
+    obelisk_count: int;
+    obelisks: Obelisk[32];
+    chest_count: int;
+    chests: ChestData[8];
 }
 
 struct Skull {
@@ -59,6 +63,31 @@ struct PlayerSaveData {
     selected_block: int;
     yaw: float; 
     pitch: float;
+    
+    // Wave state
+    wave_number: int;
+    wave_spawned_today: int;
+    day_time: float;
+    
+    // Global entities
+    zibis: ZibiSaveData[64];
+}
+
+struct ZibiSaveData {
+    active: int;
+    state: int;
+    hp: int;
+    x: float;
+    y: float;
+    z: float;
+    vx: float;
+    vz: float;
+    yaw: float;
+    state_timer: float;
+    work_timer: float;
+    home_chunk_x: int;
+    home_chunk_z: int;
+    obelisk_idx: int;
 }
 
 struct WorkerConfig {

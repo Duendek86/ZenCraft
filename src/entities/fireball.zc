@@ -9,12 +9,13 @@ import "../render/rendering.zc";
 
 def MAX_FIREBALLS = 8;
 def FIREBALL_SPEED = 30.0;
-def FIREBALL_RADIUS = 2; // Explosion radius in blocks
+def FIREBALL_RADIUS = 2; // Explosion radius in blocks (Level 2+)
 def FIREBALL_MANA_COST = 20.0;
 def FIREBALL_LIFETIME = 5.0; // Seconds before fizzle
 
 struct Fireball {
     active: int;
+    level: int;
     x: float; y: float; z: float;
     vx: float; vy: float; vz: float;
     life: float;
@@ -30,12 +31,13 @@ fn init_fireballs() {
     fireball_initialized = 1;
 }
 
-fn spawn_fireball(px: float, py: float, pz: float, dx: float, dy: float, dz: float) {
+fn spawn_fireball(level: int, px: float, py: float, pz: float, dx: float, dy: float, dz: float) {
     if fireball_initialized == 0 { init_fireballs(); }
     
     for i in 0..MAX_FIREBALLS {
         if fireballs[i].active == 0 {
             fireballs[i].active = 1;
+            fireballs[i].level = level;
             // Start slightly in front of player
             fireballs[i].x = px + dx * 1.5;
             fireballs[i].y = py + dy * 1.5;
@@ -49,8 +51,8 @@ fn spawn_fireball(px: float, py: float, pz: float, dx: float, dy: float, dz: flo
     }
 }
 
-fn fireball_explode(fx: float, fy: float, fz: float, chunks: Chunk*, num_chunks: int) {
-    // Destroy blocks in a sphere of FIREBALL_RADIUS
+fn fireball_explode(level: int, fx: float, fy: float, fz: float, chunks: Chunk*, num_chunks: int) {
+    // Destroy blocks
     let cx_i = (int)floor(fx);
     let cy_i = (int)floor(fy);
     let cz_i = (int)floor(fz);
@@ -59,12 +61,15 @@ fn fireball_explode(fx: float, fy: float, fz: float, chunks: Chunk*, num_chunks:
     let affected_chunks: int[16]; // Up to 16 chunk indices affected
     let num_affected = 0;
     
-    for bx in -FIREBALL_RADIUS..FIREBALL_RADIUS+1 {
-        for by in -FIREBALL_RADIUS..FIREBALL_RADIUS+1 {
-            for bz in -FIREBALL_RADIUS..FIREBALL_RADIUS+1 {
+    let rad = FIREBALL_RADIUS;
+    if level == 1 { rad = 0; } // Level 1 only destroys the exact hit block
+    
+    for bx in -rad..rad+1 {
+        for by in -rad..rad+1 {
+            for bz in -rad..rad+1 {
                 // Sphere check
                 let dist2 = bx*bx + by*by + bz*bz;
-                if dist2 > FIREBALL_RADIUS * FIREBALL_RADIUS { continue; }
+                if dist2 > rad * rad && level > 1 { continue; }
                 
                 let wx = cx_i + bx;
                 let wy = cy_i + by;
@@ -111,7 +116,55 @@ fn fireball_explode(fx: float, fy: float, fz: float, chunks: Chunk*, num_chunks:
     spawn_explosion(fx, fy, fz, 10, rl::Color{r: 255, g: 255, b: 200, a: 255});
 }
 
-fn update_fireballs(dt: float, chunks: Chunk*, num_chunks: int) {
+import "shadow_wolf.zc";
+import "zibi.zc";
+
+fn apply_splash_damage(fx: float, fy: float, fz: float, chunks: Chunk*, num_chunks: int, wolves: ShadowWolf*, max_wolves: int, zibis: Zibi*, max_zibis: int) {
+    let splash_radius = 1.6; // 3x3 blocks area
+    let damage = 25; // Base fireball damage
+
+    // 1. Damage Wolves
+    for wi in 0..max_wolves {
+        if wolves[wi].active == 1 {
+            let dx = wolves[wi].x - fx; let dy = wolves[wi].y - fy; let dz = wolves[wi].z - fz;
+            let dist = (float)sqrt(dx*dx + dy*dy + dz*dz);
+            if dist <= splash_radius { wolves[wi].take_damage(damage); }
+        }
+    }
+    
+    // 2. Damage Zibis
+    for zi in 0..max_zibis {
+        if zibis[zi].active == 1 {
+            let dx = zibis[zi].x - fx; let dy = zibis[zi].y - fy; let dz = zibis[zi].z - fz;
+            let dist = (float)sqrt(dx*dx + dy*dy + dz*dz);
+            if dist <= splash_radius { zibis[zi].take_damage(damage); }
+        }
+    }
+    
+    // 3. Damage Obelisks
+    for ci in 0..num_chunks {
+        if chunks[ci].x == -9999 { continue; }
+        for si in 0..chunks[ci].obelisk_count {
+            let ox = (float)(chunks[ci].x * 16) + chunks[ci].obelisks[si].x;
+            let oy = chunks[ci].obelisks[si].y;
+            let oz = (float)(chunks[ci].z * 16) + chunks[ci].obelisks[si].z;
+            let dx = ox - fx; let dy = oy - fy; let dz = oz - fz;
+            let dist = (float)sqrt(dx*dx + dy*dy + dz*dz);
+            if dist <= splash_radius + 1.0 { // Obelisks are larger logically
+                chunks[ci].obelisks[si].hp -= damage;
+                chunks[ci].mesh_dirty = 1;
+                if chunks[ci].obelisks[si].hp <= 0 {
+                    set_block(chunks, num_chunks, (int)ox, (int)oy, (int)oz, BLOCK_AIR);
+                    set_block(chunks, num_chunks, (int)ox, (int)oy + 1, (int)oz, BLOCK_AIR);
+                    set_block(chunks, num_chunks, (int)ox, (int)oy + 2, (int)oz, BLOCK_AIR);
+                    chunks[ci].mesh_dirty = 1;
+                }
+            }
+        }
+    }
+}
+
+fn update_fireballs(dt: float, chunks: Chunk*, num_chunks: int, wolves: ShadowWolf*, max_wolves: int, zibis: Zibi*, max_zibis: int) {
     if fireball_initialized == 0 { init_fireballs(); }
     
     for i in 0..MAX_FIREBALLS {
@@ -140,7 +193,8 @@ fn update_fireballs(dt: float, chunks: Chunk*, num_chunks: int) {
         
         if hit_block == 1 {
             // EXPLODE!
-            fireball_explode(fireballs[i].x, fireballs[i].y, fireballs[i].z, chunks, num_chunks);
+            fireball_explode(fireballs[i].level, fireballs[i].x, fireballs[i].y, fireballs[i].z, chunks, num_chunks);
+            apply_splash_damage(fireballs[i].x, fireballs[i].y, fireballs[i].z, chunks, num_chunks, wolves, max_wolves, zibis, max_zibis);
             fireballs[i].active = 0;
             continue;
         }

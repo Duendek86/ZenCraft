@@ -3,6 +3,9 @@ echo ========================================
 echo       Construyendo ZenCraft...
 echo ========================================
 echo.
+REM Borrando out.c si existe
+if exist out.c del out.c
+
 
 echo [1/2] Compilando main.zc a C...
 ..\zc.com transpile ./src/main.zc
