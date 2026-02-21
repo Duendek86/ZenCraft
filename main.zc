@@ -45,6 +45,8 @@ import "game_loading.zc";
 import "game_ui.zc";
 import "player_interaction.zc";
 import "bloom.zc";
+import "inventory.zc";
+import "chest_ui.zc";
 
 def VERSION_TEXT = "v0.0.1.15 alpha-dev";
 def MAX_ZIBIS = 10;
@@ -96,7 +98,8 @@ fn main() {
         rl::CloseWindow();
     }
 
-    for i in 0..MAX_CHUNKS { chunks[i].x = -9999; chunks[i].z = -9999; chunks[i].locked = 0; }
+    for i in 0..MAX_CHUNKS { chunks[i].x = -9999; chunks[i].z = -9999; chunks[i].locked = 0; chunks[i].chest_count = 0; }
+    scepter_init();
     
     let day_time = 0.2;
     let title_start_time = rl::GetTime();
@@ -551,10 +554,11 @@ fn main() {
             
             for i in 0..MAX_ZIBIS { zibis[i].draw(chunks, MAX_CHUNKS, day_time); }
             for wi in 0..MAX_WOLVES { wolves[wi].draw(chunks, MAX_CHUNKS, day_time); }
+            draw_chests_3d(chunks, MAX_CHUNKS, day_time);
             draw_particles();
             draw_fireballs();
             
-            if show_settings == 0 && show_spellbook == 0 {
+            if show_settings == 0 && show_spellbook == 0 && is_chest_ui_open() == 0 {
                 handle_player_interaction(&p, chunks, dt, selected_block, spellbook.selected_spell);
             }
             
@@ -569,6 +573,7 @@ fn main() {
             if show_debug_info { draw_debug_info(&p, chunks, dt, day_time, draw_distance, worker_count, active_wolves); }
             if show_settings { draw_settings_menu(&draw_distance, &grass_dist); }
             if show_spellbook { draw_spellbook(&spellbook, &selected_block); }
+            draw_chest_ui(chunks);
 
             rl::EndDrawing();
         }

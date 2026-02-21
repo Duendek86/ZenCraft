@@ -1,6 +1,7 @@
 //> Core data structures and base helpers for Chunks
 import "raylib.h" as rl;
 import "blocks.zc";
+import "inventory.zc";
 
 raw {
     typedef struct Chunk Chunk;
@@ -30,6 +31,13 @@ struct PowerSource {
     hp: int; // Obelisk health, starts at 200
 }
 
+struct ChestData {
+    x: int; y: int; z: int;
+    items: Inventory;
+    open: float; // 0.0 = closed, 1.0 = fully open (animation)
+    active: int;
+}
+
 struct ChunkMeshes {
     opq_mesh: rl::Mesh; water: rl::Mesh;
     has_opaque: int; has_water: int;
@@ -53,13 +61,15 @@ struct Chunk {
     plant_mesh_built: int;
     grass_deco_mesh: rl::Mesh; grass_deco_model: rl::Model;
     grass_deco_built: int;
+    chests: ChestData[8];
+    chest_count: int;
     mesh_dirty: int; mesh_built: int;
     x: int; z: int; locked: int;
     last_water_tick: double;
 }
 
 fn is_transparent(b: int) -> int {
-    if b == BLOCK_AIR || (b >= 10 && b <= 14) || b == 17 || b == BLOCK_TALLGRASS || b == BLOCK_LEAVES || b == BLOCK_WATER || b == BLOCK_WATER_2 || b == BLOCK_WATER_1 || b == BLOCK_WATER_0 || b == 18 || b == BLOCK_POWER_SOURCE || b == BLOCK_POWER_CRYSTAL || b == BLOCK_CAGE { return 1; }
+    if b == BLOCK_AIR || (b >= 10 && b <= 14) || b == 17 || b == BLOCK_TALLGRASS || b == BLOCK_LEAVES || b == BLOCK_WATER || b == BLOCK_WATER_2 || b == BLOCK_WATER_1 || b == BLOCK_WATER_0 || b == 18 || b == BLOCK_POWER_SOURCE || b == BLOCK_POWER_CRYSTAL || b == BLOCK_CAGE || b == BLOCK_CHEST { return 1; }
     return 0;
 }
 

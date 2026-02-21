@@ -330,6 +330,11 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                         set_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z, fill_block);
                         remove_plant_at(chunks, MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
                         
+                        // Collect block into scepter inventory
+                        if b_hit != BLOCK_WATER && b_hit != BLOCK_WATER_0 && b_hit != BLOCK_WATER_1 && b_hit != BLOCK_WATER_2 && b_hit != BLOCK_POWER_SOURCE && b_hit != BLOCK_POWER_CRYSTAL && b_hit != BLOCK_AIR {
+                            scepter_add_item(b_hit);
+                        }
+                        
                         let above = get_block(chunks, MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
                         if above == BLOCK_TALLGRASS || above == 10 || above == BLOCK_LEAVES {
                             set_block(chunks, MAX_CHUNKS, hit.x, hit.y + 1, hit.z, BLOCK_AIR);
@@ -389,8 +394,17 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
             destroy_timer = 0.0; destroy_target_x = -999;
         }
         
-        // --- Block Placement (only when Place Block spell is selected) ---
+        // --- Block Placement / Chest Interaction ---
         if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_RIGHT) && selected_spell == 0 {
+            // Check if right-clicking a chest → open chest UI
+            let hit_block = get_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z);
+            if hit_block == BLOCK_CHEST {
+                let out_ci = 0;
+                let out_chi = 0;
+                if find_chest_at(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z, &out_ci, &out_chi) == 1 {
+                    open_chest_ui(out_ci, out_chi);
+                }
+            } else {
             let nx = hit.x + hit.face_x; let ny = hit.y + hit.face_y; let nz = hit.z + hit.face_z;
             let dist_x = p.x - ((float)nx + 0.5); let dist_y = p.y + 1.6 - ((float)ny + 0.5); let dist_z = p.z - ((float)nz + 0.5);
             
@@ -448,9 +462,15 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                     
                     let cz_pz = (int)floor((float)(nz-1) / 16.0); let idx_pz = get_chunk_index(cx, cz_pz);
                     if idx_pz != idx { request_mesh_async(idx_pz, 1); request_light_async(idx_pz, 4, 1); chunks[idx_pz].grass_deco_built = 0; }
+                    
+                    // Register chest placement
+                    if block_to_place == BLOCK_CHEST {
+                        place_chest(chunks, MAX_CHUNKS, nx, ny, nz);
+                    }
                     }
                 }
             }
+            } // end else (not chest interaction)
         }
     } else {
         destroy_timer = 0.0; destroy_target_x = -999;

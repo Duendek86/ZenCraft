@@ -33,4 +33,5 @@ def BLOCK_SNOW = 24;    // Frozen biome surface
 def BLOCK_ICE = 25;     // Frozen water
 def BLOCK_CACTUS = 26;  // Desert decoration
 def BLOCK_CAGE = 27;    // Zibi cage
+def BLOCK_CHEST = 28;   // Storage chest
 
