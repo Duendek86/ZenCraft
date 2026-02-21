@@ -1,0 +1,377 @@
+//> Title Screen Generator - Zen Island Edition
+import "raylib.h" as rl;
+import "math.h"; // CRITICAL: Required for floor() and sqrt()
+import "../world/chunk.zc";
+import "../world/persistence.zc";
+import "../world/blocks.zc";
+import "src/zalloc.h";
+
+let title_tick_accum: float = 0.0;
+
+// Helper to set block in ChunkData (Renamed to avoid collisions)
+fn title_set_block_raw(data: ChunkData*, x: int, y: int, z: int, type: int) {
+    if x >= 0 && x < 16 && y >= 0 && y < CHUNK_HEIGHT && z >= 0 && z < 16 {
+        data.blocks[x][y][z] = type;
+        
+        // Simple lighting logic: Air and Water let light through
+        if type == BLOCK_AIR || type == BLOCK_WATER || type == BLOCK_LEAVES {
+            data.light[x][y][z] = 15;
+        } else {
+            data.light[x][y][z] = 0;
+        }
+    }
+}
+
+// --- NOISE HELPERS (Renamed to avoid world generator collisions) ---
+fn title_noise2(x: int, z: int) -> float {
+    let n = x + z * 57;
+    n = (n << 13) ^ n;
+    // Cast to float MUST happen AFTER the bitwise AND (&) operation
+    return (1.0 - (float)((n * (n * n * 15731 + 789221) + 1376312589) & 0x7fffffff) / 1073741824.0);
+}
+
+fn title_smooth_noise(x: float, z: float) -> float {
+    let ix = (int)floor(x);
+    let iz = (int)floor(z);
+    let fx = x - (float)ix;
+    let fz = z - (float)iz;
+    
+    let v1 = title_noise2(ix, iz);
+    let v2 = title_noise2(ix+1, iz);
+    let v3 = title_noise2(ix, iz+1);
+    let v4 = title_noise2(ix+1, iz+1);
+    
+    let i1 = v1*(1.0-fx) + v2*fx;
+    let i2 = v3*(1.0-fx) + v4*fx;
+    
+    return i1*(1.0-fz) + i2*fz;
+}
+
+// --- TREE GENERATION ---
+fn title_draw_classic_tree(data: ChunkData*, x: int, y: int, z: int) {
+    let height = 5 + (x % 2);
+    
+    // Trunk
+    for i in 0..height {
+        if (y+i) < CHUNK_HEIGHT {
+            title_set_block_raw(data, x, y+i, z, BLOCK_LOG);
+        }
+    }
+    
+    // Leaves
+    let top = y + height;
+    
+    for ly in 0..2 {
+        for lx in -2..3 {
+            for lz in -2..3 {
+                if (rl::abs(lx) + rl::abs(lz)) <= 3 {
+                     title_set_block_raw(data, x+lx, top-ly, z+lz, BLOCK_LEAVES);
+                }
+            }
+        }
+    }
+    
+    // Top cap
+    title_set_block_raw(data, x, top+1, z, BLOCK_LEAVES);
+    title_set_block_raw(data, x+1, top+1, z, BLOCK_LEAVES);
+    title_set_block_raw(data, x-1, top+1, z, BLOCK_LEAVES);
+    title_set_block_raw(data, x, top+1, z+1, BLOCK_LEAVES);
+    title_set_block_raw(data, x, top+1, z-1, BLOCK_LEAVES);
+}
+
+// --- TEXT GENERATION ---
+fn title_get_text_block(gx: int, gy: int, gz: int) -> int {
+    // Center text on the island
+    let z_plane = 8;
+    
+    if gz != z_plane { return 0; }
+
+    // Position adjusted for new island height
+    let y_zen = 16; // High up
+    let y_craft = 10; // Slightly lower
+    
+    // --- ZEN --- (Gold)
+    if gy >= y_zen && gy < y_zen + 5 {
+        let ly = gy - y_zen;
+        let lx = gx - (-6); // Z
+        
+        if lx >= 0 && lx < 4 {
+             if ly==0 || ly==4 { return BLOCK_GOLD_ORE; }
+             if lx == ly { return BLOCK_GOLD_ORE; }
+        }
+        
+        lx = gx - (-1); // E
+        if lx >= 0 && lx < 4 {
+            if lx==0 { return BLOCK_GOLD_ORE; }
+            if ly==0 || ly==2 || ly==4 { return BLOCK_GOLD_ORE; }
+        }
+        
+        lx = gx - (4); // N
+        if lx >= 0 && lx < 4 {
+            if lx==0 || lx==3 { return BLOCK_GOLD_ORE; }
+            if lx == ly && lx < 3 { return BLOCK_GOLD_ORE; }
+        }
+    }
+
+    // --- CRAFT --- (Log/Stone)
+    if gy >= y_craft && gy < y_craft + 5 {
+        let ly = gy - y_craft;
+        let mat = BLOCK_LOG;
+        
+        let lx = gx - (-10); // C
+        if lx >= 0 && lx < 4 {
+            if ly>0 && ly<4 && lx==0 { return mat; }
+            if (ly==0 || ly==4) && lx>0 { return mat; }
+        }
+        
+        lx = gx - (-5); // R
+        if lx >= 0 && lx < 4 {
+            if lx==0 { return mat; }
+            if (ly==2 || ly==4) && lx<3 { return mat; }
+            if ly==3 && lx==3 { return mat; }
+            if ly>1 && lx==3 && ly!=3 { return 0; }
+            if ly==1 && lx==3 { return mat; }
+        }
+        
+        lx = gx - (0); // A
+        if lx >= 0 && lx < 4 {
+             if ly!=4 && (lx==0 || lx==3) { return mat; }
+             if ly==4 && (lx>0 && lx<3) { return mat; }
+             if ly==2 { return mat; }
+        }
+        
+        lx = gx - (5); // F
+        if lx >= 0 && lx < 4 {
+            if lx==0 { return mat; }
+            if ly==4 || ly==2 { return mat; }
+        }
+        
+        lx = gx - (9); // T
+        if lx >= 0 && lx < 3 {
+            if lx==1 { return mat; }
+            if ly==4 { return mat; }
+        }
+    }
+    
+    return 0;
+}
+
+// --- MAIN GENERATOR ---
+fn generate_title_chunk(data: ChunkData*, chunk_x: int, chunk_z: int) {
+    let WATER_LEVEL = 4;
+    
+    for cx in 0..16 {
+        for cz in 0..16 {
+            let gx = chunk_x * 16 + cx;
+            let gz = chunk_z * 16 + cz;
+            
+            // --- INVERTED SHAPE: ISLAND + CLIFF ---
+            let dist = sqrt((float)(gx*gx + gz*gz));
+            
+            // Base Noise
+            let n_terrain = title_smooth_noise((float)gx * 0.04, (float)gz * 0.04);
+            
+            // Island Formula: Max Height minus Distance
+            let island_base = 14.0 - (dist * 0.6);
+            let h = (int)(island_base + (n_terrain * 4.0));
+            
+            // --- NEW: Stone Cliff in the corner (-X, -Z) ---
+            let is_cliff = 0;
+            if gx < -2 && gz < -2 {
+                let cliff_dist = sqrt((float)((gx+10)*(gx+10) + (gz+10)*(gz+10)));
+                let cliff_h = (int)(23.0 - cliff_dist * 1.8);
+                if cliff_h > h { 
+                    h = cliff_h; 
+                    is_cliff = 1;
+                }
+            }
+            
+            // Clamp limits
+            if h < 2 { h = 2; } // Ocean floor minimum
+            if h > 30 { h = 30; }
+            
+            // Block Loop
+            for cy in 0..CHUNK_HEIGHT {
+                let type = BLOCK_AIR;
+                
+                // Terrain
+                if cy <= h {
+                    if cy == 0 { 
+                        type = BLOCK_STONE; // Bedrock placeholder
+                    } else if cy < h - 3 { 
+                        type = BLOCK_STONE; 
+                    } else {
+                        // Surface Layer
+                        if is_cliff == 1 {
+                             type = BLOCK_STONE; // Cliffs are bare rock
+                        } else if h <= WATER_LEVEL + 1 { 
+                            type = BLOCK_SAND; // Beach level
+                        } else { 
+                            type = BLOCK_GRASS; // High ground
+                        }
+                    }
+                }
+                // Water
+                else if cy <= WATER_LEVEL {
+                    type = BLOCK_WATER;
+                }
+                
+                // --- NEW: Waterfall Cave ---
+                if is_cliff == 1 && cy >= 15 && cy <= 19 {
+                    // Hollow out a small cave inside the cliff
+                    if gx > -10 && gx < -5 && gz > -10 && gz < -5 {
+                         type = BLOCK_AIR;
+                    }
+                    // Origin of the waterfall
+                    if gx == -6 && gz == -8 && cy == 15 {
+                         type = BLOCK_WATER;
+                    }
+                }
+
+                // Text Overlay
+                let text_b = title_get_text_block(gx, cy, gz);
+                if text_b != 0 { type = text_b; }
+
+                data.blocks[cx][cy][cz] = type;
+                
+                // Light
+                if type == BLOCK_AIR || type == BLOCK_WATER || type == BLOCK_LEAVES || type == BLOCK_TALLGRASS {
+                    data.light[cx][cy][cz] = 15;
+                } else {
+                    data.light[cx][cy][cz] = 0;
+                }
+            }
+            
+            // Vegetation (Only on Grass, above water)
+            if h > WATER_LEVEL + 1 && data.blocks[cx][h][cz] == BLOCK_GRASS {
+                
+                // Avoid putting trees inside the text
+                if gz < 7 || gz > 9 {
+                    let n_veg = title_smooth_noise((float)gx * 0.5, (float)gz * 0.5);
+                    let rng_tree = (gx * 31 + gz * 17) % 5; // Simple rng for tree shape
+                    
+                    // Tallgrass
+                    if n_veg > 0.2 && (gx+gz)%3 != 0 { 
+                         if (h+1) < CHUNK_HEIGHT { 
+                             title_set_block_raw(data, cx, h+1, cz, BLOCK_TALLGRASS); 
+                         }
+                    }
+                    
+                    // Trees
+                    if n_veg > 0.72 {
+                        // Spacing check
+                        if cx >= 2 && cx <= 13 && cz >= 2 && cz <= 13 {
+                            let tree_h = 5 + (rng_tree % 4);
+                            
+                            // Trunk
+                            for th in 0..tree_h {
+                                title_set_block_raw(data, cx, h+1+th, cz, BLOCK_LOG);
+                            }
+                            
+                            // Better Leaves
+                            let top = h + 1 + tree_h;
+                            // 4 layers of leaves going down from the top
+                            for ly in 0..4 {
+                                let radius = 2;
+                                if ly == 0 || ly == 3 { radius = 1; }
+                                
+                                for lx in -radius..radius+1 {
+                                    for lz in -radius..radius+1 {
+                                         // Cut corners for a rounder shape
+                                         if radius == 2 && rl::abs(lx) == 2 && rl::abs(lz) == 2 { continue; }
+                                         if lx == 0 && lz == 0 && ly < 3 { continue; } // Trunk goes here
+                                         
+                                         // Don't draw leaves lower than 2 blocks above ground
+                                         if (top - ly) <= (h + 2) { continue; }
+                                         
+                                         title_set_block_raw(data, cx+lx, top-ly, cz+lz, BLOCK_LEAVES);
+                                    }
+                                }
+                            }
+                            // Top cap cross
+                            title_set_block_raw(data, cx, top+1, cz, BLOCK_LEAVES);
+                        }
+                    }
+                }
+            }
+            
+            // Torches (Front of Text)
+            if gz == 10 && (gx % 5 == 0) && gx >= -5 && gx <= 5 {
+                 if h > WATER_LEVEL && h < CHUNK_HEIGHT - 1 {
+                      if data.blocks[cx][h+1][cz] == BLOCK_AIR {
+                         title_set_block_raw(data, cx, h+1, cz, BLOCK_TORCH);
+                      }
+                 }
+            }
+        }
+    }
+}
+
+// Standard Update Function con Z-ARENA integrado
+fn update_title_screen(chunks: Chunk*, num_chunks: int, dt: float) {
+    for x in -1..1 {
+         for z in -1..1 {
+             let idx = get_chunk_index(x, z);
+             
+             if idx >= 0 && idx < num_chunks {
+                 if chunks[idx].x != x || chunks[idx].z != z {
+                     chunks[idx].x = x;
+                     chunks[idx].z = z;
+                     chunks[idx].mesh_built = 0;
+                     
+                     // --- USO DE ZALLOC (ARENA) ---
+                     // 1. Inicializamos un Arena local para la generación temporal
+                     let arena: zarena;
+                     zarena_init(&arena);
+                     
+                     // 2. Asignamos ChunkData en el Arena y lo inicializamos a CERO
+                     // Esto nos ahorra los 3 bucles anidados que teníamos antes limpiando la memoria
+                     let d = (ChunkData*)zarena_alloc_zero(&arena, sizeof(ChunkData));
+                     
+                     if d != NULL {
+                         d.plant_count = 0;
+                         
+                         // 3. Generamos la isla sobre nuestro ChunkData en el heap
+                         generate_title_chunk(d, x, z);
+                         
+                         // 4. Copiamos los datos procesados al chunk final de forma segura
+                         for cx in 0..16 {
+                             for cy in 0..CHUNK_HEIGHT {
+                                 for cz in 0..16 {
+                                     chunks[idx].blocks[cx][cy][cz] = d.blocks[cx][cy][cz];
+                                     chunks[idx].light[cx][cy][cz] = d.light[cx][cy][cz];
+                                 }
+                             }
+                         }
+                     }
+                     
+                     // 5. ¡Destruimos el Arena!
+                     // Toda la memoria usada para la generación temporal se libera de golpe (O(1))
+                     zarena_free(&arena);
+                     // -----------------------------
+                     
+                     // Enable Full Lighting Calculation!
+                     recalculate_chunk_lighting(&chunks[idx], chunks, num_chunks);
+                     
+                     chunks[idx].plant_count = 0;
+                     chunks[idx].mesh_dirty = 1;
+                 }
+             }
+         }
+    }
+    
+    title_tick_accum = title_tick_accum + dt;
+    
+    while title_tick_accum >= 0.05 {
+        for x in -1..1 {
+             for z in -1..1 {
+                 let idx = get_chunk_index(x, z);
+                 
+                 if idx >= 0 && idx < num_chunks && chunks[idx].x != -9999 {
+                     tick_chunk(&chunks[idx], chunks, num_chunks);
+                 }
+             }
+        }
+        title_tick_accum = title_tick_accum - 0.05;
+    }
+}

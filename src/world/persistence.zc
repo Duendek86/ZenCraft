@@ -1,0 +1,540 @@
+//> Persistence Threading & Queue Manager
+import "raylib.h" as rl;
+import "../world/chunk_core.zc";
+import "../world/chunk_mesh.zc";
+import "../world/persistence_defs.zc";
+import "../world/persistence_gen.zc";
+import "../world/persistence_io.zc";
+import "../world/persistence_mesh.zc";
+import "../world/persistence_light.zc";
+import "../ui/title_generator.zc";
+
+raw {
+    // Escudo anti-colisiones entre Windows API y Raylib
+    #ifdef _WIN32
+        #ifndef WIN32_LEAN_AND_MEAN
+        #define WIN32_LEAN_AND_MEAN
+        #endif
+        #ifndef NOGDI
+        #define NOGDI
+        #endif
+        #ifndef NOUSER
+        #define NOUSER
+        #endif
+    #endif
+
+    #include <stdio.h>
+    #include <string.h>
+    #include "src/world/pending_map.h"
+    #define ZTHREAD_IMPLEMENTATION
+    #include "src/zthread.h"
+    
+    // El traductor mágico para que C entienda la palabra "any"
+    typedef void* any;
+    
+    zthread_t worker_thread_low;
+    zthread_t worker_thread_high;
+
+    // WRAPPERS SEGUROS: Protegen a Zen-C de los macros y tipos estrictos de C
+    void sys_memcpy(void* dest, void* src, int n) { memcpy(dest, src, (size_t)n); }
+    int sys_zthread_create(void* thread, void* routine, void* arg) {
+        return zthread_create(thread, routine, arg);
+    }
+}
+
+// Thread externs (¡Ahora apuntan a los Wrappers seguros!)
+extern fn zthread_sleep(ms: int);
+extern fn sys_zthread_create(thread: any, start_routine: any, arg: any) -> int;
+extern fn zthread_join(thread: any);
+extern fn sys_memcpy(dest: any, src: any, n: int);
+
+extern fn pmap_add(cx: int, cz: int);
+extern fn pmap_remove(cx: int, cz: int);
+extern fn pmap_check(cx: int, cz: int) -> int;
+extern fn pmap_ensure_init();
+
+// Globals
+let io_queue: IORequest* = NULL;
+let io_queue_capacity: int = 0;
+let hp_queue: IORequest[64];
+
+let worker_low: WorkerConfig;
+let worker_high: WorkerConfig;
+let system_running: int = 0;
+
+let world_dir_path: char[64];
+let global_chunks_ptr: Chunk* = NULL;
+let global_num_chunks: int = 0;
+
+// Profiling
+let prof_mesh_time: double = 0.0;
+let prof_gen_time: double = 0.0;
+let prof_prop_time: double = 0.0;
+
+fn set_game_world_dir(path: char*) {
+    if rl::DirectoryExists(path) == false { rl::MakeDirectory(path); }
+    rl::TextCopy(world_dir_path, path);
+}
+
+// The Worker Thread Function
+fn db_worker(lpParam: any) {
+    let config = (WorkerConfig*)lpParam;
+    let queue = config.queue;
+    let queue_size = config.size;
+
+    while system_running == 1 {
+        let worked = 0;
+        let best_idx = -1;
+        
+        for k in 0..queue_size {
+            if queue[k].io_status == IO_STATUS_PENDING {
+                if queue[k].priority > 0 { best_idx = k; break; }
+                if best_idx == -1 { best_idx = k; }
+            }
+        }
+        
+        let loop_once = 0;
+        if best_idx != -1 { loop_once = 1; }
+        
+        let i = best_idx;
+        while loop_once == 1 {
+            loop_once = 0; 
+            
+            if queue[i].io_status == IO_STATUS_PENDING {
+                let req = &queue[i];
+                
+                if req.type == REQ_BUILD_MESH {
+                    let t0 = rl::GetTime();
+                    handle_mesh_request((any)req, global_chunks_ptr, global_num_chunks);
+                    prof_mesh_time = rl::GetTime() - t0;
+                    worked = 1;
+                    continue;
+                }
+                
+                if req.type == REQ_LIGHT_RECALC || req.type == REQ_LIGHT_PROPAGATE {
+                    handle_light_request((any)req, global_chunks_ptr, global_num_chunks);
+                    worked = 1;
+                    continue;
+                }
+
+                handle_io_request((any)req, world_dir_path);
+                worked = 1;
+            }
+        }
+        
+        if worked == 0 {
+            zthread_sleep(5);
+        }
+    }
+}
+
+fn init_persistence(chunks: Chunk*) {
+    if rl::DirectoryExists("world") == false { rl::MakeDirectory("world"); }
+    
+    if io_queue != NULL {
+        for i in 0..io_queue_capacity { io_queue[i].io_status = IO_STATUS_FREE; }
+    }
+    for i in 0..64 { hp_queue[i].io_status = IO_STATUS_FREE; }
+    
+    system_running = 1;
+    global_chunks_ptr = chunks;
+    global_num_chunks = MAX_CHUNKS;
+    io_queue_capacity = MAX_CHUNKS + 64;
+    
+    if io_queue == NULL {
+        io_queue = (IORequest*)rl::MemAlloc(io_queue_capacity * sizeof(IORequest));
+    }
+    
+    worker_low.queue = io_queue; worker_low.size = io_queue_capacity; worker_low.id = 0;
+    worker_high.queue = hp_queue; worker_high.size = 64; worker_high.id = 1;
+
+    raw {
+        sys_zthread_create(&worker_thread_low, db_worker, &worker_low);
+        sys_zthread_create(&worker_thread_high, db_worker, &worker_high);
+    }
+    pmap_ensure_init();
+}
+
+fn request_save_async(c: Chunk*) {
+    if c == NULL || c.x == -9999 { return; }
+
+    if io_queue != NULL {
+        for i in 0..io_queue_capacity {
+            if io_queue[i].io_status == IO_STATUS_PENDING && io_queue[i].type == REQ_SAVE { 
+                if io_queue[i].cx == c.x && io_queue[i].cz == c.z {
+                    sys_memcpy((any)io_queue[i].data.blocks, (any)c.blocks, 131072);
+                    sys_memcpy((any)io_queue[i].data.light, (any)c.light, 131072);
+                    io_queue[i].data.plant_count = c.plant_count;
+                    sys_memcpy((any)io_queue[i].data.plants, (any)c.plants, 1024);
+                    io_queue[i].data.skull_count = c.skull_count;
+                    sys_memcpy((any)io_queue[i].data.skulls, (any)c.skulls, sizeof(Skull) * 4);
+                    return;
+                }
+            }
+        }
+    }
+
+    let slot = -1;
+    if io_queue != NULL {
+        for i in 0..io_queue_capacity {
+            if io_queue[i].io_status == IO_STATUS_FREE { slot = i; break; }
+        }
+    }
+    
+    if slot != -1 {
+        io_queue[slot].type = REQ_SAVE;
+        io_queue[slot].cx = c.x; io_queue[slot].cz = c.z;
+        io_queue[slot].target_idx = -1; io_queue[slot].priority = 0;
+        
+        sys_memcpy((any)io_queue[slot].data.blocks, (any)c.blocks, 131072);
+        sys_memcpy((any)io_queue[slot].data.light, (any)c.light, 131072);
+        io_queue[slot].data.plant_count = c.plant_count;
+        sys_memcpy((any)io_queue[slot].data.plants, (any)c.plants, 1024);
+        io_queue[slot].data.skull_count = c.skull_count;
+        sys_memcpy((any)io_queue[slot].data.skulls, (any)c.skulls, sizeof(Skull) * 4);
+        
+        io_queue[slot].io_status = IO_STATUS_PENDING;
+    }
+}
+
+fn request_load_async(idx: int, cx: int, cz: int, priority: int) -> int {
+    let slot = -1;
+    if io_queue != NULL {
+        for i in 0..io_queue_capacity {
+            if io_queue[i].io_status == IO_STATUS_FREE { slot = i; break; }
+        }
+    }
+    
+    if slot != -1 {
+        io_queue[slot].type = REQ_LOAD;
+        io_queue[slot].cx = cx; io_queue[slot].cz = cz;
+        io_queue[slot].target_idx = idx; io_queue[slot].priority = priority;
+        pmap_add(cx, cz);
+        io_queue[slot].io_status = IO_STATUS_PENDING;
+        return 1;
+    } 
+    return 0;
+}
+
+fn request_mesh_async(idx: int, priority: int) -> int {
+    if global_chunks_ptr == NULL { return 0; }
+    let c = &global_chunks_ptr[idx];
+    
+    let queue = io_queue; let queue_size = io_queue_capacity;
+    if priority > 0 { queue = hp_queue; queue_size = 64; }
+
+    let slot = -1;
+    for i in 0..queue_size { if queue[i].io_status == IO_STATUS_FREE { slot = i; break; } }
+    
+    if slot != -1 {
+        queue[slot].type = REQ_BUILD_MESH;
+        queue[slot].cx = c.x; queue[slot].cz = c.z;
+        queue[slot].target_idx = idx; queue[slot].priority = priority;
+        
+        c.locked++;
+        let neighbor_offsets = [-1, 0, 1, 0, 0, -1, 0, 1];
+        for ni in 0..4 {
+            let ncx = c.x + neighbor_offsets[ni * 2]; let ncz = c.z + neighbor_offsets[ni * 2 + 1];
+            let nidx = get_chunk_index(ncx, ncz);
+            if global_chunks_ptr[nidx].x == ncx && global_chunks_ptr[nidx].z == ncz {
+                 global_chunks_ptr[nidx].locked++;
+            }
+        }
+        queue[slot].io_status = IO_STATUS_PENDING;
+        return 1;
+    } 
+    return 0;
+}
+
+fn request_light_async(idx: int, mode: int, priority: int) -> int {
+    if global_chunks_ptr == NULL { return 0; }
+    let c = &global_chunks_ptr[idx];
+    
+    let queue = io_queue; let queue_size = io_queue_capacity;
+    if priority > 0 { queue = hp_queue; queue_size = 64; }
+    
+    let slot = -1;
+    for i in 0..queue_size { if queue[i].io_status == IO_STATUS_FREE { slot = i; break; } }
+    
+    if slot != -1 {
+        queue[slot].type = mode;
+        queue[slot].cx = c.x; queue[slot].cz = c.z;
+        queue[slot].target_idx = idx; queue[slot].priority = priority;
+        
+        c.locked++;
+        if mode == REQ_LIGHT_RECALC || mode == REQ_LIGHT_PROPAGATE {
+            let neighbor_offsets = [-1, 0, 1, 0, 0, -1, 0, 1];
+            for ni in 0..4 {
+                let ncx = c.x + neighbor_offsets[ni * 2]; let ncz = c.z + neighbor_offsets[ni * 2 + 1];
+                let nidx = get_chunk_index(ncx, ncz);
+                if global_chunks_ptr[nidx].x == ncx && global_chunks_ptr[nidx].z == ncz {
+                     global_chunks_ptr[nidx].locked++;
+                }
+            }
+        }
+        queue[slot].io_status = IO_STATUS_PENDING;
+        return 1;
+    } 
+    return 0;
+}
+
+fn is_chunk_pending(cx: int, cz: int) -> int {
+    return pmap_check(cx, cz);
+}
+
+fn get_pending_req_count() -> int {
+    let count = 0;
+    if io_queue != NULL {
+        for i in 0..io_queue_capacity {
+            if io_queue[i].io_status == IO_STATUS_PENDING { count++; }
+        }
+    }
+    return count;
+}
+
+fn get_pending_load_count() -> int {
+    let count = 0;
+    if io_queue != NULL {
+        for i in 0..io_queue_capacity {
+            if io_queue[i].io_status == IO_STATUS_PENDING && io_queue[i].type == REQ_LOAD { count++; }
+        }
+    }
+    return count;
+}
+
+fn get_pending_mesh_count() -> int {
+    let count = 0;
+    if io_queue != NULL {
+        for i in 0..io_queue_capacity {
+            if io_queue[i].io_status == IO_STATUS_PENDING && io_queue[i].type == REQ_BUILD_MESH { count++; }
+        }
+    }
+    return count;
+}
+
+fn get_profiling_stats() -> ProfilingStats {
+    let s: ProfilingStats;
+    s.mesh_ms = (float)(prof_mesh_time * 1000.0);
+    s.gen_ms = (float)(prof_gen_time * 1000.0);
+    s.prop_ms = (float)(prof_prop_time * 1000.0);
+    return s;
+}
+
+fn poll_async_results() {
+    let chunks = global_chunks_ptr;
+    let num_chunks = global_num_chunks;
+    
+    if chunks == NULL { return; }
+    let start_time = rl::GetTime(); let time_budget = 0.002;
+    let processed = 0; prof_prop_time = 0.0;
+    
+    let stop_polling = 0;
+    
+    for q in 0..2 {
+        if stop_polling == 1 { break; }
+        
+        let queue = io_queue; let size = io_queue_capacity;
+        if q == 0 { queue = hp_queue; size = 64; }
+
+        for i in 0..size {
+             if rl::GetTime() - start_time > time_budget && processed > 0 {
+                 // Always process LOAD results even after time budget (they're cheap memcpy)
+                 if queue[i].io_status != IO_STATUS_COMPLETED || queue[i].type != REQ_LOAD {
+                     stop_polling = 1; break;
+                 }
+             }
+
+            if queue[i].io_status == IO_STATUS_COMPLETED { 
+                let idx = queue[i].target_idx;
+                
+                if queue[i].type == REQ_BUILD_MESH { 
+                     if idx >= 0 && idx < num_chunks {
+                         if chunks[idx].x == queue[i].cx && chunks[idx].z == queue[i].cz {
+                             upload_chunk_mesh(&chunks[idx], queue[i].mesh_data);
+                             upload_plant_mesh(&chunks[idx], queue[i].plant_mesh);
+                             chunks[idx].locked--;
+                             if chunks[idx].locked < 0 { chunks[idx].locked = 0; }
+                         }
+                         let neighbor_offsets = [-1, 0, 1, 0, 0, -1, 0, 1];
+                         for ni in 0..4 {
+                            let ncx = queue[i].cx + neighbor_offsets[ni * 2];
+                            let ncz = queue[i].cz + neighbor_offsets[ni * 2 + 1];
+                            let nidx = get_chunk_index(ncx, ncz);
+                            if nidx >= 0 && nidx < num_chunks && chunks[nidx].x == ncx && chunks[nidx].z == ncz {
+                                 chunks[nidx].locked--;
+                                 if chunks[nidx].locked < 0 { chunks[nidx].locked = 0; }
+                            }
+                         }
+                     }
+                     queue[i].io_status = IO_STATUS_FREE;
+                     processed++;
+                }
+                else if queue[i].type == REQ_LIGHT_RECALC || queue[i].type == REQ_LIGHT_PROPAGATE { 
+                     if idx >= 0 && idx < num_chunks {
+                         if chunks[idx].x == queue[i].cx && chunks[idx].z == queue[i].cz {
+                             chunks[idx].locked--;
+                             if chunks[idx].locked < 0 { chunks[idx].locked = 0; }
+                             chunks[idx].mesh_dirty = 1;
+                         }
+                         
+                         let neighbor_offsets = [-1, 0, 1, 0, 0, -1, 0, 1];
+                         for ni in 0..4 {
+                            let ncx = queue[i].cx + neighbor_offsets[ni * 2];
+                            let ncz = queue[i].cz + neighbor_offsets[ni * 2 + 1];
+                            let nidx = get_chunk_index(ncx, ncz);
+                            if nidx >= 0 && nidx < num_chunks && chunks[nidx].x == ncx && chunks[nidx].z == ncz {
+                                 chunks[nidx].locked--;
+                                 if chunks[nidx].locked < 0 { chunks[nidx].locked = 0; }
+                                 chunks[nidx].mesh_dirty = 1;
+                            }
+                         }
+                         
+                         if queue[i].priority > 0 {
+                             if chunks[idx].x == queue[i].cx && chunks[idx].z == queue[i].cz {
+                                 if request_mesh_async(idx, queue[i].priority) == 1 { chunks[idx].mesh_dirty = 0; }
+                             }
+                         }
+                     }
+                     queue[i].io_status = IO_STATUS_FREE;
+                     processed++;
+                }
+                else if queue[i].type == REQ_LOAD { 
+                    if idx >= 0 && idx < num_chunks {
+                         if chunks[idx].locked > 0 { continue; }
+
+                        chunks[idx].x = queue[i].cx; chunks[idx].z = queue[i].cz;
+                        sys_memcpy((any)chunks[idx].blocks, (any)queue[i].data.blocks, 131072);
+                        sys_memcpy((any)chunks[idx].light, (any)queue[i].data.light, 131072);
+                        chunks[idx].plant_count = queue[i].data.plant_count;
+                        sys_memcpy((any)chunks[idx].plants, (any)queue[i].data.plants, 1024);
+                        chunks[idx].skull_count = queue[i].data.skull_count;
+                        sys_memcpy((any)chunks[idx].skulls, (any)queue[i].data.skulls, sizeof(Skull) * 4);
+                        
+                        if chunks[idx].mesh_built == 1 { rl::UnloadModel(chunks[idx].chunk_model); }
+                        if chunks[idx].water_mesh_built == 1 { rl::UnloadModel(chunks[idx].water_model); }
+                        if chunks[idx].plant_mesh_built == 1 { rl::UnloadModel(chunks[idx].plant_model); }
+                        if chunks[idx].grass_deco_built != 0 { rl::UnloadModel(chunks[idx].grass_deco_model); }
+                        
+                        chunks[idx].mesh_dirty = 1; chunks[idx].mesh_built = 0;
+                        chunks[idx].water_mesh_built = 0; chunks[idx].locked = 0;
+                        chunks[idx].plant_mesh_built = 0; chunks[idx].grass_deco_built = 0;
+                        
+                        pmap_remove(queue[i].cx, queue[i].cz);
+                        queue[i].io_status = IO_STATUS_FREE; 
+                        processed++;
+
+                        let req_mode = REQ_LIGHT_RECALC;
+                        if queue[i].data.light_calculated == 1 { req_mode = REQ_LIGHT_PROPAGATE; }
+                        request_light_async(idx, req_mode, 0);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn save_player_data(x: float, y: float, z: float, block: int, yaw: float, pitch: float) {
+    if rl::DirectoryExists(world_dir_path) == false { rl::MakeDirectory(world_dir_path); }
+    
+    let pd: PlayerSaveData;
+    pd.x = x; pd.y = y; pd.z = z; pd.selected_block = block; pd.yaw = yaw; pd.pitch = pitch;
+    
+    let path = rl::TextFormat("%s/player.dat", world_dir_path);
+    rl::SaveFileData(path, &pd, sizeof(PlayerSaveData));
+}
+
+fn load_player_data(x_ptr: any, y_ptr: any, z_ptr: any, block_ptr: any, yaw_ptr: any, pitch_ptr: any) -> int {
+    let path = rl::TextFormat("%s/player.dat", world_dir_path);
+    let bytesRead = 0;
+    
+    let data = rl::LoadFileData(path, &bytesRead);
+    if data != NULL && bytesRead == sizeof(PlayerSaveData) {
+        let pd = (PlayerSaveData*)data;
+        let x = (float*)x_ptr; *x = pd.x;
+        let y = (float*)y_ptr; *y = pd.y;
+        let z = (float*)z_ptr; *z = pd.z;
+        let block = (int*)block_ptr; *block = pd.selected_block;
+        let yaw = (float*)yaw_ptr; *yaw = pd.yaw;
+        let pitch = (float*)pitch_ptr; *pitch = pd.pitch;
+        
+        rl::UnloadFileData(data);
+        return 1;
+    }
+    
+    if data != NULL { rl::UnloadFileData(data); }
+    return 0;
+}
+
+fn load_chunk_into(c_ptr: any, cx: int, cz: int) {
+    let c = (Chunk*)c_ptr;
+    c.x = cx; c.z = cz;
+    c.mesh_built = 0; c.plant_mesh_built = 0; c.grass_deco_built = 0; c.water_mesh_built = 0;
+    c.plant_count = 0;
+
+    let data_ptr = (ChunkData*)rl::MemAlloc(sizeof(ChunkData));
+    if data_ptr != NULL {
+        let loaded = 0;
+        
+        raw {
+            int rx = (cx >= 0) ? (cx / 32) : ((cx - 31) / 32);
+            int rz = (cz >= 0) ? (cz / 32) : ((cz - 31) / 32);
+            int lcx = ((cx % 32) + 32) % 32;
+            int lcz = ((cz % 32) + 32) % 32;
+            char region_filename[512];
+            sprintf(region_filename, "%s/region_%d_%d.zcr", world_dir_path, rx, rz);
+            
+            int header_entry_idx = lcz * 32 + lcx;
+            FILE *f = fopen(region_filename, "rb");
+            if(f) {
+                fseek(f, header_entry_idx * 8, SEEK_SET);
+                unsigned int offset = 0; unsigned int stored_size = 0;
+                fread(&offset, 4, 1, f); fread(&stored_size, 4, 1, f);
+                if(offset > 0 && stored_size > 0) {
+                    fseek(f, 0, SEEK_END); long filesize = ftell(f);
+                    if (offset + stored_size <= filesize) {
+                        fseek(f, offset, SEEK_SET);
+                        if(fread(data_ptr, sizeof(ChunkData), 1, f) == 1) loaded = 1;
+                    }
+                }
+                fclose(f);
+            }
+
+            if (!loaded) {
+                char filename[256];
+                sprintf(filename, "%s/chunk_%d_%d.dat", world_dir_path, cx, cz);
+                FILE *f2 = fopen(filename, "rb");
+                if(f2) {
+                    if(fread(data_ptr, sizeof(ChunkData), 1, f2) == 1) loaded = 1;
+                    fclose(f2);
+                }
+            }
+        }
+        
+        if loaded == 0 {
+            let is_title = rl::TextFindIndex(world_dir_path, "titleworld");
+            if is_title >= 0 {
+                generate_title_chunk(data_ptr, cx, cz);
+            } else {
+                generate_chunk_data(data_ptr, cx, cz);
+            }
+        }
+
+        sys_memcpy((any)c.blocks, (any)data_ptr.blocks, 131072);
+        sys_memcpy((any)c.light, (any)data_ptr.light, 131072);
+        c.plant_count = data_ptr.plant_count;
+        sys_memcpy((any)c.plants, (any)data_ptr.plants, 1024);
+        c.skull_count = data_ptr.skull_count;
+        sys_memcpy((any)c.skulls, (any)data_ptr.skulls, sizeof(Skull) * 4);
+        
+        rl::MemFree(data_ptr);
+    }
+}
+
+fn cleanup_persistence() {
+    system_running = 0;
+    raw {
+        zthread_join(worker_thread_low);
+        zthread_join(worker_thread_high);
+    }
+    if io_queue != NULL { rl::MemFree(io_queue); io_queue = NULL; }
+}

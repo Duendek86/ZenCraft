@@ -1,0 +1,753 @@
+//> Opaque and Water Mesh Generation
+import "raylib.h" as rl;
+import "../world/blocks.zc";
+import "../world/chunk_core.zc";
+import "../world/chunk_light.zc"; 
+
+fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes {
+    let res: ChunkMeshes;
+    raw {
+        res.has_opaque = 0;
+        res.has_water = 0;
+
+        // Water specific macros
+        #define IS_WATER_TYPE(b) ((b) == BLOCK_WATER || (b) == BLOCK_WATER_2 || (b) == BLOCK_WATER_1 || (b) == BLOCK_WATER_0)
+        #define WATER_LEVEL(b) ((b) == BLOCK_WATER ? 4 : ((b) == BLOCK_WATER_2 ? 3 : ((b) == BLOCK_WATER_1 ? 2 : ((b) == BLOCK_WATER_0 ? 1 : 0))))
+        #define IS_TRANSPARENT_MESH(b) ((b) == 0 || ((b) >= 10 && (b) <= 14) || (b) == 17 || (b) == 4 || (b) == 6 || IS_WATER_TYPE(b) || (b) == 18 || (b) == BLOCK_POWER_SOURCE || (b) == BLOCK_POWER_CRYSTAL || (b) == BLOCK_CAGE || (b) == BLOCK_CHEST)
+        #define SHOULD_RENDER_FACE(neighbor_block) \
+            (IS_WATER_TYPE(btype) ? \
+              ((neighbor_block) == BLOCK_AIR || ((neighbor_block) >= 10 && (neighbor_block) <= 14) || (neighbor_block) == BLOCK_TALLGRASS || (neighbor_block) == BLOCK_LEAVES) : \
+                (IS_TRANSPARENT_MESH(neighbor_block)))
+        
+        int gx_base = c->x * 16;
+        int gz_base = c->z * 16;
+
+        int face_count = 0;
+        int water_face_count = 0;
+        
+        res.power_source_count = 0;
+        
+        for (int x = 0; x < 16; x++) {
+            for (int y = 0; y < CHUNK_HEIGHT; y++) {
+                for (int z = 0; z < 16; z++) {
+                    int btype = c->blocks[x][y][z];
+                    if (btype == BLOCK_AIR) continue;
+                    
+                    int b_gx = gx_base + x;
+                    int b_gz = gz_base + z;
+                    
+                    if (btype == BLOCK_POWER_SOURCE) {
+                         if (res.power_source_count < 32) {
+                             res.power_sources[res.power_source_count].x = (float)x + 0.5f;
+                             res.power_sources[res.power_source_count].y = (float)y;
+                             res.power_sources[res.power_source_count].z = (float)z + 0.5f;
+                             res.power_sources[res.power_source_count].hp = 200;
+                             res.power_source_count++;
+                         }
+                         continue;
+                    }
+                    
+                    if (btype >= 10 && btype <= 14) { face_count += 6; continue; }
+                    if (btype == BLOCK_GLASS_PANE) { water_face_count += 24; continue; }
+
+                    if (btype == BLOCK_CRYSTAL) {
+                         int neighbor;
+                         neighbor = get_block(chunks, num_chunks, b_gx + 1, y, b_gz);
+                         if (IS_TRANSPARENT_MESH(neighbor) && neighbor != BLOCK_CRYSTAL) water_face_count++;
+                         neighbor = get_block(chunks, num_chunks, b_gx - 1, y, b_gz);
+                         if (IS_TRANSPARENT_MESH(neighbor) && neighbor != BLOCK_CRYSTAL) water_face_count++;
+                         neighbor = get_block(chunks, num_chunks, b_gx, y + 1, b_gz);
+                         if (IS_TRANSPARENT_MESH(neighbor) && neighbor != BLOCK_CRYSTAL) water_face_count++;
+                         neighbor = get_block(chunks, num_chunks, b_gx, y - 1, b_gz);
+                         if (IS_TRANSPARENT_MESH(neighbor) && neighbor != BLOCK_CRYSTAL) water_face_count++;
+                         neighbor = get_block(chunks, num_chunks, b_gx, y, b_gz + 1);
+                         if (IS_TRANSPARENT_MESH(neighbor) && neighbor != BLOCK_CRYSTAL) water_face_count++;
+                         neighbor = get_block(chunks, num_chunks, b_gx, y, b_gz - 1);
+                         if (IS_TRANSPARENT_MESH(neighbor) && neighbor != BLOCK_CRYSTAL) water_face_count++;
+                         continue;
+                    }
+                    
+                    if (btype == BLOCK_WATER || btype == BLOCK_WATER_2 || btype == BLOCK_WATER_1 || btype == BLOCK_WATER_0) {
+                        int neighbor_above = get_block(chunks, num_chunks, b_gx, y + 1, b_gz);
+                        int w_above = IS_WATER_TYPE(neighbor_above);
+                        if (!w_above && IS_TRANSPARENT_MESH(neighbor_above)) { water_face_count++; }
+                        
+                        int nb;
+                        nb = get_block(chunks, num_chunks, b_gx + 1, y, b_gz);
+                        if (SHOULD_RENDER_FACE(nb) || (w_above && IS_WATER_TYPE(nb) && WATER_LEVEL(btype) > WATER_LEVEL(nb))) water_face_count++;
+                        nb = get_block(chunks, num_chunks, b_gx - 1, y, b_gz);
+                        if (SHOULD_RENDER_FACE(nb) || (w_above && IS_WATER_TYPE(nb) && WATER_LEVEL(btype) > WATER_LEVEL(nb))) water_face_count++;
+                        nb = get_block(chunks, num_chunks, b_gx, y, b_gz + 1);
+                        if (SHOULD_RENDER_FACE(nb) || (w_above && IS_WATER_TYPE(nb) && WATER_LEVEL(btype) > WATER_LEVEL(nb))) water_face_count++;
+                        nb = get_block(chunks, num_chunks, b_gx, y, b_gz - 1);
+                        if (SHOULD_RENDER_FACE(nb) || (w_above && IS_WATER_TYPE(nb) && WATER_LEVEL(btype) > WATER_LEVEL(nb))) water_face_count++;
+                        
+                        if (y > 0) {
+                            int below = get_block(chunks, num_chunks, b_gx, y - 1, b_gz);
+                            if (!IS_WATER_TYPE(below) && IS_TRANSPARENT_MESH(below)) { water_face_count++; }
+                        }
+                        continue;
+                    }
+
+                    if (IS_TRANSPARENT_MESH(get_block(chunks, num_chunks, b_gx + 1, y, b_gz))) face_count++;
+                    if (IS_TRANSPARENT_MESH(get_block(chunks, num_chunks, b_gx - 1, y, b_gz))) face_count++;
+                    if (IS_TRANSPARENT_MESH(get_block(chunks, num_chunks, b_gx, y + 1, b_gz))) face_count++;
+                    if (IS_TRANSPARENT_MESH(get_block(chunks, num_chunks, b_gx, y - 1, b_gz))) face_count++;
+                    if (IS_TRANSPARENT_MESH(get_block(chunks, num_chunks, b_gx, y, b_gz + 1))) face_count++;
+                    if (IS_TRANSPARENT_MESH(get_block(chunks, num_chunks, b_gx, y, b_gz - 1))) face_count++;
+                }
+            }
+        }
+        
+        if (face_count == 0 && water_face_count == 0) return res; 
+        
+        int vertex_count = face_count * 6;
+        int w_vertex_count = water_face_count * 6;
+        
+        float* vertices = NULL; float* normals = NULL; float* texcoords = NULL; unsigned char* colors = NULL;
+        if (vertex_count > 0) {
+            vertices = (float*)malloc(vertex_count * 3 * sizeof(float));
+            normals = (float*)malloc(vertex_count * 3 * sizeof(float));
+            texcoords = (float*)malloc(vertex_count * 2 * sizeof(float));
+            colors = (unsigned char*)malloc(vertex_count * 4 * sizeof(unsigned char));
+        }
+        
+        float* w_vertices = NULL; float* w_normals = NULL; float* w_texcoords = NULL; unsigned char* w_colors = NULL;
+        if (w_vertex_count > 0) {
+            w_vertices = (float*)malloc(w_vertex_count * 3 * sizeof(float));
+            w_normals = (float*)malloc(w_vertex_count * 3 * sizeof(float));
+            w_texcoords = (float*)malloc(w_vertex_count * 2 * sizeof(float));
+            w_colors = (unsigned char*)malloc(w_vertex_count * 4 * sizeof(unsigned char));
+        }
+
+        int v_idx = 0; int w_v_idx = 0;
+        
+        float q_px[4]; float q_py[4]; float q_pz[4];
+        float q_nx[4]; float q_ny[4]; float q_nz[4];
+        float q_u[4]; float q_v[4];
+        int q_light[4]; int q_flag[4]; int q_idx = 0;
+
+        #define ADD_VERTEX_GENERIC(px, py, pz, nx, ny, nz, u, v, light_val, IS_WATER) \
+            q_px[q_idx] = (float)(px); q_py[q_idx] = (float)(py); q_pz[q_idx] = (float)(pz); \
+            q_nx[q_idx] = nx; q_ny[q_idx] = ny; q_nz[q_idx] = nz; \
+            q_u[q_idx] = u; q_v[q_idx] = v; q_light[q_idx] = light_val; \
+            if (IS_WATER) q_flag[q_idx] = (IS_WATER); else q_flag[q_idx] = current_flag; \
+            q_idx++;
+
+        #define EMIT_VERTEX(idx, IS_WATER) \
+            if (IS_WATER) { \
+                if(w_v_idx < w_vertex_count) { \
+                    w_vertices[w_v_idx * 3 + 0] = q_px[idx]; w_vertices[w_v_idx * 3 + 1] = q_py[idx]; w_vertices[w_v_idx * 3 + 2] = q_pz[idx]; \
+                    w_normals[w_v_idx * 3 + 0] = q_nx[idx]; w_normals[w_v_idx * 3 + 1] = q_ny[idx]; w_normals[w_v_idx * 3 + 2] = q_nz[idx]; \
+                    w_texcoords[w_v_idx * 2 + 0] = q_u[idx]; w_texcoords[w_v_idx * 2 + 1] = q_v[idx]; \
+                    w_colors[w_v_idx * 4 + 0] = ((q_light[idx] & 0xF) * 17); \
+                    w_colors[w_v_idx * 4 + 1] = (((q_light[idx] >> 4) & 0xF) * 17); \
+                    w_colors[w_v_idx * 4 + 2] = q_flag[idx]; \
+                    w_colors[w_v_idx * 4 + 3] = 255; \
+                    w_v_idx++; \
+                } \
+            } else { \
+                if(v_idx < vertex_count) { \
+                    vertices[v_idx * 3 + 0] = q_px[idx]; vertices[v_idx * 3 + 1] = q_py[idx]; vertices[v_idx * 3 + 2] = q_pz[idx]; \
+                    normals[v_idx * 3 + 0] = q_nx[idx]; normals[v_idx * 3 + 1] = q_ny[idx]; normals[v_idx * 3 + 2] = q_nz[idx]; \
+                    texcoords[v_idx * 2 + 0] = q_u[idx]; texcoords[v_idx * 2 + 1] = q_v[idx]; \
+                    colors[v_idx * 4 + 0] = ((q_light[idx] & 0xF) * 17); \
+                    colors[v_idx * 4 + 1] = (((q_light[idx] >> 4) & 0xF) * 17); \
+                    colors[v_idx * 4 + 2] = q_flag[idx]; \
+                    colors[v_idx * 4 + 3] = 255; \
+                    v_idx++; \
+                } \
+            }
+
+        #define ADD_QUAD_INDICES(IS_WATER) \
+            EMIT_VERTEX(0, IS_WATER); EMIT_VERTEX(1, IS_WATER); EMIT_VERTEX(2, IS_WATER); \
+            EMIT_VERTEX(0, IS_WATER); EMIT_VERTEX(2, IS_WATER); EMIT_VERTEX(3, IS_WATER); \
+            q_idx = 0;
+
+        for (int x = 0; x < 16; x++) {
+            for (int y = 0; y < CHUNK_HEIGHT; y++) {
+                for (int z = 0; z < 16; z++) {
+                    int btype = c->blocks[x][y][z];
+                    if (btype == BLOCK_AIR || btype == BLOCK_POWER_SOURCE || btype == BLOCK_POWER_CRYSTAL || btype == BLOCK_CHEST) continue;
+                    
+                    int current_flag = 0;
+                    if (btype == BLOCK_WATER || btype == BLOCK_WATER_2 || btype == BLOCK_WATER_1 || btype == BLOCK_WATER_0) current_flag = 255;
+                    else if (btype == BLOCK_LEAVES) current_flag = 100;
+                    
+                    int b_gx = gx_base + x;
+                    int b_gz = gz_base + z;
+                    float px = (float)x; float py = (float)y; float pz = (float)z;
+                    float u_min, v_min, u_max, v_max;
+
+                    // MACROS PROTEGIDAS PARA EVITAR EL ERROR "ELSE WITHOUT PREVIOUS IF"
+                    #define SET_UV(c, r) do { u_min = (float)(c) * 0.25f; v_min = (float)(r) * 0.25f; u_max = u_min + 0.25f; v_max = v_min + 0.25f; } while(0)
+                    #define CALC_LIGHT(gx, gy, gz, v) do { (v) = get_light_levels(chunks, num_chunks, (gx), (gy), (gz)); } while(0)
+
+                    // --- TORCH HANDLING ---
+                    if (btype >= 10 && btype <= 14) {
+                         float tu_min = 0.75; float tu_max = 1.0; 
+                         float tv_min = 0.25; float tv_max = 0.50;
+                         int t_light = 255; 
+                         float tw_x = 0.125; float tw_z = 0.125; float th = 0.5;
+                         float bx = px + 0.5 - tw_x/2.0; float by = py; float bz = pz + 0.5 - tw_z/2.0;
+                         float angle_offset = 0.3;
+                         
+                         if (btype == 11) { bz += 0.45; by += 0.1; }
+                         else if (btype == 12) { bz -= 0.45; by += 0.1; }
+                         else if (btype == 13) { bx += 0.45; by += 0.1; }
+                         else if (btype == 14) { bx -= 0.45; by += 0.1; }
+                         
+                         float top_offset_x = 0.0; float top_offset_z = 0.0;
+                         if (btype == 11) { top_offset_z = -angle_offset; }
+                         else if (btype == 12) { top_offset_z = angle_offset; }
+                         else if (btype == 13) { top_offset_x = -angle_offset; }
+                         else if (btype == 14) { top_offset_x = angle_offset; }
+                         
+                         float top_bx = bx + top_offset_x; float top_bz = bz + top_offset_z;
+                         
+                         ADD_VERTEX_GENERIC(bx, by, bz+tw_z, 0,0,1, tu_min, tv_max, t_light, 0);
+                         ADD_VERTEX_GENERIC(bx+tw_x, by, bz+tw_z, 0,0,1, tu_max, tv_max, t_light, 0);
+                         ADD_VERTEX_GENERIC(top_bx+tw_x, by+th, top_bz+tw_z, 0,0,1, tu_max, tv_min, t_light, 0);
+                         ADD_VERTEX_GENERIC(top_bx, by+th, top_bz+tw_z, 0,0,1, tu_min, tv_min, t_light, 0);
+                         ADD_QUAD_INDICES(0);
+                         
+                         ADD_VERTEX_GENERIC(bx+tw_x, by, bz, 0,0,-1, tu_min, tv_max, t_light, 0);
+                         ADD_VERTEX_GENERIC(bx, by, bz, 0,0,-1, tu_max, tv_max, t_light, 0);
+                         ADD_VERTEX_GENERIC(top_bx, by+th, top_bz, 0,0,-1, tu_max, tv_min, t_light, 0);
+                         ADD_VERTEX_GENERIC(top_bx+tw_x, by+th, top_bz, 0,0,-1, tu_min, tv_min, t_light, 0);
+                         ADD_QUAD_INDICES(0);
+                         
+                         ADD_VERTEX_GENERIC(bx, by, bz, -1,0,0, tu_min, tv_max, t_light, 0);
+                         ADD_VERTEX_GENERIC(bx, by, bz+tw_z, -1,0,0, tu_max, tv_max, t_light, 0);
+                         ADD_VERTEX_GENERIC(top_bx, by+th, top_bz+tw_z, -1,0,0, tu_max, tv_min, t_light, 0);
+                         ADD_VERTEX_GENERIC(top_bx, by+th, top_bz, -1,0,0, tu_min, tv_min, t_light, 0);
+                         ADD_QUAD_INDICES(0);
+                         
+                         ADD_VERTEX_GENERIC(bx+tw_x, by, bz+tw_z, 1,0,0, tu_min, tv_max, t_light, 0);
+                         ADD_VERTEX_GENERIC(bx+tw_x, by, bz, 1,0,0, tu_max, tv_max, t_light, 0);
+                         ADD_VERTEX_GENERIC(top_bx+tw_x, by+th, top_bz, 1,0,0, tu_max, tv_min, t_light, 0);
+                         ADD_VERTEX_GENERIC(top_bx+tw_x, by+th, top_bz+tw_z, 1,0,0, tu_min, tv_min, t_light, 0);
+                         ADD_QUAD_INDICES(0);
+                         
+                         ADD_VERTEX_GENERIC(top_bx, by+th, top_bz, 0,1,0, tu_min, tv_min, t_light, 0);
+                         ADD_VERTEX_GENERIC(top_bx, by+th, top_bz+tw_z, 0,1,0, tu_min, tv_max, t_light, 0);
+                         ADD_VERTEX_GENERIC(top_bx+tw_x, by+th, top_bz+tw_z, 0,1,0, tu_max, tv_max, t_light, 0);
+                         ADD_VERTEX_GENERIC(top_bx+tw_x, by+th, top_bz, 0,1,0, tu_max, tv_min, t_light, 0);
+                         ADD_QUAD_INDICES(0);
+                         continue;
+                    }
+
+                    // --- GLASS PANE HANDLING ---
+                    if (btype == BLOCK_GLASS_PANE) {
+                         float tu_min = 0.25f; float tu_max = 0.5f; 
+                         float tv_min = 0.5f; float tv_max = 0.75f;
+                         int t_light = 255; CALC_LIGHT(b_gx, y, b_gz, t_light);
+                         float post_size = 0.10f;
+                         float post_min = 0.5f - post_size/2.0f;
+                         float post_max = 0.5f + post_size/2.0f;
+                         
+                         int c_n = 0; int c_s = 0; int c_e = 0; int c_w = 0;
+                         int nb;
+                         #define CONNECTS(b) (!IS_TRANSPARENT_MESH(b) || (b) == BLOCK_GLASS_PANE)
+                         nb = get_block(chunks, num_chunks, b_gx, y, b_gz + 1); if(CONNECTS(nb)) c_n = 1;
+                         nb = get_block(chunks, num_chunks, b_gx, y, b_gz - 1); if(CONNECTS(nb)) c_s = 1;
+                         nb = get_block(chunks, num_chunks, b_gx + 1, y, b_gz); if(CONNECTS(nb)) c_e = 1;
+                         nb = get_block(chunks, num_chunks, b_gx - 1, y, b_gz); if(CONNECTS(nb)) c_w = 1;
+                         #undef CONNECTS
+                         
+                         ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_max, 0,1,0, tu_min, tv_max, t_light, 1);
+                         ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_max, 0,1,0, tu_max, tv_max, t_light, 1);
+                         ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_min, 0,1,0, tu_max, tv_min, t_light, 1);
+                         ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_min, 0,1,0, tu_min, tv_min, t_light, 1);
+                         ADD_QUAD_INDICES(1);
+                         
+                         ADD_VERTEX_GENERIC(px+post_min, py, pz+post_min, 0,-1,0, tu_min, tv_min, t_light, 1);
+                         ADD_VERTEX_GENERIC(px+post_max, py, pz+post_min, 0,-1,0, tu_max, tv_min, t_light, 1);
+                         ADD_VERTEX_GENERIC(px+post_max, py, pz+post_max, 0,-1,0, tu_max, tv_max, t_light, 1);
+                         ADD_VERTEX_GENERIC(px+post_min, py, pz+post_max, 0,-1,0, tu_min, tv_max, t_light, 1);
+                         ADD_QUAD_INDICES(1);
+                         
+                         if(!c_e) { 
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_max, 1,0,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_max, 1,0,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_min, 1,0,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_min, 1,0,0, tu_max, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
+                         if(!c_w) { 
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_min, -1,0,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_min, -1,0,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_max, -1,0,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_max, -1,0,0, tu_max, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
+                         if(!c_n) { 
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_max, 0,0,1, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_max, 0,0,1, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_max, 0,0,1, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_max, 0,0,1, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
+                         if(!c_s) { 
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_min, 0,0,-1, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_min, 0,0,-1, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_min, 0,0,-1, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_min, 0,0,-1, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
+
+                         if(c_n) {
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+1.0, 0,1,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+1.0, 0,1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_max, 0,1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_max, 0,1,0, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_max, 0,-1,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_max, 0,-1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+1.0, 0,-1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+1.0, 0,-1,0, tu_min, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+1.0, 1,0,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+1.0, 1,0,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_max, 1,0,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_max, 1,0,0, tu_max, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_max, -1,0,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_max, -1,0,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+1.0, -1,0,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+1.0, -1,0,0, tu_max, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
+                         if(c_s) {
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_min, 0,1,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_min, 0,1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+0.0, 0,1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+0.0, 0,1,0, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+0.0, 0,-1,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+0.0, 0,-1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_min, 0,-1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_min, 0,-1,0, tu_min, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_min, 1,0,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_min, 1,0,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+0.0, 1,0,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+0.0, 1,0,0, tu_max, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+0.0, -1,0,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+0.0, -1,0,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_min, -1,0,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_min, -1,0,0, tu_max, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
+                         if(c_e) {
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_max, 0,1,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+1.0, py+1, pz+post_max, 0,1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+1.0, py+1, pz+post_min, 0,1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_min, 0,1,0, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_min, 0,-1,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+1.0, py, pz+post_min, 0,-1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+1.0, py, pz+post_max, 0,-1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_max, 0,-1,0, tu_min, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_max, 0,0,1, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+1.0, py, pz+post_max, 0,0,1, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+1.0, py+1, pz+post_max, 0,0,1, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_max, 0,0,1, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             ADD_VERTEX_GENERIC(px+1.0, py, pz+post_min, 0,0,-1, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py, pz+post_min, 0,0,-1, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_max, py+1, pz+post_min, 0,0,-1, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+1.0, py+1, pz+post_min, 0,0,-1, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
+                         if(c_w) {
+                             ADD_VERTEX_GENERIC(px+0.0, py+1, pz+post_max, 0,1,0, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_max, 0,1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_min, 0,1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+0.0, py+1, pz+post_min, 0,1,0, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             ADD_VERTEX_GENERIC(px+0.0, py, pz+post_min, 0,-1,0, tu_min, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_min, 0,-1,0, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_max, 0,-1,0, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+0.0, py, pz+post_max, 0,-1,0, tu_min, tv_max, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             ADD_VERTEX_GENERIC(px+0.0, py, pz+post_max, 0,0,1, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_max, 0,0,1, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_max, 0,0,1, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+0.0, py+1, pz+post_max, 0,0,1, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                             ADD_VERTEX_GENERIC(px+post_min, py, pz+post_min, 0,0,-1, tu_min, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+0.0, py, pz+post_min, 0,0,-1, tu_max, tv_max, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+0.0, py+1, pz+post_min, 0,0,-1, tu_max, tv_min, t_light, 1);
+                             ADD_VERTEX_GENERIC(px+post_min, py+1, pz+post_min, 0,0,-1, tu_min, tv_min, t_light, 1);
+                             ADD_QUAD_INDICES(1);
+                         }
+                         continue;
+                    }
+                    
+                    // --- WATER SPECIAL CASE ---
+                    if (btype == BLOCK_WATER || btype == BLOCK_WATER_2 || btype == BLOCK_WATER_1 || btype == BLOCK_WATER_0) {
+                        float get_wh(Chunk* _c, int _nc, int nx, int ny, int nz) {
+                            int _b = get_block(_c, _nc, nx, ny, nz);
+                            if (_b == BLOCK_WATER) return 0.9f;
+                            if (_b == BLOCK_WATER_2) return 0.6f;
+                            if (_b == BLOCK_WATER_1) return 0.3f;
+                            if (_b == BLOCK_WATER_0) return 0.05f;
+                            if (_b == BLOCK_AIR) {
+                                int _bb = get_block(_c, _nc, nx, ny-1, nz);
+                                if (_bb == BLOCK_WATER) return -0.1f;
+                                if (_bb == BLOCK_WATER_2) return -0.4f;
+                                if (_bb == BLOCK_WATER_1) return -0.7f;
+                                if (_bb == BLOCK_WATER_0) return -0.95f;
+                            }
+                            return -999.0f;
+                        }
+                        
+                        float h00 = 0.0f, h10 = 0.0f, h11 = 0.0f, h01 = 0.0f;
+                        int n00 = 0, n10 = 0, n11 = 0, n01 = 0;
+                        float _sh;
+                        
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz);   if(_sh > -10.0f) { h00 += _sh; n00++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx-1, y, b_gz);   if(_sh > -10.0f) { h00 += _sh; n00++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz-1); if(_sh > -10.0f) { h00 += _sh; n00++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx-1, y, b_gz-1); if(_sh > -10.0f) { h00 += _sh; n00++; }
+                        
+                        _sh = get_wh(chunks, num_chunks, b_gx+1, y, b_gz);   if(_sh > -10.0f) { h10 += _sh; n10++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz);   if(_sh > -10.0f) { h10 += _sh; n10++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx+1, y, b_gz-1); if(_sh > -10.0f) { h10 += _sh; n10++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz-1); if(_sh > -10.0f) { h10 += _sh; n10++; }
+                        
+                        _sh = get_wh(chunks, num_chunks, b_gx+1, y, b_gz+1); if(_sh > -10.0f) { h11 += _sh; n11++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz+1); if(_sh > -10.0f) { h11 += _sh; n11++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx+1, y, b_gz);   if(_sh > -10.0f) { h11 += _sh; n11++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz);   if(_sh > -10.0f) { h11 += _sh; n11++; }
+                        
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz+1); if(_sh > -10.0f) { h01 += _sh; n01++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx-1, y, b_gz+1); if(_sh > -10.0f) { h01 += _sh; n01++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx,   y, b_gz);   if(_sh > -10.0f) { h01 += _sh; n01++; }
+                        _sh = get_wh(chunks, num_chunks, b_gx-1, y, b_gz);   if(_sh > -10.0f) { h01 += _sh; n01++; }
+                        
+                        if (n00 > 0) h00 /= (float)n00;
+                        if (n10 > 0) h10 /= (float)n10;
+                        if (n11 > 0) h11 /= (float)n11;
+                        if (n01 > 0) h01 /= (float)n01;
+                        
+                        int water_flag = (btype == BLOCK_WATER) ? 255 : 192;
+
+                        int neighbor_above = get_block(chunks, num_chunks, b_gx, y + 1, b_gz);
+                        int water_above = (neighbor_above == BLOCK_WATER || neighbor_above == BLOCK_WATER_2 || neighbor_above == BLOCK_WATER_1 || neighbor_above == BLOCK_WATER_0);
+                        if (water_above) {
+                            h00 = 1.0f; h10 = 1.0f; h11 = 1.0f; h01 = 1.0f;
+                        }
+                        
+                        if (neighbor_above != BLOCK_WATER && neighbor_above != BLOCK_WATER_2 && neighbor_above != BLOCK_WATER_1 && neighbor_above != BLOCK_WATER_0 && IS_TRANSPARENT_MESH(neighbor_above)) {
+                            int light_val; CALC_LIGHT(b_gx, y + 1, b_gz, light_val);
+                            SET_UV(0, 0); 
+                            ADD_VERTEX_GENERIC(px, py+h00, pz,     0,1,0, u_min, v_min, light_val, water_flag);
+                            ADD_VERTEX_GENERIC(px+1, py+h10, pz,   0,1,0, u_max, v_min, light_val, water_flag);
+                            ADD_VERTEX_GENERIC(px+1, py+h11, pz+1, 0,1,0, u_max, v_max, light_val, water_flag);
+                            ADD_VERTEX_GENERIC(px, py+h01, pz+1,   0,1,0, u_min, v_max, light_val, water_flag);
+                            ADD_QUAD_INDICES(1);
+                        }
+                        
+                        #define HAS_WATER_ABOVE(nx, ny, nz) IS_WATER_TYPE(get_block(chunks, num_chunks, nx, ny + 1, nz))
+
+                        int side_nb;
+                        side_nb = get_block(chunks, num_chunks, b_gx + 1, y, b_gz);
+                        if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && !HAS_WATER_ABOVE(b_gx + 1, y, b_gz))) {
+                             int light_val; CALC_LIGHT(b_gx + 1, y, b_gz, light_val);
+                             ADD_VERTEX_GENERIC(px+1, py, pz,     1,0,0, u_min, v_max, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px+1, py+h10, pz,   1,0,0, u_min, v_min, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px+1, py+h11, pz+1, 1,0,0, u_max, v_min, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px+1, py, pz+1,   1,0,0, u_max, v_max, light_val, water_flag);
+                             ADD_QUAD_INDICES(1);
+                        }
+                        side_nb = get_block(chunks, num_chunks, b_gx - 1, y, b_gz);
+                        if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && !HAS_WATER_ABOVE(b_gx - 1, y, b_gz))) {
+                             int light_val; CALC_LIGHT(b_gx - 1, y, b_gz, light_val);
+                             ADD_VERTEX_GENERIC(px, py, pz,     -1,0,0, u_min, v_max, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px, py+h00, pz,   -1,0,0, u_min, v_min, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px, py+h01, pz+1, -1,0,0, u_max, v_min, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px, py, pz+1,   -1,0,0, u_max, v_max, light_val, water_flag);
+                             ADD_QUAD_INDICES(1);
+                        }
+                        side_nb = get_block(chunks, num_chunks, b_gx, y, b_gz + 1);
+                        if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && !HAS_WATER_ABOVE(b_gx, y, b_gz + 1))) {
+                             int light_val; CALC_LIGHT(b_gx, y, b_gz + 1, light_val);
+                             ADD_VERTEX_GENERIC(px, py, pz+1,     0,0,1, u_min, v_max, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px+1, py, pz+1,   0,0,1, u_max, v_max, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px+1, py+h11, pz+1, 0,0,1, u_max, v_min, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px, py+h01, pz+1,   0,0,1, u_min, v_min, light_val, water_flag);
+                             ADD_QUAD_INDICES(1);
+                        }
+                        side_nb = get_block(chunks, num_chunks, b_gx, y, b_gz - 1);
+                        if (SHOULD_RENDER_FACE(side_nb) || (water_above && IS_WATER_TYPE(side_nb) && !HAS_WATER_ABOVE(b_gx, y, b_gz - 1))) {
+                             int light_val; CALC_LIGHT(b_gx, y, b_gz - 1, light_val);
+                             ADD_VERTEX_GENERIC(px, py, pz,     0,0,-1, u_min, v_max, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px+1, py, pz,   0,0,-1, u_max, v_max, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px+1, py+h10, pz, 0,0,-1, u_max, v_min, light_val, water_flag);
+                             ADD_VERTEX_GENERIC(px, py+h00, pz,   0,0,-1, u_min, v_min, light_val, water_flag);
+                             ADD_QUAD_INDICES(1);
+                        }
+                        if (y > 0) {
+                            int below = get_block(chunks, num_chunks, b_gx, y - 1, b_gz);
+                            if (!IS_WATER_TYPE(below) && IS_TRANSPARENT_MESH(below)) {
+                                int light_val; CALC_LIGHT(b_gx, y - 1, b_gz, light_val);
+                                ADD_VERTEX_GENERIC(px, py, pz+1,     0,-1,0, u_min, v_max, light_val, water_flag);
+                                ADD_VERTEX_GENERIC(px+1, py, pz+1,   0,-1,0, u_max, v_max, light_val, water_flag);
+                                ADD_VERTEX_GENERIC(px+1, py, pz,     0,-1,0, u_max, v_min, light_val, water_flag);
+                                ADD_VERTEX_GENERIC(px, py, pz,       0,-1,0, u_min, v_min, light_val, water_flag);
+                                ADD_QUAD_INDICES(1);
+                            }
+                        }
+                        #undef BLOCK_TO_WH
+                        #undef HAS_WATER_ABOVE
+                        continue;
+                    }
+
+                    // --- CRYSTAL SPECIAL CASE ---
+                    if (btype == BLOCK_CRYSTAL) {
+                        SET_UV(0, 3);
+                        #define CHECK_CRYSTAL_FACE(nb) (IS_TRANSPARENT_MESH(nb) && (nb) != BLOCK_CRYSTAL)
+
+                        if (CHECK_CRYSTAL_FACE(get_block(chunks, num_chunks, b_gx, y + 1, b_gz))) {
+                            int light_val; CALC_LIGHT(b_gx, y + 1, b_gz, light_val);
+                            ADD_VERTEX_GENERIC(px, py+1, pz,     0,1,0, u_min, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py+1, pz,   0,1,0, u_max, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py+1, pz+1, 0,1,0, u_max, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px, py+1, pz+1,   0,1,0, u_min, v_max, light_val, 1);
+                            ADD_QUAD_INDICES(1);
+                        }
+                        if (CHECK_CRYSTAL_FACE(get_block(chunks, num_chunks, b_gx, y - 1, b_gz))) {
+                             int light_val; CALC_LIGHT(b_gx, y - 1, b_gz, light_val);
+                            ADD_VERTEX_GENERIC(px, py, pz,     0,-1,0, u_min, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py, pz,   0,-1,0, u_max, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py, pz+1, 0,-1,0, u_max, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px, py, pz+1,   0,-1,0, u_min, v_max, light_val, 1);
+                            ADD_QUAD_INDICES(1);
+                        }
+                        if (CHECK_CRYSTAL_FACE(get_block(chunks, num_chunks, b_gx + 1, y, b_gz))) {
+                             int light_val; CALC_LIGHT(b_gx + 1, y, b_gz, light_val);
+                            ADD_VERTEX_GENERIC(px+1, py, pz,     1,0,0, u_min, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py+1, pz,   1,0,0, u_min, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py+1, pz+1, 1,0,0, u_max, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py, pz+1,   1,0,0, u_max, v_max, light_val, 1);
+                            ADD_QUAD_INDICES(1);
+                        }
+                        if (CHECK_CRYSTAL_FACE(get_block(chunks, num_chunks, b_gx - 1, y, b_gz))) {
+                             int light_val; CALC_LIGHT(b_gx - 1, y, b_gz, light_val);
+                            ADD_VERTEX_GENERIC(px, py, pz,     -1,0,0, u_min, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px, py+1, pz,   -1,0,0, u_min, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px, py+1, pz+1, -1,0,0, u_max, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px, py, pz+1,   -1,0,0, u_max, v_max, light_val, 1);
+                            ADD_QUAD_INDICES(1);
+                        }
+                        if (CHECK_CRYSTAL_FACE(get_block(chunks, num_chunks, b_gx, y, b_gz + 1))) {
+                             int light_val; CALC_LIGHT(b_gx, y, b_gz + 1, light_val);
+                            ADD_VERTEX_GENERIC(px, py, pz+1,     0,0,1, u_min, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py, pz+1,   0,0,1, u_max, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py+1, pz+1, 0,0,1, u_max, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px, py+1, pz+1,   0,0,1, u_min, v_min, light_val, 1);
+                            ADD_QUAD_INDICES(1);
+                        }
+                        if (CHECK_CRYSTAL_FACE(get_block(chunks, num_chunks, b_gx, y, b_gz - 1))) {
+                             int light_val; CALC_LIGHT(b_gx, y, b_gz - 1, light_val);
+                            ADD_VERTEX_GENERIC(px, py, pz,     0,0,-1, u_min, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py, pz,   0,0,-1, u_max, v_max, light_val, 1);
+                            ADD_VERTEX_GENERIC(px+1, py+1, pz, 0,0,-1, u_max, v_min, light_val, 1);
+                            ADD_VERTEX_GENERIC(px, py+1, pz,   0,0,-1, u_min, v_min, light_val, 1);
+                            ADD_QUAD_INDICES(1);
+                        }
+                        #undef CHECK_CRYSTAL_FACE
+                        continue;
+                    }
+
+                    // --- NORMAL BLOCK RENDERING ---
+                    // +Y (Arriba)
+                    if (SHOULD_RENDER_FACE(get_block(chunks, num_chunks, b_gx, y + 1, b_gz))) {
+                        int light_val; CALC_LIGHT(b_gx, y + 1, b_gz, light_val);
+                        if (btype == BLOCK_GRASS) { SET_UV(1, 0); } 
+                        else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } 
+                        else if (btype == BLOCK_STONE) { SET_UV(1, 1); } 
+                        else if (btype == BLOCK_LOG) { SET_UV(3, 0); } 
+                        else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } 
+                        else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
+                        else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
+                        else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
+                        else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
+                        else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
+                        else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
+                        else if (btype == BLOCK_CAGE) { SET_UV(0, 3); }
+                        else { SET_UV(0, 0); }
+
+                        ADD_VERTEX_GENERIC(px, py+1, pz, 0,1,0, u_min, v_min, light_val, 0);
+                        ADD_VERTEX_GENERIC(px+1, py+1, pz, 0,1,0, u_max, v_min, light_val, 0);
+                        ADD_VERTEX_GENERIC(px+1, py+1, pz+1, 0,1,0, u_max, v_max, light_val, 0);
+                        ADD_VERTEX_GENERIC(px, py+1, pz+1, 0,1,0, u_min, v_max, light_val, 0);
+                        ADD_QUAD_INDICES(0);
+                    }
+                    // -Y (Abajo)
+                    if (SHOULD_RENDER_FACE(get_block(chunks, num_chunks, b_gx, y - 1, b_gz))) {
+                         int light_val; CALC_LIGHT(b_gx, y - 1, b_gz, light_val);
+                        if (btype == BLOCK_GRASS) { SET_UV(0, 0); } 
+                        else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } 
+                        else if (btype == BLOCK_STONE) { SET_UV(1, 1); } 
+                        else if (btype == BLOCK_LOG) { SET_UV(3, 0); } 
+                        else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } 
+                        else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
+                        else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
+                        else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
+                        else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
+                        else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
+                        else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
+                        else if (btype == BLOCK_CAGE) { SET_UV(0, 3); }
+                        else { SET_UV(0, 0); }
+
+                        ADD_VERTEX_GENERIC(px, py, pz, 0,-1,0, u_min, v_min, light_val, 0);
+                        ADD_VERTEX_GENERIC(px+1, py, pz, 0,-1,0, u_max, v_min, light_val, 0);
+                        ADD_VERTEX_GENERIC(px+1, py, pz+1, 0,-1,0, u_max, v_max, light_val, 0);
+                        ADD_VERTEX_GENERIC(px, py, pz+1, 0,-1,0, u_min, v_max, light_val, 0);
+                        ADD_QUAD_INDICES(0);
+                    }
+                    // +X (Este)
+                    if (SHOULD_RENDER_FACE(get_block(chunks, num_chunks, b_gx + 1, y, b_gz))) {
+                         int light_val; CALC_LIGHT(b_gx + 1, y, b_gz, light_val);
+                        if (btype == BLOCK_GRASS) { SET_UV(0, 1); } 
+                        else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } 
+                        else if (btype == BLOCK_STONE) { SET_UV(1, 1); } 
+                        else if (btype == BLOCK_LOG) { SET_UV(2, 0); } 
+                        else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } 
+                        else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
+                        else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
+                        else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
+                        else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
+                        else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
+                        else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
+                        else if (btype == BLOCK_CAGE) { SET_UV(0, 3); }
+                        else { SET_UV(0, 0); }
+
+                        ADD_VERTEX_GENERIC(px+1, py, pz, 1,0,0, u_min, v_max, light_val, 0);
+                        ADD_VERTEX_GENERIC(px+1, py+1, pz, 1,0,0, u_min, v_min, light_val, 0);
+                        ADD_VERTEX_GENERIC(px+1, py+1, pz+1, 1,0,0, u_max, v_min, light_val, 0);
+                        ADD_VERTEX_GENERIC(px+1, py, pz+1, 1,0,0, u_max, v_max, light_val, 0);
+                        ADD_QUAD_INDICES(0);
+                    }
+                    // -X (Oeste)
+                    if (SHOULD_RENDER_FACE(get_block(chunks, num_chunks, b_gx - 1, y, b_gz))) {
+                         int light_val; CALC_LIGHT(b_gx - 1, y, b_gz, light_val);
+                        if (btype == BLOCK_GRASS) { SET_UV(0, 1); } 
+                        else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } 
+                        else if (btype == BLOCK_STONE) { SET_UV(1, 1); } 
+                        else if (btype == BLOCK_LOG) { SET_UV(2, 0); } 
+                        else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } 
+                        else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
+                        else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
+                        else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
+                        else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
+                        else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
+                        else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
+                        else if (btype == BLOCK_CAGE) { SET_UV(0, 3); }
+                        else { SET_UV(0, 0); }
+
+                        ADD_VERTEX_GENERIC(px, py, pz, -1,0,0, u_min, v_max, light_val, 0);
+                        ADD_VERTEX_GENERIC(px, py+1, pz, -1,0,0, u_min, v_min, light_val, 0);
+                        ADD_VERTEX_GENERIC(px, py+1, pz+1, -1,0,0, u_max, v_min, light_val, 0);
+                        ADD_VERTEX_GENERIC(px, py, pz+1, -1,0,0, u_max, v_max, light_val, 0);
+                        ADD_QUAD_INDICES(0);
+                    }
+                    // +Z (Norte)
+                    if (SHOULD_RENDER_FACE(get_block(chunks, num_chunks, b_gx, y, b_gz + 1))) {
+                         int light_val; CALC_LIGHT(b_gx, y, b_gz + 1, light_val);
+                        if (btype == BLOCK_GRASS) { SET_UV(0, 1); } 
+                        else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } 
+                        else if (btype == BLOCK_STONE) { SET_UV(1, 1); } 
+                        else if (btype == BLOCK_LOG) { SET_UV(2, 0); } 
+                        else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } 
+                        else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
+                        else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
+                        else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
+                        else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
+                        else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
+                        else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
+                        else if (btype == BLOCK_CAGE) { SET_UV(0, 3); }
+                        else { SET_UV(0, 0); }
+
+                        ADD_VERTEX_GENERIC(px, py, pz+1, 0,0,1, u_min, v_max, light_val, 0);
+                        ADD_VERTEX_GENERIC(px+1, py, pz+1, 0,0,1, u_max, v_max, light_val, 0);
+                        ADD_VERTEX_GENERIC(px+1, py+1, pz+1, 0,0,1, u_max, v_min, light_val, 0);
+                        ADD_VERTEX_GENERIC(px, py+1, pz+1, 0,0,1, u_min, v_min, light_val, 0);
+                        ADD_QUAD_INDICES(0);
+                    }
+                    // -Z (Sur)
+                    if (SHOULD_RENDER_FACE(get_block(chunks, num_chunks, b_gx, y, b_gz - 1))) {
+                         int light_val; CALC_LIGHT(b_gx, y, b_gz - 1, light_val);
+                        if (btype == BLOCK_GRASS) { SET_UV(0, 1); } 
+                        else if (btype == BLOCK_DIRT) { SET_UV(0, 0); } 
+                        else if (btype == BLOCK_STONE) { SET_UV(1, 1); } 
+                        else if (btype == BLOCK_LOG) { SET_UV(2, 0); } 
+                        else if (btype == BLOCK_LEAVES) { SET_UV(2, 1); } 
+                        else if (btype == BLOCK_SAND) { SET_UV(0, 2); } 
+                        else if (btype == BLOCK_PLANKS) { SET_UV(2, 2); }
+                        else if (btype == BLOCK_COBBLESTONE) { SET_UV(3, 2); }
+                        else if (btype == BLOCK_POWER_SOURCE) { SET_UV(1, 2); }
+                        else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
+                        else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
+                        else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
+                        else if (btype == BLOCK_CAGE) { SET_UV(0, 3); }
+                        else { SET_UV(0, 0); }
+
+                        ADD_VERTEX_GENERIC(px, py, pz, 0,0,-1, u_min, v_max, light_val, 0);
+                        ADD_VERTEX_GENERIC(px+1, py, pz, 0,0,-1, u_max, v_max, light_val, 0);
+                        ADD_VERTEX_GENERIC(px+1, py+1, pz, 0,0,-1, u_max, v_min, light_val, 0);
+                        ADD_VERTEX_GENERIC(px, py+1, pz, 0,0,-1, u_min, v_min, light_val, 0);
+                        ADD_QUAD_INDICES(0);
+                    }
+
+                    #undef CALC_LIGHT
+                    #undef SET_UV
+                }
+            }
+        }
+        
+        #undef ADD_VERTEX_GENERIC
+        #undef ADD_QUAD_INDICES
+        #undef SHOULD_RENDER_FACE
+        #undef IS_WATER_TYPE
+        #undef WATER_LEVEL
+
+        if (v_idx > 0) {
+            res.opq_mesh.vertexCount = v_idx;
+            res.opq_mesh.triangleCount = v_idx / 3;
+            res.opq_mesh.vertices = vertices;
+            res.opq_mesh.texcoords = texcoords;
+            res.opq_mesh.normals = normals;
+            res.opq_mesh.colors = (void*)colors;
+            res.has_opaque = 1;
+        } else {
+            if (vertices != NULL) { free(vertices); free(texcoords); free(normals); free(colors); }
+            res.has_opaque = 0;
+        }
+        
+        if (w_v_idx > 0) {
+            res.water.vertexCount = w_v_idx;
+            res.water.triangleCount = w_v_idx / 3;
+            res.water.vertices = w_vertices;
+            res.water.texcoords = w_texcoords;
+            res.water.normals = w_normals;
+            res.water.colors = (void*)w_colors;
+            res.has_water = 1;
+        } else {
+             if (w_vertices != NULL) { free(w_vertices); free(w_texcoords); free(w_normals); free(w_colors); }
+             res.has_water = 0;
+        }
+    }
+    
+    return res;
+}

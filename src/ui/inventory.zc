@@ -1,0 +1,118 @@
+//> Inventory system — ItemStack, scepter inventory, chest inventory helpers
+import "raylib.h" as rl;
+import "../world/blocks.zc";
+
+def INV_SLOTS = 27;
+
+struct ItemStack {
+    block_type: int;
+    count: int;
+}
+
+struct Inventory {
+    slots: ItemStack[27];
+}
+
+// --- Global Scepter Inventory ---
+let scepter_inv: Inventory;
+
+fn init_inventory(inv: Inventory*) {
+    for i in 0..INV_SLOTS {
+        inv.slots[i].block_type = BLOCK_AIR;
+        inv.slots[i].count = 0;
+    }
+}
+
+// Add a block to inventory. Returns 1 if success, 0 if full.
+fn inv_add_item(inv: Inventory*, block_type: int) -> int {
+    // First try to stack with existing slot of same type
+    for i in 0..INV_SLOTS {
+        if inv.slots[i].block_type == block_type && inv.slots[i].count < 64 {
+            inv.slots[i].count++;
+            return 1;
+        }
+    }
+    // No existing stack — find empty slot
+    for i in 0..INV_SLOTS {
+        if inv.slots[i].block_type == BLOCK_AIR || inv.slots[i].count == 0 {
+            inv.slots[i].block_type = block_type;
+            inv.slots[i].count = 1;
+            return 1;
+        }
+    }
+    return 0; // Full
+}
+
+// Remove one item from a slot. Returns the block_type or BLOCK_AIR if empty.
+fn inv_remove_item(inv: Inventory*, slot: int) -> int {
+    if slot < 0 || slot >= INV_SLOTS { return BLOCK_AIR; }
+    if inv.slots[slot].count <= 0 { return BLOCK_AIR; }
+    
+    let btype = inv.slots[slot].block_type;
+    inv.slots[slot].count--;
+    if inv.slots[slot].count <= 0 {
+        inv.slots[slot].block_type = BLOCK_AIR;
+        inv.slots[slot].count = 0;
+    }
+    return btype;
+}
+
+// Transfer one item from slot in src to dst. Returns 1 if success.
+fn inv_transfer(src: Inventory*, dst: Inventory*, slot: int) -> int {
+    let btype = inv_remove_item(src, slot);
+    if btype == BLOCK_AIR { return 0; }
+    
+    let ok = inv_add_item(dst, btype);
+    if ok == 0 {
+        // Dst full — put it back
+        inv_add_item(src, btype);
+        return 0;
+    }
+    return 1;
+}
+
+// Scepter convenience functions
+fn scepter_add_item(block_type: int) -> int {
+    return inv_add_item(&scepter_inv, block_type);
+}
+
+fn scepter_init() {
+    init_inventory(&scepter_inv);
+}
+
+// Get block color for UI rendering
+fn get_block_color(btype: int) -> rl::Color {
+    if btype == BLOCK_GRASS { return rl::Color{r: 76, g: 153, b: 0, a: 255}; }
+    if btype == BLOCK_DIRT { return rl::Color{r: 134, g: 96, b: 67, a: 255}; }
+    if btype == BLOCK_STONE { return rl::Color{r: 128, g: 128, b: 128, a: 255}; }
+    if btype == BLOCK_LOG { return rl::Color{r: 101, g: 67, b: 33, a: 255}; }
+    if btype == BLOCK_LEAVES { return rl::Color{r: 34, g: 139, b: 34, a: 255}; }
+    if btype == BLOCK_SAND { return rl::Color{r: 237, g: 201, b: 175, a: 255}; }
+    if btype == BLOCK_WATER { return rl::Color{r: 64, g: 164, b: 223, a: 255}; }
+    if btype == BLOCK_PLANKS { return rl::Color{r: 188, g: 152, b: 98, a: 255}; }
+    if btype == BLOCK_COBBLESTONE { return rl::Color{r: 100, g: 100, b: 100, a: 255}; }
+    if btype == BLOCK_SNOW { return rl::Color{r: 240, g: 240, b: 255, a: 255}; }
+    if btype == BLOCK_ICE { return rl::Color{r: 176, g: 224, b: 230, a: 255}; }
+    if btype == BLOCK_CACTUS { return rl::Color{r: 34, g: 120, b: 34, a: 255}; }
+    if btype == BLOCK_CAGE { return rl::Color{r: 120, g: 120, b: 120, a: 255}; }
+    if btype == BLOCK_CHEST { return rl::Color{r: 160, g: 120, b: 50, a: 255}; }
+    return rl::Color{r: 200, g: 200, b: 200, a: 255};
+}
+
+// Get block name for UI
+fn get_block_name(btype: int) -> any {
+    if btype == BLOCK_GRASS { return "Grass"; }
+    if btype == BLOCK_DIRT { return "Dirt"; }
+    if btype == BLOCK_STONE { return "Stone"; }
+    if btype == BLOCK_LOG { return "Log"; }
+    if btype == BLOCK_LEAVES { return "Leaves"; }
+    if btype == BLOCK_SAND { return "Sand"; }
+    if btype == BLOCK_PLANKS { return "Planks"; }
+    if btype == BLOCK_COBBLESTONE { return "Cobble"; }
+    if btype == BLOCK_SNOW { return "Snow"; }
+    if btype == BLOCK_ICE { return "Ice"; }
+    if btype == BLOCK_CACTUS { return "Cactus"; }
+    if btype == BLOCK_CAGE { return "Cage"; }
+    if btype == BLOCK_CHEST { return "Chest"; }
+    return "Block";
+}

@@ -1,4 +1,0 @@
-//> Main Chunk Mesh Umbrella Wrapper
-import "mesh_plants.zc";
-import "mesh_blocks.zc";
-import "mesh_upload.zc";

@@ -1,0 +1,197 @@
+//> Fireball Spell System
+import "raylib.h" as rl;
+import "rlgl.h";
+import "math.h";
+import "../world/blocks.zc";
+import "../world/chunk_core.zc";
+import "../render/particles.zc";
+import "../render/rendering.zc";
+
+def MAX_FIREBALLS = 8;
+def FIREBALL_SPEED = 30.0;
+def FIREBALL_RADIUS = 2; // Explosion radius in blocks
+def FIREBALL_MANA_COST = 20.0;
+def FIREBALL_LIFETIME = 5.0; // Seconds before fizzle
+
+struct Fireball {
+    active: int;
+    x: float; y: float; z: float;
+    vx: float; vy: float; vz: float;
+    life: float;
+}
+
+let fireballs: Fireball[8];
+let fireball_initialized: int = 0;
+
+fn init_fireballs() {
+    for i in 0..MAX_FIREBALLS {
+        fireballs[i].active = 0;
+    }
+    fireball_initialized = 1;
+}
+
+fn spawn_fireball(px: float, py: float, pz: float, dx: float, dy: float, dz: float) {
+    if fireball_initialized == 0 { init_fireballs(); }
+    
+    for i in 0..MAX_FIREBALLS {
+        if fireballs[i].active == 0 {
+            fireballs[i].active = 1;
+            // Start slightly in front of player
+            fireballs[i].x = px + dx * 1.5;
+            fireballs[i].y = py + dy * 1.5;
+            fireballs[i].z = pz + dz * 1.5;
+            fireballs[i].vx = dx * FIREBALL_SPEED;
+            fireballs[i].vy = dy * FIREBALL_SPEED;
+            fireballs[i].vz = dz * FIREBALL_SPEED;
+            fireballs[i].life = FIREBALL_LIFETIME;
+            return;
+        }
+    }
+}
+
+fn fireball_explode(fx: float, fy: float, fz: float, chunks: Chunk*, num_chunks: int) {
+    // Destroy blocks in a sphere of FIREBALL_RADIUS
+    let cx_i = (int)floor(fx);
+    let cy_i = (int)floor(fy);
+    let cz_i = (int)floor(fz);
+    
+    // Track which chunks need mesh rebuild
+    let affected_chunks: int[16]; // Up to 16 chunk indices affected
+    let num_affected = 0;
+    
+    for bx in -FIREBALL_RADIUS..FIREBALL_RADIUS+1 {
+        for by in -FIREBALL_RADIUS..FIREBALL_RADIUS+1 {
+            for bz in -FIREBALL_RADIUS..FIREBALL_RADIUS+1 {
+                // Sphere check
+                let dist2 = bx*bx + by*by + bz*bz;
+                if dist2 > FIREBALL_RADIUS * FIREBALL_RADIUS { continue; }
+                
+                let wx = cx_i + bx;
+                let wy = cy_i + by;
+                let wz = cz_i + bz;
+                
+                if wy < 1 || wy >= CHUNK_HEIGHT { continue; }
+                
+                let block = get_block(chunks, num_chunks, wx, wy, wz);
+                // Don't destroy bedrock (y==0), water, or air
+                if block == BLOCK_AIR || block == BLOCK_WATER || block == BLOCK_WATER_1 || block == BLOCK_WATER_2 || block == BLOCK_WATER_0 { continue; }
+                
+                set_block(chunks, num_chunks, wx, wy, wz, BLOCK_AIR);
+                
+                // Track affected chunk
+                let chunk_cx = (int)floor((float)wx / 16.0);
+                let chunk_cz = (int)floor((float)wz / 16.0);
+                let cidx = get_chunk_index(chunk_cx, chunk_cz);
+                
+                // Add to affected list if not already there
+                let found = 0;
+                for ai in 0..num_affected {
+                    if affected_chunks[ai] == cidx { found = 1; break; }
+                }
+                if found == 0 && num_affected < 16 {
+                    affected_chunks[num_affected] = cidx;
+                    num_affected = num_affected + 1;
+                }
+            }
+        }
+    }
+    
+    // Rebuild meshes for affected chunks
+    for ai in 0..num_affected {
+        let cidx = affected_chunks[ai];
+        request_mesh_async(cidx, 1);
+        request_light_async(cidx, 4, 1);
+        chunks[cidx].grass_deco_built = 0;
+        request_save_async(&chunks[cidx]);
+    }
+    
+    // Explosion particles
+    spawn_explosion(fx, fy, fz, 40, rl::Color{r: 255, g: 120, b: 20, a: 255});
+    spawn_explosion(fx, fy, fz, 20, rl::Color{r: 255, g: 200, b: 50, a: 255});
+    spawn_explosion(fx, fy, fz, 10, rl::Color{r: 255, g: 255, b: 200, a: 255});
+}
+
+fn update_fireballs(dt: float, chunks: Chunk*, num_chunks: int) {
+    if fireball_initialized == 0 { init_fireballs(); }
+    
+    for i in 0..MAX_FIREBALLS {
+        if fireballs[i].active == 0 { continue; }
+        
+        // Apply slight gravity
+        fireballs[i].vy = fireballs[i].vy - 3.0 * dt;
+        
+        // Move
+        fireballs[i].x = fireballs[i].x + fireballs[i].vx * dt;
+        fireballs[i].y = fireballs[i].y + fireballs[i].vy * dt;
+        fireballs[i].z = fireballs[i].z + fireballs[i].vz * dt;
+        
+        fireballs[i].life = fireballs[i].life - dt;
+        
+        // Check collision with blocks
+        let bx = (int)floor(fireballs[i].x);
+        let by = (int)floor(fireballs[i].y);
+        let bz = (int)floor(fireballs[i].z);
+        
+        let block = get_block(chunks, num_chunks, bx, by, bz);
+        let hit_block = 0;
+        if block != BLOCK_AIR && block != BLOCK_WATER && block != BLOCK_WATER_1 && block != BLOCK_WATER_2 && block != BLOCK_WATER_0 && block != BLOCK_TALLGRASS && block != BLOCK_LEAVES {
+            hit_block = 1;
+        }
+        
+        if hit_block == 1 {
+            // EXPLODE!
+            fireball_explode(fireballs[i].x, fireballs[i].y, fireballs[i].z, chunks, num_chunks);
+            fireballs[i].active = 0;
+            continue;
+        }
+        
+        // Timeout
+        if fireballs[i].life <= 0.0 {
+            // Fizzle out
+            spawn_explosion(fireballs[i].x, fireballs[i].y, fireballs[i].z, 5, rl::Color{r: 255, g: 100, b: 0, a: 200});
+            fireballs[i].active = 0;
+            continue;
+        }
+        
+        // Trail particles
+        if rl::GetRandomValue(0, 10) < 8 {
+            let trail_x = fireballs[i].x + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.3;
+            let trail_y = fireballs[i].y + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.3;
+            let trail_z = fireballs[i].z + (((float)rl::GetRandomValue(0, 100) / 100.0) - 0.5) * 0.3;
+            spawn_particle(trail_x, trail_y, trail_z, rl::Color{r: 255, g: (int)(80.0 + (float)rl::GetRandomValue(0, 120)), b: 20, a: 255});
+        }
+    }
+}
+
+fn draw_fireballs() {
+    if fireball_initialized == 0 { return; }
+    
+    let time = (float)rl::GetTime();
+    
+    for i in 0..MAX_FIREBALLS {
+        if fireballs[i].active == 0 { continue; }
+        
+        let pulse = 0.8 + 0.2 * (float)sin(time * 15.0 + (float)i * 3.0);
+        let size = 0.25 * pulse;
+        
+        let pos = rl::Vector3{x: fireballs[i].x, y: fireballs[i].y, z: fireballs[i].z};
+        
+        // Core (yellow-white hot)
+        rl::DrawSphere(pos, size * 0.5, rl::Color{r: 255, g: 255, b: 200, a: 255});
+        
+        // Flame (orange)
+        rl::DrawSphere(pos, size, rl::Color{r: 255, g: 140, b: 20, a: 200});
+        
+        // Additive glow
+        rl::rlSetBlendMode(rl::BLEND_ADDITIVE);
+        rl::rlDisableDepthMask();
+        rl::DrawSphere(pos, size * 2.0, rl::Color{r: 255, g: 80, b: 0, a: 80});
+        rl::DrawSphere(pos, size * 3.0, rl::Color{r: 200, g: 40, b: 0, a: 30});
+        rl::rlEnableDepthMask();
+        rl::rlSetBlendMode(rl::BLEND_ALPHA);
+    }
+}
+
+fn get_fireball_mana_cost() -> float {
+    return FIREBALL_MANA_COST;
+}
