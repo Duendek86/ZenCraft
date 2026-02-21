@@ -343,6 +343,22 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                              if b_hit == BLOCK_POWER_CRYSTAL { set_block(chunks, MAX_CHUNKS, hit.x, base_y, hit.z, BLOCK_AIR); }
                         }
                         
+                        // Cage breaking — free a Zibi!
+                        if b_hit == BLOCK_CAGE {
+                            // Remove both cage blocks
+                            let below = get_block(chunks, MAX_CHUNKS, hit.x, hit.y - 1, hit.z);
+                            let above2 = get_block(chunks, MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
+                            if below == BLOCK_CAGE {
+                                set_block(chunks, MAX_CHUNKS, hit.x, hit.y - 1, hit.z, BLOCK_AIR);
+                                signal_cage_break((float)hit.x + 0.5, (float)(hit.y - 1) + 0.5, (float)hit.z + 0.5);
+                            } else if above2 == BLOCK_CAGE {
+                                set_block(chunks, MAX_CHUNKS, hit.x, hit.y + 1, hit.z, BLOCK_AIR);
+                                signal_cage_break((float)hit.x + 0.5, (float)hit.y + 0.5, (float)hit.z + 0.5);
+                            } else {
+                                signal_cage_break((float)hit.x + 0.5, (float)hit.y + 0.5, (float)hit.z + 0.5);
+                            }
+                        }
+                        
                         if get_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z + 1) == 11 { set_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z + 1, BLOCK_AIR); }
                         if get_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z - 1) == 12 { set_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z - 1, BLOCK_AIR); }
                         if get_block(chunks, MAX_CHUNKS, hit.x + 1, hit.y, hit.z) == 13 { set_block(chunks, MAX_CHUNKS, hit.x + 1, hit.y, hit.z, BLOCK_AIR); }

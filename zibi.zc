@@ -1,8 +1,14 @@
-//> Zibi character implementation
+//> Zibi character implementation — Cage & Worker System
 import "player.zc"; // Access to check_collision and chunk utilities
-import "chunk.zc"; // Explicitly import for get_chunk_index
+import "chunk.zc";
 import "raylib.h" as rl;
 import "math.h";
+
+// Zibi States
+def ZIBI_FREED = 0;              // Just released from cage
+def ZIBI_WALK_TO_OBELISK = 1;    // Walking toward obelisk
+def ZIBI_WORKER = 2;             // Idle worker at obelisk
+def ZIBI_FLEEING = 3;            // No obelisk nearby, fleeing
 
 struct Zibi {
     x: float;
@@ -14,24 +20,44 @@ struct Zibi {
     yaw: float;
     
     // Behavior state
-    state: int; // 0=Idle, 1=Walk
+    state: int;
     state_timer: float;
     target_yaw: float;
+    
+    // Target obelisk position
+    target_x: float;
+    target_y: float;
+    target_z: float;
     
     // Animation
     anim_time: float;
     
     // Lifecycle
     active: int;
+    hp: int;
+    hurt_flash: float;
 }
 
 // Zibi Constants
-def ZIBI_WIDTH = 0.4;  // 0.8 * 0.5 = 0.4
-def ZIBI_HEIGHT = 0.9; // 1.8 * 0.5 = 0.9
+def ZIBI_WIDTH = 0.4;
+def ZIBI_HEIGHT = 0.9;
 def ZIBI_SPEED = 2.5;
 
+// --- Global spawn signal from cage breaking ---
+let cage_break_x: float = 0.0;
+let cage_break_y: float = 0.0;
+let cage_break_z: float = 0.0;
+let cage_break_pending: int = 0;
+
+fn signal_cage_break(x: float, y: float, z: float) {
+    cage_break_x = x;
+    cage_break_y = y;
+    cage_break_z = z;
+    cage_break_pending = 1;
+}
+
 impl Zibi {
-    static fn new(x: float, y: float, z: float) -> Zibi {
+    static fn new(x: float, y: float, z: float, state: int) -> Zibi {
         let inst: Zibi;
         inst.x = x;
         inst.y = y;
@@ -40,129 +66,256 @@ impl Zibi {
         inst.vy = 0.0;
         inst.vz = 0.0;
         inst.yaw = 0.0;
-        inst.state = 0;
+        inst.state = state;
         inst.state_timer = 2.0;
         inst.target_yaw = 0.0;
+        inst.target_x = 0.0;
+        inst.target_y = 0.0;
+        inst.target_z = 0.0;
         inst.anim_time = 0.0;
         inst.active = 1;
+        inst.hp = 30;
+        inst.hurt_flash = 0.0;
         return inst;
     }
 
+    fn take_damage(self, amount: int) {
+        self.hp -= amount;
+        self.hurt_flash = 0.3;
+        if self.hp <= 0 {
+            self.active = 0;
+        }
+    }
+
+    // Find nearest obelisk, returns 1 if found
+    fn find_obelisk(self, chunks: Chunk*, num_chunks: int) -> int {
+        let best_dist = 99999.0;
+        let found = 0;
+        for i in 0..num_chunks {
+            if chunks[i].x == -9999 { continue; }
+            for s in 0..chunks[i].power_source_count {
+                let ox = (float)(chunks[i].x * 16) + chunks[i].power_sources[s].x;
+                let oy = chunks[i].power_sources[s].y;
+                let oz = (float)(chunks[i].z * 16) + chunks[i].power_sources[s].z;
+                let dx = ox - self.x;
+                let dy = oy - self.y;
+                let dz = oz - self.z;
+                let d = (float)sqrt(dx*dx + dy*dy + dz*dz);
+                if d < best_dist {
+                    best_dist = d;
+                    self.target_x = ox;
+                    self.target_y = oy;
+                    self.target_z = oz;
+                    found = 1;
+                }
+            }
+        }
+        return found;
+    }
+
     // Returns 1 if still active, 0 if despawned
-    fn update(self, chunks: Chunk*, num_chunks: int, dt: float) -> int {
+    fn update(self, chunks: Chunk*, num_chunks: int, dt: float,
+              player_x: float, player_y: float, player_z: float) -> int {
         if self.active == 0 { return 0; }
+        if self.hurt_flash > 0.0 { self.hurt_flash -= dt; }
         
         // --- Check if in loaded chunk ---
         let cx = (int)floor(self.x / 16.0);
         let cz = (int)floor(self.z / 16.0);
-        
         let idx = get_chunk_index(cx, cz);
         
-        // Safety: Check bounds or invalid index
         if idx < 0 || idx >= num_chunks {
             self.active = 0;
             return 0;
         }
-
-        // If chunk is not loaded or not matching coordinates, DESPAWN
-        if (chunks[idx].x != cx || chunks[idx].z != cz) {
+        if chunks[idx].x != cx || chunks[idx].z != cz {
             self.active = 0;
             return 0;
         }
 
-        // --- 1. AI / Behavior ---
-        self.state_timer -= dt;
         self.anim_time += dt;
-        
-        if self.state_timer <= 0.0 {
-            // Pick new state
-            let r = rl::GetRandomValue(0, 100);
-            
-            if r < 40 {
-                // Determine new state: IDLE
-                self.state = 0;
-                self.state_timer = (float)rl::GetRandomValue(10, 30) / 10.0; // 1.0 - 3.0s
+        self.state_timer -= dt;
+
+        // === STATE: FREED — just released, decide what to do ===
+        if self.state == ZIBI_FREED {
+            if self.find_obelisk(chunks, num_chunks) == 1 {
+                let obelisk_dist_dx = self.target_x - self.x;
+                let obelisk_dist_dz = self.target_z - self.z;
+                let obelisk_dist = (float)sqrt(obelisk_dist_dx*obelisk_dist_dx + obelisk_dist_dz*obelisk_dist_dz);
+                if obelisk_dist < 120.0 {
+                    // Obelisk nearby — walk to it
+                    self.state = ZIBI_WALK_TO_OBELISK;
+                } else {
+                    // Too far — flee
+                    self.state = ZIBI_FLEEING;
+                    self.state_timer = 10.0;
+                }
             } else {
-                // Determine new state: WALK
-                self.state = 1;
-                self.state_timer = (float)rl::GetRandomValue(20, 50) / 10.0; // 2.0 - 5.0s
-                // Pick random direction
-                self.target_yaw = (float)rl::GetRandomValue(0, 360) * 0.0174533;
+                self.state = ZIBI_FLEEING;
+                self.state_timer = 10.0;
             }
-        }
-        
-        // Smooth rotation
-        // Simple lerp for rotation could be added here, currently instant snap for target
-        self.yaw = self.target_yaw;
-        
-        // --- 2. Physics & Movement ---
-        if self.state == 1 {
-            // Walking
-            self.vx = (float)cos(self.yaw) * ZIBI_SPEED;
-            self.vz = (float)sin(self.yaw) * ZIBI_SPEED;
-            
-            // Wall avoidance / Jump check / Water detection
-            let front_x = self.x + self.vx * 0.8; // Look further ahead
-            let front_z = self.z + self.vz * 0.8;
-            
-            let block_at_front = get_block(chunks, num_chunks, (int)front_x, (int)self.y, (int)front_z);
-            let block_below_front = get_block(chunks, num_chunks, (int)front_x, (int)self.y - 1, (int)front_z);
-            
-            if check_collision(chunks, num_chunks, front_x, self.y, front_z, ZIBI_WIDTH, 0.5) || block_at_front == BLOCK_WATER || block_below_front == BLOCK_WATER {
-                 // Wall or Water detected
-                 // Only try to jump if it was a WALL, not water
-                 if block_at_front != BLOCK_WATER && block_below_front != BLOCK_WATER && !check_collision(chunks, num_chunks, front_x, self.y + 1.1, front_z, ZIBI_WIDTH, 0.5) {
-                      // Only jump if on ground
-                      if check_collision(chunks, num_chunks, self.x, self.y - 0.1, self.z, ZIBI_WIDTH, 0.5) {
-                          self.vy = 9.0;
-                      }
-                 } else {
-                      // Cannot jump (wall too high) OR detected water
-                      self.state = 0; // Stop
-                      self.state_timer = 1.0;
-                      // Change yaw randomly to turn away
-                      self.yaw += ((float)rl::GetRandomValue(0, 32767) / 32767.0) * 6.28;
-                 }
-            }
-            
-        } else {
-            // Idle
-            self.vx = 0.0;
-            self.vz = 0.0;
         }
 
+        // === STATE: WALK TO OBELISK ===
+        if self.state == ZIBI_WALK_TO_OBELISK {
+            let dx = self.target_x - self.x;
+            let dz = self.target_z - self.z;
+            let dist = (float)sqrt(dx*dx + dz*dz);
+            
+            if dist < 3.0 {
+                // Arrived — become worker
+                self.state = ZIBI_WORKER;
+                self.vx = 0.0;
+                self.vz = 0.0;
+                return 1;
+            }
+            
+            // Face and move toward obelisk
+            self.yaw = (float)atan2(dz, dx);
+            self.vx = (dx / dist) * ZIBI_SPEED;
+            self.vz = (dz / dist) * ZIBI_SPEED;
+        }
+
+        // === STATE: WORKER — idle at obelisk ===
+        if self.state == ZIBI_WORKER {
+            self.vx = 0.0;
+            self.vz = 0.0;
+            
+            // Small idle movement: occasionally shift position slightly
+            if self.state_timer <= 0.0 {
+                let r = rl::GetRandomValue(0, 100);
+                if r < 30 {
+                    // Idle stand
+                    self.state_timer = (float)rl::GetRandomValue(20, 50) / 10.0;
+                } else {
+                    // Small wander near obelisk
+                    self.state_timer = (float)rl::GetRandomValue(10, 25) / 10.0;
+                    self.target_yaw = (float)rl::GetRandomValue(0, 360) * 0.0174533;
+                    self.yaw = self.target_yaw;
+                    self.vx = (float)cos(self.yaw) * ZIBI_SPEED * 0.3;
+                    self.vz = (float)sin(self.yaw) * ZIBI_SPEED * 0.3;
+                }
+            }
+            
+            // Stay near obelisk — if too far, walk back
+            let ox_diff = self.target_x - self.x;
+            let oz_diff = self.target_z - self.z;
+            let ob_dist = (float)sqrt(ox_diff*ox_diff + oz_diff*oz_diff);
+            if ob_dist > 5.0 {
+                self.yaw = (float)atan2(oz_diff, ox_diff);
+                self.vx = (ox_diff / ob_dist) * ZIBI_SPEED * 0.5;
+                self.vz = (oz_diff / ob_dist) * ZIBI_SPEED * 0.5;
+            }
+        }
+
+        // === STATE: FLEEING — run away from player, despawn ===
+        if self.state == ZIBI_FLEEING {
+            let fdx = self.x - player_x;
+            let fdz = self.z - player_z;
+            let flee_dist = (float)sqrt(fdx*fdx + fdz*fdz);
+            
+            if flee_dist > 0.1 {
+                self.yaw = (float)atan2(fdz, fdx);
+                self.vx = (fdx / flee_dist) * ZIBI_SPEED * 1.5;
+                self.vz = (fdz / flee_dist) * ZIBI_SPEED * 1.5;
+            }
+            
+            // Despawn after timer or distance
+            if self.state_timer <= 0.0 || flee_dist > 80.0 {
+                self.active = 0;
+                return 0;
+            }
+        }
+
+        // --- Physics & Movement ---
+        if self.state == ZIBI_WALK_TO_OBELISK || self.state == ZIBI_FLEEING || self.state == ZIBI_WORKER {
+            // Smart obstacle avoidance
+            let front_x = self.x + self.vx * 0.6;
+            let front_z = self.z + self.vz * 0.6;
+            
+            if check_collision(chunks, num_chunks, front_x, self.y, front_z, ZIBI_WIDTH, ZIBI_HEIGHT) {
+                // 1. Try to jump over 1-block walls
+                if !check_collision(chunks, num_chunks, front_x, self.y + 1.2, front_z, ZIBI_WIDTH, ZIBI_HEIGHT) {
+                    if check_collision(chunks, num_chunks, self.x, self.y - 0.1, self.z, ZIBI_WIDTH, ZIBI_HEIGHT) {
+                        self.vy = 7.0;
+                    }
+                } else {
+                    // 2. Can't jump — try sliding around the obstacle
+                    // Try perpendicular directions (left and right of current heading)
+                    let perp_x = -self.vz; // Perpendicular vector
+                    let perp_z = self.vx;
+                    let speed = (float)sqrt(self.vx*self.vx + self.vz*self.vz);
+                    if speed > 0.1 {
+                        perp_x = perp_x / speed;
+                        perp_z = perp_z / speed;
+                    }
+                    
+                    // Try left slide
+                    let try_lx = self.x + perp_x * 1.5;
+                    let try_lz = self.z + perp_z * 1.5;
+                    let left_clear = !check_collision(chunks, num_chunks, try_lx, self.y, try_lz, ZIBI_WIDTH, ZIBI_HEIGHT);
+                    
+                    // Try right slide
+                    let try_rx = self.x - perp_x * 1.5;
+                    let try_rz = self.z - perp_z * 1.5;
+                    let right_clear = !check_collision(chunks, num_chunks, try_rx, self.y, try_rz, ZIBI_WIDTH, ZIBI_HEIGHT);
+                    
+                    if left_clear && !right_clear {
+                        // Slide left
+                        self.vx = perp_x * ZIBI_SPEED;
+                        self.vz = perp_z * ZIBI_SPEED;
+                        self.yaw = (float)atan2(perp_z, perp_x);
+                    } else if right_clear && !left_clear {
+                        // Slide right
+                        self.vx = -perp_x * ZIBI_SPEED;
+                        self.vz = -perp_z * ZIBI_SPEED;
+                        self.yaw = (float)atan2(-perp_z, -perp_x);
+                    } else if left_clear {
+                        // Both clear, pick randomly
+                        if rl::GetRandomValue(0, 1) == 0 {
+                            self.vx = perp_x * ZIBI_SPEED;
+                            self.vz = perp_z * ZIBI_SPEED;
+                            self.yaw = (float)atan2(perp_z, perp_x);
+                        } else {
+                            self.vx = -perp_x * ZIBI_SPEED;
+                            self.vz = -perp_z * ZIBI_SPEED;
+                            self.yaw = (float)atan2(-perp_z, -perp_x);
+                        }
+                    } else {
+                        // Completely blocked — random turn
+                        self.yaw += (float)rl::GetRandomValue(90, 270) * 0.0174533;
+                        self.vx = (float)cos(self.yaw) * ZIBI_SPEED;
+                        self.vz = (float)sin(self.yaw) * ZIBI_SPEED;
+                    }
+                }
+            }
+        }
+        
         // Gravity
         self.vy -= 18.0 * dt;
         
-        // Integration (Collision)
-        // X axis
+        // X movement
         self.x += self.vx * dt;
         if check_collision(chunks, num_chunks, self.x, self.y, self.z, ZIBI_WIDTH, ZIBI_HEIGHT) {
             self.x -= self.vx * dt;
         }
-
-        // Z axis
+        
+        // Z movement
         self.z += self.vz * dt;
         if check_collision(chunks, num_chunks, self.x, self.y, self.z, ZIBI_WIDTH, ZIBI_HEIGHT) {
             self.z -= self.vz * dt;
         }
-
-        // Y axis
+        
+        // Y movement
         self.y += self.vy * dt;
         if check_collision(chunks, num_chunks, self.x, self.y, self.z, ZIBI_WIDTH, ZIBI_HEIGHT) {
-            self.y -= self.vy * dt;
+            if self.vy < 0.0 { self.y -= self.vy * dt; }
             self.vy = 0.0;
-        }
-        
-        if self.y < -50.0 { 
-             // Fell out of world - DESPAWN
-             self.active = 0;
-             return 0;
         }
         
         return 1;
     }
-
+    
     fn draw(self, chunks: Chunk*, num_chunks: int, day_time: float) {
         if self.active == 0 { return; }
         // --- ZIBI RENDERING ---
@@ -180,6 +333,16 @@ impl Zibi {
         let c_shoes = rl::Color{ r: 56, g: 94, b: 46, a: 255 };
         let c_white = rl::WHITE;
         
+        // Worker tint: golden tunic
+        if self.state == ZIBI_WORKER || self.state == ZIBI_WALK_TO_OBELISK {
+            c_tunic = rl::Color{ r: 200, g: 170, b: 60, a: 255 };
+        }
+        
+        // Hurt flash
+        if self.hurt_flash > 0.0 {
+            c_skin = rl::Color{ r: 255, g: 100, b: 100, a: 255 };
+        }
+        
         let sh = get_shader_lighting();
         let loc_use_entity = rl::GetShaderLocation(sh, "uUseEntityLight");
         let loc_entity_light = rl::GetShaderLocation(sh, "uEntityLight");
@@ -193,7 +356,8 @@ impl Zibi {
         
         // Animation variables
         let limb_swing = 0.0;
-        if self.state == 1 { 
+        let is_moving = (self.state == ZIBI_WALK_TO_OBELISK || self.state == ZIBI_FLEEING || (self.state == ZIBI_WORKER && (float)sqrt(self.vx*self.vx + self.vz*self.vz) > 0.3));
+        if is_moving { 
             limb_swing = (float)sin(self.anim_time * 12.0);
         }
 
@@ -243,24 +407,19 @@ impl Zibi {
         let head_y = 1.55;
         rl::DrawCube(rl::Vector3{x: 0.0, y: head_y, z: 0.0}, 0.45, 0.55, 0.5, c_skin);
         
-        // Orejas (Trompetas) - Lados Z
-        // Izquierda (+Z)
+        // Ears
         rl::DrawCube(rl::Vector3{x: 0.0, y: head_y + 0.1, z: 0.3}, 0.08, 0.08, 0.2, c_skin); 
         rl::DrawCube(rl::Vector3{x: 0.0, y: head_y + 0.1, z: 0.4}, 0.15, 0.15, 0.05, c_skin); 
-        // Derecha (-Z)
         rl::DrawCube(rl::Vector3{x: 0.0, y: head_y + 0.1, z: -0.3}, 0.08, 0.08, 0.2, c_skin); 
         rl::DrawCube(rl::Vector3{x: 0.0, y: head_y + 0.1, z: -0.4}, 0.15, 0.15, 0.05, c_skin); 
 
-        // Cara (Ojos) - Frente +X
-        // Ojo Izq (+Z side of face)
+        // Eyes
         rl::DrawCube(rl::Vector3{x: 0.23, y: head_y + 0.05, z: 0.12}, 0.05, 0.12, 0.12, c_white);
         rl::DrawCube(rl::Vector3{x: 0.26, y: head_y + 0.05, z: 0.12}, 0.02, 0.04, 0.04, c_shoes); 
-        
-        // Ojo Der (-Z side of face)
         rl::DrawCube(rl::Vector3{x: 0.23, y: head_y + 0.05, z: -0.12}, 0.05, 0.12, 0.12, c_white);
         rl::DrawCube(rl::Vector3{x: 0.26, y: head_y + 0.05, z: -0.12}, 0.02, 0.04, 0.04, c_shoes); 
 
-        // Boca
+        // Mouth
         rl::DrawCube(rl::Vector3{x: 0.235, y: head_y - 0.15, z: 0.0}, 0.03, 0.03, 0.2, c_shoes);
         
         rl::rlPopMatrix();

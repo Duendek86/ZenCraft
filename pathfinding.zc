@@ -1,0 +1,224 @@
+//> A* Pathfinding for Voxel World
+import "chunk_core.zc";
+import "blocks.zc";
+import "math.h";
+import "raylib.h" as rl;
+
+// --- Path Data ---
+struct PathPoint {
+    x: int;
+    y: int;
+    z: int;
+}
+
+def MAX_PATH_LENGTH = 64;
+def MAX_OPEN_SET = 512;
+
+// --- Helpers ---
+fn pf_is_solid(block: int) -> int {
+    if block == BLOCK_AIR { return 0; }
+    if block == BLOCK_TALLGRASS { return 0; }
+    if block == BLOCK_WATER || block == BLOCK_WATER_2 || block == BLOCK_WATER_1 || block == BLOCK_WATER_0 { return 0; }
+    if block >= 10 && block <= 14 { return 0; }
+    if block == BLOCK_POWER_CRYSTAL { return 0; }
+    return 1;
+}
+
+fn pf_heuristic(ax: int, ay: int, az: int, bx: int, by: int, bz: int) -> int {
+    let dx = abs(ax - bx);
+    let dy = abs(ay - by);
+    let dz = abs(az - bz);
+    return dx + dy + dz;
+}
+
+fn pf_can_stand(chunks: Chunk*, nc: int, x: int, y: int, z: int) -> int {
+    if y < 1 || y >= CHUNK_HEIGHT - 1 { return 0; }
+    let feet = get_block(chunks, nc, x, y, z);
+    let head = get_block(chunks, nc, x, y + 1, z);
+    let ground = get_block(chunks, nc, x, y - 1, z);
+    if pf_is_solid(feet) == 0 && pf_is_solid(head) == 0 && pf_is_solid(ground) == 1 {
+        return 1;
+    }
+    return 0;
+}
+
+// Try evaluating a step from (cur_x, cur_y, cur_z) to (nx, ?, nz).
+// Returns destination Y or -1 if blocked. Writes cost to out_cost.
+fn pf_eval_step(chunks: Chunk*, nc: int, cur_x: int, cur_y: int, cur_z: int,
+                nx: int, nz: int, out_cost: int*) -> int {
+    let cy = cur_y;
+    // WALK
+    if pf_can_stand(chunks, nc, nx, cy, nz) == 1 {
+        *out_cost = 10; return cy;
+    }
+    // DROP 1
+    if cy >= 2 && pf_is_solid(get_block(chunks, nc, nx, cy, nz)) == 0
+              && pf_can_stand(chunks, nc, nx, cy - 1, nz) == 1 {
+        *out_cost = 12; return cy - 1;
+    }
+    // DROP 2
+    if cy >= 3 && pf_is_solid(get_block(chunks, nc, nx, cy, nz)) == 0
+              && pf_is_solid(get_block(chunks, nc, nx, cy - 1, nz)) == 0
+              && pf_can_stand(chunks, nc, nx, cy - 2, nz) == 1 {
+        *out_cost = 14; return cy - 2;
+    }
+    // SMALL JUMP (+1)
+    if pf_is_solid(get_block(chunks, nc, nx, cy, nz)) == 1
+    && pf_can_stand(chunks, nc, nx, cy + 1, nz) == 1
+    && pf_is_solid(get_block(chunks, nc, cur_x, cy + 2, cur_z)) == 0 {
+        *out_cost = 15; return cy + 1;
+    }
+    // BIG JUMP (+2)
+    if pf_is_solid(get_block(chunks, nc, nx, cy, nz)) == 1
+    && pf_is_solid(get_block(chunks, nc, nx, cy + 1, nz)) == 1
+    && pf_can_stand(chunks, nc, nx, cy + 2, nz) == 1
+    && pf_is_solid(get_block(chunks, nc, cur_x, cy + 2, cur_z)) == 0
+    && pf_is_solid(get_block(chunks, nc, cur_x, cy + 3, cur_z)) == 0 {
+        *out_cost = 25; return cy + 2;
+    }
+    return -1;
+}
+
+// ===========================================================
+// A* with Struct-of-Arrays layout to avoid ZenC indexing issues
+// Each node field is a separate flat int array indexed by node ID.
+// ===========================================================
+
+// Node fields stored as parallel arrays
+let pf_nx: int[512];   // x
+let pf_ny: int[512];   // y
+let pf_nz: int[512];   // z
+let pf_ng: int[512];   // g cost
+let pf_nf: int[512];   // f cost
+let pf_np: int[512];   // parent index
+let pf_no: int[512];   // open flag
+
+fn find_path(chunks: Chunk*, nc: int,
+             sx: int, sy: int, sz: int,
+             gx: int, gy: int, gz: int,
+             path_out: PathPoint*, max_len: int) -> int {
+
+    // Pointer aliases: ZenC supports variable indexing on pointers, not fixed arrays
+    let nx_p = &pf_nx[0];
+    let ny_p = &pf_ny[0];
+    let nz_p = &pf_nz[0];
+    let ng_p = &pf_ng[0];
+    let nf_p = &pf_nf[0];
+    let np_p = &pf_np[0];
+    let no_p = &pf_no[0];
+
+    // Init start node
+    nx_p[0] = sx; ny_p[0] = sy; nz_p[0] = sz;
+    ng_p[0] = 0;
+    nf_p[0] = pf_heuristic(sx, sy, sz, gx, gy, gz);
+    np_p[0] = -1;
+    no_p[0] = 1;
+    let node_count = 1;
+
+    let found = -1;
+    let dx_arr = [1, -1, 0, 0];
+    let dz_arr = [0, 0, 1, -1];
+
+    for iteration in 0..1000 {
+        // Find lowest f in open set
+        let best = -1;
+        let best_f = 999999;
+        for i in 0..MAX_OPEN_SET {
+            if i >= node_count { break; }
+            if no_p[i] == 1 && nf_p[i] < best_f {
+                best_f = nf_p[i];
+                best = i;
+            }
+        }
+        if best == -1 { break; }
+
+        // Close best node, copy its values for expansion
+        no_p[best] = 0;
+        let cur = best;
+        let cur_x = nx_p[cur];
+        let cur_y = ny_p[cur];
+        let cur_z = nz_p[cur];
+        let cur_g = ng_p[cur];
+
+        // Goal check
+        if cur_x == gx && cur_z == gz && abs(cur_y - gy) <= 2 {
+            found = cur;
+            break;
+        }
+
+        // Expand 4 cardinal neighbors
+        for dir in 0..4 {
+            let nx = cur_x + dx_arr[dir];
+            let nz = cur_z + dz_arr[dir];
+
+            let step_cost = 0;
+            let step_y = pf_eval_step(chunks, nc, cur_x, cur_y, cur_z, nx, nz, &step_cost);
+            if step_y < 0 { continue; }
+
+            let new_g = cur_g + step_cost;
+
+            // Check for duplicate
+            let already_found = 0;
+            for k in 0..MAX_OPEN_SET {
+                if k >= node_count { break; }
+                if nx_p[k] == nx && ny_p[k] == step_y && nz_p[k] == nz {
+                    let existing_g = ng_p[k];
+                    let existing_open = no_p[k];
+                    if new_g < existing_g && existing_open == 1 {
+                        ng_p[k] = new_g;
+                        nf_p[k] = new_g + pf_heuristic(nx, step_y, nz, gx, gy, gz);
+                        np_p[k] = cur;
+                    }
+                    already_found = 1;
+                    break;
+                }
+            }
+            if already_found == 1 { continue; }
+
+            // Add new node
+            if node_count >= MAX_OPEN_SET { continue; }
+            nx_p[node_count] = nx;
+            ny_p[node_count] = step_y;
+            nz_p[node_count] = nz;
+            ng_p[node_count] = new_g;
+            nf_p[node_count] = new_g + pf_heuristic(nx, step_y, nz, gx, gy, gz);
+            np_p[node_count] = cur;
+            no_p[node_count] = 1;
+            node_count++;
+        }
+    }
+
+    // Reconstruct path
+    if found == -1 { return 0; }
+
+    let temp_x: int[64];
+    let temp_y: int[64];
+    let temp_z: int[64];
+    // Pointer aliases for temp buffers too
+    let tx_p = &temp_x[0];
+    let ty_p = &temp_y[0];
+    let tz_p = &temp_z[0];
+    let temp_count = 0;
+    let trace = found;
+
+    for step in 0..MAX_PATH_LENGTH {
+        if trace == -1 { break; }
+        tx_p[temp_count] = nx_p[trace];
+        ty_p[temp_count] = ny_p[trace];
+        tz_p[temp_count] = nz_p[trace];
+        temp_count++;
+        trace = np_p[trace];
+    }
+
+    // Reverse into path_out
+    if temp_count > max_len { temp_count = max_len; }
+    for i in 0..temp_count {
+        let ri = temp_count - 1 - i;
+        path_out[i].x = tx_p[ri];
+        path_out[i].y = ty_p[ri];
+        path_out[i].z = tz_p[ri];
+    }
+
+    return temp_count;
+}
+

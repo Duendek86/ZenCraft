@@ -507,6 +507,22 @@ fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
         }
     }
 
+    // --- Cage Generation (Zibi Cages) ---
+    if (rl::GetRandomValue(0, 100) < 20) { // 20% chance per chunk
+        let cage_x = rl::GetRandomValue(2, 13);
+        let cage_z = rl::GetRandomValue(2, 13);
+        let cage_h = heights[cage_x][cage_z];
+        
+        if (cage_h > 31 && cage_h < CHUNK_HEIGHT - 3) {
+            let cage_ground = data.blocks[cage_x][cage_h][cage_z];
+            if ((cage_ground == BLOCK_GRASS || cage_ground == BLOCK_SAND || cage_ground == BLOCK_SNOW || cage_ground == BLOCK_STONE) && data.blocks[cage_x][cage_h+1][cage_z] == BLOCK_AIR && data.blocks[cage_x][cage_h+2][cage_z] == BLOCK_AIR) {
+                // Place 2-tall cage
+                data.blocks[cage_x][cage_h + 1][cage_z] = BLOCK_CAGE;
+                data.blocks[cage_x][cage_h + 2][cage_z] = BLOCK_CAGE;
+            }
+        }
+    }
+
     // --- VILLAGE GENERATION ---
     // Check this chunk and neighbors (3x3 area) for village centers.
     // If a neighbor is a center, generate its houses and draw the parts that fall in THIS chunk.

@@ -39,14 +39,15 @@ fn draw_hud(p: Player*, selected_block: int, version: char*) {
     rl::DrawText(rl::TextFormat("Block: %d", selected_block), 10, 90, 20, rl::WHITE);
 }
 
-fn draw_debug_info(p: Player*, chunks: Chunk*, dt: float, day_time: float, draw_distance: int, max_zibis: int) {
+fn draw_debug_info(p: Player*, chunks: Chunk*, dt: float, day_time: float, draw_distance: int, worker_count: int, wolf_count: int) {
     let loaded_chunks = 0;
     for i in 0..MAX_CHUNKS { if chunks[i].x != -9999 { loaded_chunks++; } }
     
     let dy = 120;
     rl::DrawFPS(10, dy); dy = dy + 25;
     rl::DrawText(rl::TextFormat("Chunks: %d / %d", loaded_chunks, MAX_CHUNKS), 10, dy, 20, rl::LIME); dy = dy + 25;
-    rl::DrawText(rl::TextFormat("Zibis: %d", max_zibis), 10, dy, 20, rl::LIME); dy = dy + 25;
+    rl::DrawText(rl::TextFormat("Workers: %d", worker_count), 10, dy, 20, rl::LIME); dy = dy + 25;
+    rl::DrawText(rl::TextFormat("Wolves: %d", wolf_count), 10, dy, 20, rl::Color{ r: 255, g: 80, b: 80, a: 255 }); dy = dy + 25;
     rl::DrawText(rl::TextFormat("XYZ: %.2f, %.2f, %.2f", p.x, p.y, p.z), 10, dy, 20, rl::LIME); dy = dy + 25;
     
     let frame_time_ms = dt * 1000.0;

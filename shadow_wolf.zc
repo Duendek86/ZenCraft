@@ -1,0 +1,440 @@
+//> ShadowWolf - First Enemy
+import "player.zc";
+import "chunk.zc";
+import "blocks.zc";
+import "pathfinding.zc";
+import "raylib.h" as rl;
+import "math.h";
+
+// --- ShadowWolf Constants ---
+def WOLF_HP = 50;
+def WOLF_SPEED = 4.0;        // Blocks per second (fast!)
+def WOLF_DAMAGE = 5;
+def WOLF_WIDTH = 0.5;
+def WOLF_HEIGHT = 0.8;
+def WOLF_ATTACK_RANGE = 1.5;
+def WOLF_AGGRO_RANGE = 8.0;
+def WOLF_AGGRO_CHANCE = 30;   // 30% chance
+def WOLF_PATH_INTERVAL = 2.0; // Recalculate path every 2 seconds
+
+// States
+def WOLF_STATE_IDLE = 0;
+def WOLF_STATE_PATHING = 1;
+def WOLF_STATE_ATTACKING = 2;
+def WOLF_STATE_DEAD = 3;
+
+struct ShadowWolf {
+    x: float;
+    y: float;
+    z: float;
+    vx: float;
+    vy: float;
+    vz: float;
+    yaw: float;
+
+    hp: int;
+    state: int;
+    active: int;
+    
+    // Path
+    path: PathPoint[64];
+    path_len: int;
+    path_idx: int;        // Current waypoint index
+    path_timer: float;    // Time until next recalculation
+    
+    // Attack
+    attack_cooldown: float;
+    attack_target_x: float;
+    attack_target_y: float;
+    attack_target_z: float;
+    
+    // Animation
+    anim_time: float;
+    hurt_flash: float;  // Timer for red flash when hit
+}
+
+// --- Find nearest obelisk (BLOCK_POWER_SOURCE) ---
+fn find_nearest_obelisk(chunks: Chunk*, num_chunks: int,
+                        fx: float, fy: float, fz: float,
+                        out_x: int*, out_y: int*, out_z: int*) -> int {
+    let best_dist = 999999.0;
+    let found = 0;
+    
+    for i in 0..num_chunks {
+        if chunks[i].x == -9999 { continue; }
+        if chunks[i].power_source_count <= 0 { continue; }
+        
+        for s in 0..chunks[i].power_source_count {
+            let ox = (float)(chunks[i].x * 16) + chunks[i].power_sources[s].x;
+            let oy = chunks[i].power_sources[s].y;
+            let oz = (float)(chunks[i].z * 16) + chunks[i].power_sources[s].z;
+            
+            let dx = ox - fx;
+            let dy = oy - fy;
+            let dz = oz - fz;
+            let dist = (float)sqrt(dx*dx + dy*dy + dz*dz);
+            
+            if dist < best_dist {
+                best_dist = dist;
+                *out_x = (int)ox;
+                *out_y = (int)oy;
+                *out_z = (int)oz;
+                found = 1;
+            }
+        }
+    }
+    return found;
+}
+
+impl ShadowWolf {
+    static fn new(x: float, y: float, z: float) -> ShadowWolf {
+        let w: ShadowWolf;
+        w.x = x;
+        w.y = y;
+        w.z = z;
+        w.vx = 0.0;
+        w.vy = 0.0;
+        w.vz = 0.0;
+        w.yaw = 0.0;
+        w.hp = WOLF_HP;
+        w.state = WOLF_STATE_PATHING;
+        w.active = 1;
+        w.path_len = 0;
+        w.path_idx = 0;
+        w.path_timer = 0.0;
+        w.attack_cooldown = 0.0;
+        w.anim_time = 0.0;
+        w.hurt_flash = 0.0;
+        return w;
+    }
+
+    fn take_damage(self, amount: int) {
+        self.hp -= amount;
+        self.hurt_flash = 0.3;
+        if self.hp <= 0 {
+            self.state = WOLF_STATE_DEAD;
+            self.active = 0;
+        }
+    }
+
+    fn update(self, chunks: Chunk*, num_chunks: int, dt: float,
+              player_x: float, player_y: float, player_z: float,
+              day_time: float, draw_distance: int,
+              zibis: Zibi*, max_zibis: int) -> int {
+        if self.active == 0 { return 0; }
+        
+        // Check chunk validity
+        let cx = (int)floor(self.x / 16.0);
+        let cz = (int)floor(self.z / 16.0);
+        let idx = get_chunk_index(cx, cz);
+        if idx < 0 || idx >= num_chunks { self.active = 0; return 0; }
+        if chunks[idx].x != cx || chunks[idx].z != cz { self.active = 0; return 0; }
+        
+        self.anim_time += dt;
+        if self.hurt_flash > 0.0 { self.hurt_flash -= dt; }
+        if self.attack_cooldown > 0.0 { self.attack_cooldown -= dt; }
+        
+        let is_night = (day_time > 0.5);
+        
+        // --- DAY BEHAVIOR: FLEE ---
+        if !is_night {
+            self.state = WOLF_STATE_IDLE; // Fleeing state
+            // Run directly away from the player
+            let flee_dx = self.x - player_x;
+            let flee_dz = self.z - player_z;
+            let flee_dist = (float)sqrt(flee_dx*flee_dx + flee_dz*flee_dz);
+            if flee_dist > 0.1 {
+                self.yaw = (float)atan2(flee_dz, flee_dx);
+                self.vx = (flee_dx / flee_dist) * WOLF_SPEED * 1.5;
+                self.vz = (flee_dz / flee_dist) * WOLF_SPEED * 1.5;
+            }
+            // Despawn if far from player (beyond loaded area)
+            let max_dist = (float)(draw_distance * 16 + 16);
+            if flee_dist > max_dist {
+                self.active = 0;
+                return 0;
+            }
+        } else {
+        
+        // --- NIGHT BEHAVIOR: HUNT ---
+        // --- PATH RECALCULATION ---
+        self.path_timer -= dt;
+        if self.path_timer <= 0.0 || self.path_idx >= self.path_len {
+            self.path_timer = WOLF_PATH_INTERVAL;
+            
+            // 30% chance to aggro player if close
+            let dx_p = player_x - self.x;
+            let dz_p = player_z - self.z;
+            let dist_player = (float)sqrt(dx_p*dx_p + dz_p*dz_p);
+            
+            let target_x = 0;
+            let target_y = 0;
+            let target_z = 0;
+            let has_target = 0;
+            
+            if dist_player < WOLF_AGGRO_RANGE && rl::GetRandomValue(0, 99) < WOLF_AGGRO_CHANCE {
+                // Aggro player
+                target_x = (int)floor(player_x);
+                target_y = (int)floor(player_y);
+                target_z = (int)floor(player_z);
+                has_target = 1;
+                self.state = WOLF_STATE_ATTACKING;
+            } else {
+                // Find nearest obelisk
+                has_target = find_nearest_obelisk(chunks, num_chunks,
+                    self.x, self.y, self.z,
+                    &target_x, &target_y, &target_z);
+                self.state = WOLF_STATE_PATHING;
+            }
+            
+            if has_target == 1 {
+                self.path_len = find_path(chunks, num_chunks,
+                    (int)floor(self.x), (int)floor(self.y), (int)floor(self.z),
+                    target_x, target_y, target_z,
+                    &self.path[0], MAX_PATH_LENGTH);
+                self.path_idx = 1; // Skip the start node (we're already there)
+            }
+        }
+        
+        // --- FOLLOW PATH ---
+        if self.path_idx < self.path_len {
+            // Get a pointer to the path array base — pointer indexing works with variables
+            let wp_ptr = &self.path[0];
+            let wp = wp_ptr[self.path_idx];
+            // Target center of the block
+            let tx = (float)wp.x + 0.5;
+            let ty = (float)wp.y;
+            let tz = (float)wp.z + 0.5;
+            
+            let dx = tx - self.x;
+            let dy = ty - self.y;
+            let dz = tz - self.z;
+            let dist_h = (float)sqrt(dx*dx + dz*dz);
+            
+            // Face the target
+            if dist_h > 0.1 {
+                self.yaw = (float)atan2(dz, dx);
+            }
+            
+            // Move horizontally toward waypoint
+            if dist_h > 0.3 {
+                let move_speed = WOLF_SPEED * dt;
+                self.vx = (dx / dist_h) * WOLF_SPEED;
+                self.vz = (dz / dist_h) * WOLF_SPEED;
+            } else {
+                self.vx = 0.0;
+                self.vz = 0.0;
+            }
+            
+            // Jump if waypoint is above us
+            if dy > 0.5 && check_collision(chunks, num_chunks, self.x, self.y - 0.1, self.z, WOLF_WIDTH, WOLF_HEIGHT) {
+                if dy > 1.5 {
+                    self.vy = 12.0;  // Big jump for 2 block walls
+                } else {
+                    self.vy = 8.5;   // Small jump for 1 block walls
+                }
+            }
+            
+            // Advance waypoint if close enough
+            if dist_h < 0.5 && (float)fabs(dy) < 1.5 {
+                self.path_idx++;
+            }
+        } else {
+            self.vx = 0.0;
+            self.vz = 0.0;
+        }
+        
+        // --- ATTACK: Damage Zibis, Obelisks, and Player ---
+        if self.attack_cooldown <= 0.0 {
+            // Attack nearby Zibis
+            for zi in 0..max_zibis {
+                if zibis[zi].active == 1 {
+                    let zdx = zibis[zi].x - self.x;
+                    let zdy = zibis[zi].y - self.y;
+                    let zdz = zibis[zi].z - self.z;
+                    let zdist = (float)sqrt(zdx*zdx + zdy*zdy + zdz*zdz);
+                    if zdist < WOLF_ATTACK_RANGE {
+                        zibis[zi].take_damage(WOLF_DAMAGE);
+                        self.attack_cooldown = 1.0;
+                        break;
+                    }
+                }
+            }
+            
+            // Attack nearby obelisks
+            if self.attack_cooldown <= 0.0 {
+                for ci in 0..num_chunks {
+                    if chunks[ci].x == -9999 { continue; }
+                    for si in 0..chunks[ci].power_source_count {
+                        let ox = (float)(chunks[ci].x * 16) + chunks[ci].power_sources[si].x;
+                        let oy = chunks[ci].power_sources[si].y;
+                        let oz = (float)(chunks[ci].z * 16) + chunks[ci].power_sources[si].z;
+                        let odx = ox - self.x;
+                        let ody = oy - self.y;
+                        let odz = oz - self.z;
+                        let odist = (float)sqrt(odx*odx + ody*ody + odz*odz);
+                        if odist < WOLF_ATTACK_RANGE + 0.5 {
+                            chunks[ci].power_sources[si].hp -= WOLF_DAMAGE;
+                            self.attack_cooldown = 1.5;
+                            // Destroy obelisk if HP reaches 0
+                            if chunks[ci].power_sources[si].hp <= 0 {
+                                let bx = (int)floor(ox);
+                                let by = (int)oy;
+                                let bz = (int)floor(oz);
+                                set_block(chunks, num_chunks, bx, by, bz, BLOCK_AIR);
+                                set_block(chunks, num_chunks, bx, by + 1, bz, BLOCK_AIR);
+                                set_block(chunks, num_chunks, bx, by + 2, bz, BLOCK_AIR);
+                                chunks[ci].mesh_dirty = 1;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // Attack player if in range
+            if self.attack_cooldown <= 0.0 {
+                let adx = player_x - self.x;
+                let ady = player_y - self.y;
+                let adz = player_z - self.z;
+                let attack_dist = (float)sqrt(adx*adx + ady*ady + adz*adz);
+                if attack_dist < WOLF_ATTACK_RANGE {
+                    self.attack_cooldown = 1.0;
+                    return 2; // Signal: player was hit
+                }
+            }
+        }
+        } // end else (night behavior)
+        
+        // --- PHYSICS ---
+        // Gravity
+        self.vy -= 18.0 * dt;
+        
+        // X axis
+        self.x += self.vx * dt;
+        if check_collision(chunks, num_chunks, self.x, self.y, self.z, WOLF_WIDTH, WOLF_HEIGHT) {
+            self.x -= self.vx * dt;
+        }
+        
+        // Z axis
+        self.z += self.vz * dt;
+        if check_collision(chunks, num_chunks, self.x, self.y, self.z, WOLF_WIDTH, WOLF_HEIGHT) {
+            self.z -= self.vz * dt;
+        }
+        
+        // Y axis
+        self.y += self.vy * dt;
+        if check_collision(chunks, num_chunks, self.x, self.y, self.z, WOLF_WIDTH, WOLF_HEIGHT) {
+            self.y -= self.vy * dt;
+            self.vy = 0.0;
+        }
+        
+        // Void check
+        if self.y < -50.0 { self.active = 0; return 0; }
+        
+        return 1;
+    }
+
+    fn draw(self, chunks: Chunk*, num_chunks: int, day_time: float) {
+        if self.active == 0 { return; }
+        
+        // --- Lighting ---
+        let lx = (int)floor(self.x);
+        let ly = (int)floor(self.y + 0.5);
+        let lz = (int)floor(self.z);
+        let packed_light = get_light_levels(chunks, num_chunks, lx, ly, lz);
+        
+        // Colors: Dark wolf with glowing red eyes
+        let c_body = rl::Color{ r: 30, g: 28, b: 35, a: 255 };
+        let c_belly = rl::Color{ r: 45, g: 40, b: 50, a: 255 };
+        let c_eye = rl::Color{ r: 255, g: 40, b: 40, a: 255 };
+        let c_snout = rl::Color{ r: 50, g: 45, b: 55, a: 255 };
+        
+        // Hurt flash: override body color to red
+        if self.hurt_flash > 0.0 {
+            c_body = rl::Color{ r: 200, g: 50, b: 50, a: 255 };
+            c_belly = rl::Color{ r: 220, g: 80, b: 80, a: 255 };
+        }
+
+        let sh = get_shader_lighting();
+        let loc_use_entity = rl::GetShaderLocation(sh, "uUseEntityLight");
+        let loc_entity_light = rl::GetShaderLocation(sh, "uEntityLight");
+        
+        rl::BeginShaderMode(sh);
+        
+        let use_ent = 1;
+        if loc_use_entity != -1 { rl::SetShaderValue(sh, loc_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+        let el = rl::Vector2{x: (float)(packed_light & 0xF) / 15.0, y: (float)((packed_light >> 4) & 0xF) / 15.0};
+        if loc_entity_light != -1 { rl::SetShaderValue(sh, loc_entity_light, &el, rl::SHADER_UNIFORM_VEC2); }
+        
+        // Animation: leg swing while moving
+        let leg_swing = 0.0;
+        if self.state == WOLF_STATE_PATHING || self.state == WOLF_STATE_ATTACKING {
+            leg_swing = (float)sin(self.anim_time * 14.0);
+        }
+        
+        rl::rlPushMatrix();
+        rl::rlTranslatef(self.x, self.y, self.z);
+        rl::rlRotatef(self.yaw * 57.2958, 0.0, -1.0, 0.0);
+        
+        // === BODY (horizontal wolf, facing +X) ===
+        // Main body trunk
+        rl::DrawCube(rl::Vector3{x: 0.0, y: 0.45, z: 0.0}, 0.8, 0.35, 0.35, c_body);
+        // Belly (slightly lighter)
+        rl::DrawCube(rl::Vector3{x: 0.0, y: 0.32, z: 0.0}, 0.7, 0.08, 0.3, c_belly);
+        
+        // === HEAD ===
+        rl::DrawCube(rl::Vector3{x: 0.5, y: 0.55, z: 0.0}, 0.3, 0.28, 0.28, c_body);
+        // Snout
+        rl::DrawCube(rl::Vector3{x: 0.7, y: 0.5, z: 0.0}, 0.15, 0.12, 0.15, c_snout);
+        // Eyes (glowing red!)
+        rl::DrawCube(rl::Vector3{x: 0.63, y: 0.6, z: 0.1}, 0.06, 0.06, 0.04, c_eye);
+        rl::DrawCube(rl::Vector3{x: 0.63, y: 0.6, z: -0.1}, 0.06, 0.06, 0.04, c_eye);
+        // Ears
+        rl::DrawCube(rl::Vector3{x: 0.45, y: 0.74, z: 0.08}, 0.06, 0.12, 0.05, c_body);
+        rl::DrawCube(rl::Vector3{x: 0.45, y: 0.74, z: -0.08}, 0.06, 0.12, 0.05, c_body);
+        
+        // === TAIL ===
+        rl::rlPushMatrix();
+        rl::rlTranslatef(-0.45, 0.55, 0.0);
+        rl::rlRotatef(-30.0, 0.0, 0.0, 1.0);
+        rl::DrawCube(rl::Vector3{x: -0.15, y: 0.0, z: 0.0}, 0.3, 0.08, 0.08, c_body);
+        rl::rlPopMatrix();
+        
+        // === LEGS (4 legs, animated) ===
+        // Front-left
+        rl::rlPushMatrix();
+        rl::rlTranslatef(0.25, 0.28, 0.15);
+        rl::rlRotatef(leg_swing * 30.0, 0.0, 0.0, 1.0);
+        rl::DrawCube(rl::Vector3{x: 0.0, y: -0.15, z: 0.0}, 0.1, 0.28, 0.1, c_body);
+        rl::rlPopMatrix();
+        
+        // Front-right
+        rl::rlPushMatrix();
+        rl::rlTranslatef(0.25, 0.28, -0.15);
+        rl::rlRotatef(-leg_swing * 30.0, 0.0, 0.0, 1.0);
+        rl::DrawCube(rl::Vector3{x: 0.0, y: -0.15, z: 0.0}, 0.1, 0.28, 0.1, c_body);
+        rl::rlPopMatrix();
+        
+        // Back-left
+        rl::rlPushMatrix();
+        rl::rlTranslatef(-0.25, 0.28, 0.15);
+        rl::rlRotatef(-leg_swing * 30.0, 0.0, 0.0, 1.0);
+        rl::DrawCube(rl::Vector3{x: 0.0, y: -0.15, z: 0.0}, 0.1, 0.28, 0.1, c_body);
+        rl::rlPopMatrix();
+        
+        // Back-right
+        rl::rlPushMatrix();
+        rl::rlTranslatef(-0.25, 0.28, -0.15);
+        rl::rlRotatef(leg_swing * 30.0, 0.0, 0.0, 1.0);
+        rl::DrawCube(rl::Vector3{x: 0.0, y: -0.15, z: 0.0}, 0.1, 0.28, 0.1, c_body);
+        rl::rlPopMatrix();
+        
+        rl::rlPopMatrix();
+        
+        rl::EndShaderMode();
+        
+        use_ent = 0;
+        if loc_use_entity != -1 { rl::SetShaderValue(sh, loc_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+    }
+}
