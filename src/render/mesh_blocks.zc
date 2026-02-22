@@ -13,7 +13,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
         // Water specific macros
         #define IS_WATER_TYPE(b) ((b) == BLOCK_WATER || (b) == BLOCK_WATER_2 || (b) == BLOCK_WATER_1 || (b) == BLOCK_WATER_0)
         #define WATER_LEVEL(b) ((b) == BLOCK_WATER ? 4 : ((b) == BLOCK_WATER_2 ? 3 : ((b) == BLOCK_WATER_1 ? 2 : ((b) == BLOCK_WATER_0 ? 1 : 0))))
-        #define IS_TRANSPARENT_MESH(b) ((b) == 0 || ((b) >= 10 && (b) <= 14) || (b) == 17 || (b) == 4 || (b) == 6 || IS_WATER_TYPE(b) || (b) == 18 || (b) == BLOCK_OBELISK || (b) == BLOCK_POWER_CRYSTAL || (b) == BLOCK_CAGE || (b) == BLOCK_CHEST)
+        #define IS_TRANSPARENT_MESH(b) ((b) == 0 || ((b) >= 10 && (b) <= 14) || (b) == 17 || (b) == 4 || (b) == 6 || IS_WATER_TYPE(b) || (b) == 18 || (b) == BLOCK_OBELISK || (b) == BLOCK_POWER_CRYSTAL || (b) == BLOCK_CAGE || (b) == BLOCK_CHEST || (b) == BLOCK_BANNER)
         #define SHOULD_RENDER_FACE(neighbor_block) \
             (IS_WATER_TYPE(btype) ? \
               ((neighbor_block) == BLOCK_AIR || ((neighbor_block) >= 10 && (neighbor_block) <= 14) || (neighbor_block) == BLOCK_TALLGRASS || (neighbor_block) == BLOCK_LEAVES) : \
@@ -26,6 +26,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
         int water_face_count = 0;
         
         res.obelisk_count = 0;
+        res.cage_count = 0;
         
         for (int x = 0; x < 16; x++) {
             for (int y = 0; y < CHUNK_HEIGHT; y++) {
@@ -49,6 +50,20 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                              res.obelisk_count++;
                          }
                          continue;
+                    }
+
+                    if (btype == BLOCK_CAGE) {
+                         if (res.cage_count < 16) {
+                             res.cages[res.cage_count].x = (float)x + 0.5f;
+                             res.cages[res.cage_count].y = (float)y;
+                             res.cages[res.cage_count].z = (float)z + 0.5f;
+                             res.cage_count++;
+                         }
+                         continue;
+                    }
+
+                    if (btype == BLOCK_CHEST || btype == BLOCK_BANNER || btype == BLOCK_POWER_CRYSTAL) {
+                         continue; // Custom rendered entities, skip generic cube mesh
                     }
                     
                     if (btype >= 10 && btype <= 14) { face_count += 6; continue; }
@@ -172,7 +187,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
             for (int y = 0; y < CHUNK_HEIGHT; y++) {
                 for (int z = 0; z < 16; z++) {
                     int btype = c->blocks[x][y][z];
-                    if (btype == BLOCK_AIR || btype == BLOCK_OBELISK || btype == BLOCK_POWER_CRYSTAL || btype == BLOCK_CHEST) continue;
+                    if (btype == BLOCK_AIR || btype == BLOCK_OBELISK || btype == BLOCK_POWER_CRYSTAL || btype == BLOCK_CHEST || btype == BLOCK_BANNER || btype == BLOCK_CAGE) continue;
                     
                     int current_flag = 0;
                     if (btype == BLOCK_WATER || btype == BLOCK_WATER_2 || btype == BLOCK_WATER_1 || btype == BLOCK_WATER_0) current_flag = 255;

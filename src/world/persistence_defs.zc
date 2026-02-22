@@ -31,6 +31,8 @@ struct ChunkData {
     obelisks: Obelisk[32];
     chest_count: int;
     chests: ChestData[8];
+    banner_count: int;
+    banners: BannerData[4];
 }
 
 struct Skull {
@@ -88,6 +90,9 @@ struct ZibiSaveData {
     home_chunk_x: int;
     home_chunk_z: int;
     obelisk_idx: int;
+    mine_banner_x: int;
+    mine_banner_y: int;
+    mine_banner_z: int;
 }
 
 struct WorkerConfig {

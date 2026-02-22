@@ -67,6 +67,11 @@ fn upload_chunk_mesh(c: Chunk*, meshes: ChunkMeshes) {
         c.obelisks[i] = meshes.obelisks[i];
     }
     
+    c.cage_count = meshes.cage_count;
+    for i in 0..meshes.cage_count {
+        c.cages[i] = meshes.cages[i];
+    }
+    
     c.mesh_dirty = 0;
 }
 

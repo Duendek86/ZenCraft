@@ -45,6 +45,9 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                            pick_ray.direction.x, pick_ray.direction.y, pick_ray.direction.z);
         }
     }
+    
+    // --- Banner UI Interaction ---
+    // (Removed from here, moved to the main block interaction area)
 
     if hit.hit != 0 {
         let hx = (float)hit.x; let hy = (float)hit.y; let hz = (float)hit.z;
@@ -287,7 +290,7 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                         let dx = zibis[zi].x - end_pos.x;
                         let dy = zibis[zi].y - end_pos.y;
                         let dz = zibis[zi].z - end_pos.z;
-                        if (dx*dx + dy*dy + dz*dz) < 2.25 { zibis[zi].take_damage((int)beam_dmg + 1); }
+                        if (dx*dx + dy*dy + dz*dz) < 2.25 { /* zibis aren't hurt by friendly fire! */ }
                     }
                     
                     // --- Block Shake & Feedback (Fortnite Style) ---
@@ -409,18 +412,15 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                         
                         // Cage breaking — free a Zibi!
                         if b_hit == BLOCK_CAGE {
-                            // Remove both cage blocks
-                            let below = get_block(chunks, MAX_CHUNKS, hit.x, hit.y - 1, hit.z);
-                            let above2 = get_block(chunks, MAX_CHUNKS, hit.x, hit.y + 1, hit.z);
-                            if below == BLOCK_CAGE {
-                                set_block(chunks, MAX_CHUNKS, hit.x, hit.y - 1, hit.z, BLOCK_AIR);
-                                signal_cage_break((float)hit.x + 0.5, (float)(hit.y - 1) + 0.5, (float)hit.z + 0.5);
-                            } else if above2 == BLOCK_CAGE {
-                                set_block(chunks, MAX_CHUNKS, hit.x, hit.y + 1, hit.z, BLOCK_AIR);
-                                signal_cage_break((float)hit.x + 0.5, (float)hit.y + 0.5, (float)hit.z + 0.5);
-                            } else {
-                                signal_cage_break((float)hit.x + 0.5, (float)hit.y + 0.5, (float)hit.z + 0.5);
-                            }
+                            signal_cage_break((float)hit.x + 0.5, (float)hit.y, (float)hit.z + 0.5);
+                        }
+                        
+                        if b_hit == BLOCK_CHEST {
+                            remove_chest_at(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z);
+                        }
+                        
+                        if b_hit == BLOCK_BANNER {
+                            remove_banner_at(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z);
                         }
                         
                         if get_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z + 1) == 11 { set_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z + 1, BLOCK_AIR); }
@@ -453,17 +453,37 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
             destroy_timer = 0.0; destroy_target_x = -999;
         }
         
-        // --- Block Placement / Chest Interaction ---
-        if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_RIGHT) && selected_spell == 0 {
-            // Check if right-clicking a chest → open chest UI
+        // --- Block Placement / Chest / Banner Interaction ---
+        if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_RIGHT) {
             let hit_block = get_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z);
-            if hit_block == BLOCK_CHEST {
+            
+            // Check for Banner first (regardless of spell)
+            if hit_block == BLOCK_BANNER {
+                let bcx = (int)floor((float)hit.x / 16.0);
+                let bcz = (int)floor((float)hit.z / 16.0);
+                let c_idx = get_chunk_index(bcx, bcz);
+                if c_idx >= 0 {
+                    let rel_x = hit.x - (bcx * 16);
+                    let rel_z = hit.z - (bcz * 16);
+                    for bi in 0..chunks[c_idx].banner_count {
+                        if chunks[c_idx].banners[bi].x == rel_x && chunks[c_idx].banners[bi].y == hit.y && chunks[c_idx].banners[bi].z == rel_z {
+                            open_banner_ui(c_idx, bi);
+                            break;
+                        }
+                    }
+                }
+            }
+            // Check for chest (only if spell 0 or just always allow it too?)
+            // Let's allow chest interaction always too, makes sense for an RPG.
+            else if hit_block == BLOCK_CHEST {
                 let out_ci = 0;
                 let out_chi = 0;
                 if find_chest_at(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z, &out_ci, &out_chi) == 1 {
                     open_chest_ui(out_ci, out_chi);
                 }
-            } else {
+            } 
+            // Block Placement (only if spell == 0)
+            else if selected_spell == 0 {
             let nx = hit.x + hit.face_x; let ny = hit.y + hit.face_y; let nz = hit.z + hit.face_z;
             let dist_x = p.x - ((float)nx + 0.5); let dist_y = p.y + 1.6 - ((float)ny + 0.5); let dist_z = p.z - ((float)nz + 0.5);
             
@@ -488,6 +508,12 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                     }
                     
                     let can_place = 1;
+                    
+                    let target_block = get_block(chunks, MAX_CHUNKS, nx, ny, nz);
+                    if target_block != BLOCK_AIR && target_block != BLOCK_WATER && target_block != BLOCK_WATER_0 && target_block != BLOCK_WATER_1 && target_block != BLOCK_WATER_2 {
+                        can_place = 0;
+                    }
+                    
                     if block_to_place == BLOCK_OBELISK {
                          if ny + 2 >= CHUNK_HEIGHT { can_place = 0; }
                          else {
@@ -529,7 +555,60 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                     }
                 }
             }
-            } // end else (not chest interaction)
+            } // end else if spell == 0
+            else if selected_spell == 2 {
+            // MINER SPELL: Place Mining Banner
+            if p.mana >= 15.0 {
+                let nx = hit.x + hit.face_x; let ny = hit.y + hit.face_y; let nz = hit.z + hit.face_z;
+                
+                if get_block(chunks, MAX_CHUNKS, nx, ny, nz) == BLOCK_AIR {
+                    let ny_bottom = ny - 1;
+                    let b_below = get_block(chunks, MAX_CHUNKS, nx, ny_bottom, nz);
+                    
+                    // Banners must be placed on top of solid blocks
+                    if b_below != BLOCK_AIR && b_below != BLOCK_WATER && b_below != BLOCK_WATER_0 && b_below != BLOCK_WATER_1 && b_below != BLOCK_WATER_2 {
+                        let cx2 = (int)floor((float)nx / 16.0);
+                        let cz2 = (int)floor((float)nz / 16.0);
+                        let target_chunk = get_chunk_index(cx2, cz2);
+                        
+                        if target_chunk >= 0 && chunks[target_chunk].banner_count < 4 {
+                            p.mana = p.mana - 15.0;
+                            set_block(chunks, MAX_CHUNKS, nx, ny, nz, BLOCK_BANNER);
+                            
+                            let b_idx = chunks[target_chunk].banner_count;
+                            chunks[target_chunk].banners[b_idx].x = nx - (cx2 * 16);
+                            chunks[target_chunk].banners[b_idx].y = ny;
+                            chunks[target_chunk].banners[b_idx].z = nz - (cz2 * 16);
+                            
+                            let yaw_norm = p.yaw;
+                            while yaw_norm < 0.0 { yaw_norm = yaw_norm + 6.2831853; }
+                            while yaw_norm >= 6.2831853 { yaw_norm = yaw_norm - 6.2831853; }
+                            
+                            let dir_idx = 0; // 0=East(+X), 1=South(+Z), 2=West(-X), 3=North(-Z)
+                            if yaw_norm < 0.785398 || yaw_norm >= 5.497787 { dir_idx = 0; }
+                            else if yaw_norm < 2.356194 { dir_idx = 1; }
+                            else if yaw_norm < 3.926991 { dir_idx = 2; }
+                            else { dir_idx = 3; }
+                            
+                            chunks[target_chunk].banners[b_idx].active = 1 + dir_idx;
+                            chunks[target_chunk].banners[b_idx].assigned_zibis = 0;
+                            chunks[target_chunk].banners[b_idx].priority_count = 0;
+                            chunks[target_chunk].banner_count++;
+                            
+                            // Particle effect on spawn
+                            for pi in 0..10 {
+                                spawn_particle((float)nx + 0.5, (float)ny + 0.5, (float)nz + 0.5, rl::Color{r: 200, g: 180, b: 60, a: 255});
+                            }
+                            
+                            // Rebuild mesh and save
+                            request_mesh_async(target_chunk, 1);
+                            request_light_async(target_chunk, 4, 1);
+                            request_save_async(&chunks[target_chunk]);
+                        }
+                    }
+                }
+            }
+            }
         }
     } else {
         destroy_timer = 0.0; destroy_target_x = -999;

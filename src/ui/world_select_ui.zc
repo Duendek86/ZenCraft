@@ -1,0 +1,311 @@
+//> World Selection UI
+import "raylib.h" as rl;
+
+raw {
+    #include <stdio.h>
+    #include <string.h>
+    #include <stdlib.h>
+    #include <sys/stat.h>
+
+    #ifdef _WIN32
+        #include <windows.h>
+        #include <direct.h>
+    #else
+        #include <dirent.h>
+        #include <unistd.h>
+    #endif
+
+    #define MAX_WORLDS 50
+    #define MAX_WORLD_NAME 64
+
+    char discovered_worlds[MAX_WORLDS][MAX_WORLD_NAME];
+    int discovered_world_count = 0;
+
+    void sys_make_dir(const char* path) {
+        #ifdef _WIN32
+            _mkdir(path);
+        #else
+            mkdir(path, 0777);
+        #endif
+    }
+
+    void sys_scan_worlds() {
+        discovered_world_count = 0;
+        sys_make_dir("saves");
+
+        #ifdef _WIN32
+            WIN32_FIND_DATAA findFileData;
+            HANDLE hFind = FindFirstFileA("saves\\*", &findFileData);
+            if (hFind != INVALID_HANDLE_VALUE) {
+                do {
+                    if (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                        if (strcmp(findFileData.cFileName, ".") != 0 && strcmp(findFileData.cFileName, "..") != 0 && strcmp(findFileData.cFileName, "titleworld") != 0) {
+                            if (discovered_world_count < MAX_WORLDS) {
+                                strcpy(discovered_worlds[discovered_world_count], findFileData.cFileName);
+                                discovered_world_count++;
+                            }
+                        }
+                    }
+                } while (FindNextFileA(hFind, &findFileData) != 0);
+                FindClose(hFind);
+            }
+        #else
+            DIR *d;
+            struct dirent *dir;
+            d = opendir("saves");
+            if (d) {
+                while ((dir = readdir(d)) != NULL) {
+                    if (dir->d_type == DT_DIR) {
+                        if (strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0 && strcmp(dir->d_name, "titleworld") != 0) {
+                            if (discovered_world_count < MAX_WORLDS) {
+                                strcpy(discovered_worlds[discovered_world_count], dir->d_name);
+                                discovered_world_count++;
+                            }
+                        }
+                    }
+                }
+                closedir(d);
+            }
+        #endif
+    }
+
+    int sys_get_world_count() {
+        return discovered_world_count;
+    }
+
+    void sys_get_world_name(int index, char* out_name) {
+        if (index >= 0 && index < discovered_world_count) {
+            strcpy(out_name, discovered_worlds[index]);
+        } else {
+            out_name[0] = '\0';
+        }
+    }
+}
+
+extern fn sys_scan_worlds();
+extern fn sys_get_world_count() -> int;
+extern fn sys_get_world_name(index: int, out_name: char*);
+
+let new_world_name: char[64];
+let new_world_name_len: int = 0;
+let new_world_seed: char[64];
+let new_world_seed_len: int = 0;
+let is_typing_new_world: int = 0;
+let is_typing_seed: int = 0;
+let scroll_y: float = 0.0;
+
+fn init_world_select() {
+    sys_scan_worlds();
+    new_world_name[0] = '\0';
+    new_world_name_len = 0;
+    
+    // Default random seed
+    let r_seed = rl::GetRandomValue(1000, 999999);
+    rl::TextCopy(new_world_seed, rl::TextFormat("%d", r_seed));
+    new_world_seed_len = (int)strlen(new_world_seed);
+    
+    is_typing_new_world = 0;
+    is_typing_seed = 0;
+    scroll_y = 0.0;
+    rl::EnableCursor();
+}
+
+// Returns 1 if a world was selected (to transition to loading), 0 otherwise
+fn update_and_draw_world_select(out_selected_world_dir: char*, out_seed: char*) -> int {
+    let screen_w = rl::GetScreenWidth();
+    let screen_h = rl::GetScreenHeight();
+
+    rl::BeginDrawing();
+    rl::ClearBackground(rl::Color{r: 20, g: 30, b: 40, a: 255});
+
+    rl::DrawText("SELECT WORLD", screen_w / 2 - 120, 50, 40, rl::GOLD);
+
+    let panel_w = 600;
+    let panel_h = 400;
+    let px = (screen_w - panel_w) / 2;
+    let py = 120;
+
+    rl::DrawRectangle(px, py, panel_w, panel_h, rl::Color{r: 40, g: 35, b: 30, a: 255});
+    rl::DrawRectangleLines(px, py, panel_w, panel_h, rl::GOLD);
+
+    let mx = rl::GetMouseX();
+    let my = rl::GetMouseY();
+    let clicked = rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_LEFT);
+
+    // List of worlds
+    let world_count = sys_get_world_count();
+    let list_py = py + 20;
+
+    for i in 0..world_count {
+        let item_y = list_py + (i * 50);
+        let item_rect_x = px + 20;
+        let item_rect_y = item_y;
+        let item_rect_w = panel_w - 40;
+        let item_rect_h = 40;
+
+        let is_hovered = mx >= item_rect_x && mx <= item_rect_x + item_rect_w && my >= item_rect_y && my <= item_rect_y + item_rect_h;
+
+        if is_hovered == 1 {
+            rl::DrawRectangle(item_rect_x, item_rect_y, item_rect_w, item_rect_h, rl::Color{r: 80, g: 70, b: 50, a: 255});
+            if clicked == 1 {
+                // Load this world
+                let w_name: char[64];
+                sys_get_world_name(i, w_name);
+                let full_path = rl::TextFormat("saves/%s", w_name);
+                rl::TextCopy(out_selected_world_dir, full_path);
+                rl::TextCopy(out_seed, "0"); // Seed not used for existing worlds (loaded from file)
+                rl::EndDrawing();
+                return 1;
+            }
+        } else {
+            rl::DrawRectangle(item_rect_x, item_rect_y, item_rect_w, item_rect_h, rl::Color{r: 60, g: 50, b: 40, a: 255});
+        }
+        
+        let w_name_buf: char[64];
+        sys_get_world_name(i, w_name_buf);
+        rl::DrawText(w_name_buf, item_rect_x + 10, item_rect_y + 10, 20, rl::WHITE);
+    }
+
+    if world_count == 0 {
+        rl::DrawText("No worlds found. Create a new one!", px + 100, py + 100, 20, rl::GRAY);
+    }
+
+    // Create New World Section
+    let create_y = py + panel_h + 30;
+    rl::DrawText("Create New World:", px, create_y, 20, rl::WHITE);
+
+    let input_rect_x = px;
+    let input_rect_y = create_y + 30;
+    let input_rect_w = 400;
+    let input_rect_h = 40;
+
+    let input_hovered = mx >= input_rect_x && mx <= input_rect_x + input_rect_w && my >= input_rect_y && my <= input_rect_y + input_rect_h;
+
+    if clicked == 1 {
+        if input_hovered == 1 { is_typing_new_world = 1; }
+        else { is_typing_new_world = 0; }
+    }
+
+    let input_color = rl::DARKGRAY;
+    if is_typing_new_world == 1 { input_color = rl::GRAY; }
+    rl::DrawRectangle(input_rect_x, input_rect_y, input_rect_w, input_rect_h, input_color);
+    rl::DrawRectangleLines(input_rect_x, input_rect_y, input_rect_w, input_rect_h, rl::WHITE);
+    
+    // Draw typing text
+    if new_world_name_len > 0 {
+        rl::DrawText(new_world_name, input_rect_x + 10, input_rect_y + 10, 20, rl::RAYWHITE);
+    } else {
+        rl::DrawText("world_name", input_rect_x + 10, input_rect_y + 10, 20, rl::DARKGRAY);
+    }
+
+    // --- SEED SECTION ---
+    let seed_label_y = input_rect_y + 50;
+    rl::DrawText("Seed:", px, seed_label_y, 20, rl::WHITE);
+
+    let seed_rect_y = seed_label_y + 30;
+    let seed_rect_w = 300;
+    let seed_hovered = mx >= input_rect_x && mx <= input_rect_x + seed_rect_w && my >= seed_rect_y && my <= seed_rect_y + input_rect_h;
+
+    if clicked == 1 {
+        if input_hovered == 1 { is_typing_new_world = 1; is_typing_seed = 0; }
+        else if seed_hovered == 1 { is_typing_seed = 1; is_typing_new_world = 0; }
+        else { is_typing_new_world = 0; is_typing_seed = 0; }
+    }
+
+    let seed_color = rl::DARKGRAY;
+    if is_typing_seed == 1 { seed_color = rl::GRAY; }
+    rl::DrawRectangle(input_rect_x, seed_rect_y, seed_rect_w, input_rect_h, seed_color);
+    rl::DrawRectangleLines(input_rect_x, seed_rect_y, seed_rect_w, input_rect_h, rl::WHITE);
+
+    if new_world_seed_len > 0 {
+        rl::DrawText(new_world_seed, input_rect_x + 10, seed_rect_y + 10, 20, rl::RAYWHITE);
+    }
+    
+    // Randomize Seed Button
+    let rand_btn_x = input_rect_x + seed_rect_w + 10;
+    let rand_btn_w = 120;
+    let rand_hovered = mx >= rand_btn_x && mx <= rand_btn_x + rand_btn_w && my >= seed_rect_y && my <= seed_rect_y + input_rect_h;
+    
+    let rand_color = rl::Color{r: 80, g: 80, b: 120, a: 255};
+    if rand_hovered == 1 { rand_color = rl::Color{r: 100, g: 100, b: 160, a: 255}; }
+    rl::DrawRectangle(rand_btn_x, seed_rect_y, rand_btn_w, input_rect_h, rand_color);
+    rl::DrawText("RANDOM", rand_btn_x + 15, seed_rect_y + 10, 18, rl::WHITE);
+
+    if clicked == 1 && rand_hovered == 1 {
+        let r_seed = rl::GetRandomValue(1000, 999999);
+        rl::TextCopy(new_world_seed, rl::TextFormat("%d", r_seed));
+        new_world_seed_len = (int)strlen(new_world_seed);
+    }
+
+    // Handle typing
+    if is_typing_new_world == 1 {
+        let key = rl::GetCharPressed();
+        while key > 0 {
+            if (key >= 32) && (key <= 125) && (new_world_name_len < 63) {
+                new_world_name[new_world_name_len] = (char)key;
+                new_world_name_len++;
+                new_world_name[new_world_name_len] = '\0';
+            }
+            key = rl::GetCharPressed();
+        }
+
+        if rl::IsKeyPressed(rl::KEY_BACKSPACE) == 1 && new_world_name_len > 0 {
+            new_world_name_len--;
+            new_world_name[new_world_name_len] = '\0';
+        }
+    } else if is_typing_seed == 1 {
+        let key = rl::GetCharPressed();
+        while key > 0 {
+            if (key >= '0') && (key <= '9') && (new_world_seed_len < 20) {
+                new_world_seed[new_world_seed_len] = (char)key;
+                new_world_seed_len++;
+                new_world_seed[new_world_seed_len] = '\0';
+            }
+            key = rl::GetCharPressed();
+        }
+
+        if rl::IsKeyPressed(rl::KEY_BACKSPACE) == 1 && new_world_seed_len > 0 {
+            new_world_seed_len--;
+            new_world_seed[new_world_seed_len] = '\0';
+        }
+    }
+
+    // Create Button
+    let btn_x = input_rect_x + 440; // Adjusted for seed field
+    let btn_w = 160;
+    let create_btn_y = seed_rect_y; // Align with seed field row
+    let btn_hovered = mx >= btn_x && mx <= btn_x + btn_w && my >= create_btn_y && my <= create_btn_y + input_rect_h;
+
+    let btn_color = rl::Color{r: 60, g: 120, b: 60, a: 255};
+    if btn_hovered == 1 { btn_color = rl::Color{r: 80, g: 150, b: 80, a: 255}; }
+    rl::DrawRectangle(btn_x, create_btn_y, btn_w, input_rect_h, btn_color);
+    rl::DrawText("CREATE", btn_x + 35, create_btn_y + 10, 20, rl::WHITE);
+
+    if clicked == 1 && btn_hovered == 1 && new_world_name_len > 0 {
+        let full_path = rl::TextFormat("saves/%s", new_world_name);
+        rl::TextCopy(out_selected_world_dir, full_path);
+        rl::TextCopy(out_seed, new_world_seed);
+        rl::EndDrawing();
+        return 1;
+    }
+
+    // Back to Title Button
+    let back_btn_x = 20;
+    let back_btn_y = 20;
+    let back_btn_w = 100;
+    let back_btn_h = 40;
+    let back_hovered = mx >= back_btn_x && mx <= back_btn_x + back_btn_w && my >= back_btn_y && my <= back_btn_y + back_btn_h;
+    
+    let back_color = rl::DARKGRAY;
+    if back_hovered == 1 { back_color = rl::GRAY; }
+    rl::DrawRectangle(back_btn_x, back_btn_y, back_btn_w, back_btn_h, back_color);
+    rl::DrawText("BACK", back_btn_x + 20, back_btn_y + 10, 20, rl::WHITE);
+
+    if clicked == 1 && back_hovered == 1 {
+        rl::EndDrawing();
+        return -1; // -1 means go back to Title
+    }
+
+    rl::EndDrawing();
+    return 0; // 0 means stay on this screen
+}

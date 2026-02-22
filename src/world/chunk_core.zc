@@ -42,11 +42,21 @@ struct ChestData {
     active: int;
 }
 
+struct BannerData {
+    x: int; y: int; z: int;  // Position in world coords
+    active: int;
+    assigned_zibis: int;     // How many Zibis should mine here
+    priority_blocks: int[8]; // Which block IDs to mine first
+    priority_count: int;
+}
+
 struct ChunkMeshes {
     opq_mesh: rl::Mesh; water: rl::Mesh;
     has_opaque: int; has_water: int;
     obelisks: Obelisk[32];
     obelisk_count: int;
+    cages: rl::Vector3[16];
+    cage_count: int;
 }
 
 struct Chunk {
@@ -58,6 +68,8 @@ struct Chunk {
     skull_count: int;
     obelisks: Obelisk[32];
     obelisk_count: int;
+    cages: rl::Vector3[16];
+    cage_count: int;
     chunk_mesh: rl::Mesh; chunk_model: rl::Model;
     water_mesh: rl::Mesh; water_model: rl::Model;
     water_mesh_built: int;
@@ -67,13 +79,15 @@ struct Chunk {
     grass_deco_built: int;
     chests: ChestData[8];
     chest_count: int;
+    banners: BannerData[4];
+    banner_count: int;
     mesh_dirty: int; mesh_built: int;
     x: int; z: int; locked: int;
     last_water_tick: double;
 }
 
 fn is_transparent(b: int) -> int {
-    if b == BLOCK_AIR || (b >= 10 && b <= 14) || b == 17 || b == BLOCK_TALLGRASS || b == BLOCK_LEAVES || b == BLOCK_WATER || b == BLOCK_WATER_2 || b == BLOCK_WATER_1 || b == BLOCK_WATER_0 || b == 18 || b == BLOCK_OBELISK || b == BLOCK_POWER_CRYSTAL || b == BLOCK_CAGE || b == BLOCK_CHEST { return 1; }
+    if b == BLOCK_AIR || (b >= 10 && b <= 14) || b == 17 || b == BLOCK_TALLGRASS || b == BLOCK_LEAVES || b == BLOCK_WATER || b == BLOCK_WATER_2 || b == BLOCK_WATER_1 || b == BLOCK_WATER_0 || b == 18 || b == BLOCK_OBELISK || b == BLOCK_POWER_CRYSTAL || b == BLOCK_CAGE || b == BLOCK_CHEST || b == BLOCK_BANNER { return 1; }
     return 0;
 }
 

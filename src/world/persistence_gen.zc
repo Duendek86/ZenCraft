@@ -6,6 +6,7 @@
 import "persistence_defs.zc";
 import "chunk.zc"; // for BLOCK_* and CHUNK_HEIGHT
 import "raylib.h" as rl;
+let global_world_seed: int = 1337;
 
 // Thread-safe pseudo-random number generator
 // Linear Congruential Generator
@@ -256,7 +257,7 @@ fn is_cave(wx: int, wy: int, wz: int, seed: int) -> int {
 fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
     rl::TraceLog(rl::LOG_INFO, "Generating chunk data for %d, %d", x, z);
     
-    let world_seed = 1337; // Base seed for world
+    let world_seed = global_world_seed; 
     
     let heights: int[16][16];
     let biomes: int[16][16];
@@ -515,10 +516,9 @@ fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
         
         if (cage_h > 31 && cage_h < CHUNK_HEIGHT - 3) {
             let cage_ground = data.blocks[cage_x][cage_h][cage_z];
-            if ((cage_ground == BLOCK_GRASS || cage_ground == BLOCK_SAND || cage_ground == BLOCK_SNOW || cage_ground == BLOCK_STONE) && data.blocks[cage_x][cage_h+1][cage_z] == BLOCK_AIR && data.blocks[cage_x][cage_h+2][cage_z] == BLOCK_AIR) {
-                // Place 2-tall cage
+            if ((cage_ground == BLOCK_GRASS || cage_ground == BLOCK_SAND || cage_ground == BLOCK_SNOW || cage_ground == BLOCK_STONE) && data.blocks[cage_x][cage_h+1][cage_z] == BLOCK_AIR) {
+                // Place 1-tall cage
                 data.blocks[cage_x][cage_h + 1][cage_z] = BLOCK_CAGE;
-                data.blocks[cage_x][cage_h + 2][cage_z] = BLOCK_CAGE;
             }
         }
     }

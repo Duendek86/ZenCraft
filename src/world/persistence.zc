@@ -74,6 +74,40 @@ let prof_prop_time: double = 0.0;
 fn set_game_world_dir(path: char*) {
     if rl::DirectoryExists(path) == false { rl::MakeDirectory(path); }
     rl::TextCopy(world_dir_path, path);
+    
+    // Load world seed if it exists
+    let dat_path = rl::TextFormat("%s/world.dat", path);
+    raw {
+        FILE* f = fopen(dat_path, "rb");
+        if (f) {
+            fread(&global_world_seed, sizeof(int), 1, f);
+            fclose(f);
+            TraceLog(LOG_INFO, "[PERSISTENCE] Loaded world seed: %d", global_world_seed);
+        }
+    }
+}
+
+fn set_game_world_seed(path: char*, seed_str: char*) {
+    let dat_path = rl::TextFormat("%s/world.dat", path);
+    
+    // Only set if file doesn't exist (prevent overwriting on reload)
+    if rl::FileExists(dat_path) == false {
+        let new_seed = (int)rl::TextToInteger(seed_str);
+        if new_seed == 0 {
+             // If string wasn't a number or was "0", could be a hash but TextToInteger is simple
+             // For now just use it as is.
+        }
+        
+        global_world_seed = new_seed;
+        raw {
+            FILE* f = fopen(dat_path, "wb");
+            if (f) {
+                fwrite(&global_world_seed, sizeof(int), 1, f);
+                fclose(f);
+                TraceLog(LOG_INFO, "[PERSISTENCE] Saved new world seed: %d", global_world_seed);
+            }
+        }
+    }
 }
 
 // The Worker Thread Function
@@ -172,6 +206,8 @@ fn request_save_async(c: Chunk*) {
                     sys_memcpy((any)io_queue[i].data.obelisks, (any)c.obelisks, sizeof(Obelisk) * 32);
                     io_queue[i].data.chest_count = c.chest_count;
                     sys_memcpy((any)io_queue[i].data.chests, (any)c.chests, sizeof(ChestData) * 8);
+                    io_queue[i].data.banner_count = c.banner_count;
+                    sys_memcpy((any)io_queue[i].data.banners, (any)c.banners, sizeof(BannerData) * 4);
                     return;
                 }
             }
@@ -200,6 +236,8 @@ fn request_save_async(c: Chunk*) {
         sys_memcpy((any)io_queue[slot].data.obelisks, (any)c.obelisks, sizeof(Obelisk) * 32);
         io_queue[slot].data.chest_count = c.chest_count;
         sys_memcpy((any)io_queue[slot].data.chests, (any)c.chests, sizeof(ChestData) * 8);
+        io_queue[slot].data.banner_count = c.banner_count;
+        sys_memcpy((any)io_queue[slot].data.banners, (any)c.banners, sizeof(BannerData) * 4);
         
         io_queue[slot].io_status = IO_STATUS_PENDING;
     }
@@ -421,6 +459,8 @@ fn poll_async_results() {
                         sys_memcpy((any)chunks[idx].obelisks, (any)queue[i].data.obelisks, sizeof(Obelisk) * 32);
                         chunks[idx].chest_count = queue[i].data.chest_count;
                         sys_memcpy((any)chunks[idx].chests, (any)queue[i].data.chests, sizeof(ChestData) * 8);
+                        chunks[idx].banner_count = queue[i].data.banner_count;
+                        sys_memcpy((any)chunks[idx].banners, (any)queue[i].data.banners, sizeof(BannerData) * 4);
                         
                         if chunks[idx].mesh_built == 1 { rl::UnloadModel(chunks[idx].chunk_model); }
                         if chunks[idx].water_mesh_built == 1 { rl::UnloadModel(chunks[idx].water_model); }
@@ -575,6 +615,8 @@ fn load_chunk_into(c_ptr: any, cx: int, cz: int) {
         sys_memcpy((any)c.obelisks, (any)data_ptr.obelisks, sizeof(Obelisk) * 32);
         c.chest_count = data_ptr.chest_count;
         sys_memcpy((any)c.chests, (any)data_ptr.chests, sizeof(ChestData) * 8);
+        c.banner_count = data_ptr.banner_count;
+        sys_memcpy((any)c.banners, (any)data_ptr.banners, sizeof(BannerData) * 4);
         
         rl::MemFree(data_ptr);
     }

@@ -17,8 +17,8 @@ fn draw_spellbook(state: SpellbookState*, selected_block: int*) {
     let cy = screen_h / 2;
     
     // Book Dimensions
-    let book_w = 600;
-    let book_h = 400;
+    let book_w = 800;
+    let book_h = 500;
     let book_x = cx - book_w / 2;
     let book_y = cy - book_h / 2;
     
@@ -68,6 +68,30 @@ fn draw_spellbook(state: SpellbookState*, selected_block: int*) {
     
     if (clicked && mx >= s2_x && mx <= s2_x + s2_w && my >= s2_y && my <= s2_y + s2_h) {
         state.selected_spell = 1;
+    }
+    
+    // --- Zibi Control Category ---
+    rl::DrawText("ZIBI CONTROL", book_x + 60, book_y + 180, 18, rl::Color{r: 50, g: 100, b: 50, a: 255});
+    rl::DrawLine(book_x + 30, book_y + 200, book_x + 270, book_y + 200, rl::Color{r: 50, g: 100, b: 50, a: 150});
+    
+    // Spell 3: Miner
+    let s3_x = book_x + 30;
+    let s3_y = book_y + 215;
+    let s3_w = 240;
+    let s3_h = 40;
+    
+    if (state.selected_spell == 2) {
+        rl::DrawRectangle(s3_x, s3_y, s3_w, s3_h, rl::Color{r: 180, g: 230, b: 180, a: 255}); // Green highlight
+    }
+    rl::DrawRectangleLines(s3_x, s3_y, s3_w, s3_h, rl::BLACK);
+    // Pickaxe icon
+    rl::DrawRectangle(s3_x + 8, s3_y + 8, 4, 20, rl::Color{r: 139, g: 90, b: 43, a: 255}); // Handle
+    rl::DrawRectangle(s3_x + 3, s3_y + 6, 14, 4, rl::Color{r: 160, g: 170, b: 180, a: 255}); // Head
+    rl::DrawText("Miner Banner", s3_x + 35, s3_y + 5, 20, rl::Color{r: 40, g: 100, b: 40, a: 255});
+    rl::DrawText("15 Mana", s3_x + 35, s3_y + 24, 12, rl::DARKGRAY);
+    
+    if (clicked && mx >= s3_x && mx <= s3_x + s3_w && my >= s3_y && my <= s3_y + s3_h) {
+        state.selected_spell = 2;
     }
     
     // --- RIGHT PAGE: INVENTORY ---

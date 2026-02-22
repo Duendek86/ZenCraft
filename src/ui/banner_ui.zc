@@ -1,0 +1,342 @@
+//> Banner UI — Mining banner configuration interface
+import "raylib.h" as rl;
+import "math.h";
+import "../world/chunk_core.zc";
+import "../world/blocks.zc";
+import "../world/chunk_light.zc";
+
+// --- Banner UI State ---
+let banner_ui_open: int = 0;
+let banner_ui_chunk_idx: int = -1;
+let banner_ui_banner_idx: int = -1;
+
+fn open_banner_ui(chunk_idx: int, banner_idx: int) {
+    banner_ui_open = 1;
+    banner_ui_chunk_idx = chunk_idx;
+    banner_ui_banner_idx = banner_idx;
+    rl::EnableCursor();
+}
+
+fn close_banner_ui() {
+    banner_ui_open = 0;
+    banner_ui_chunk_idx = -1;
+    banner_ui_banner_idx = -1;
+    rl::DisableCursor();
+}
+
+fn is_banner_ui_open() -> int {
+    return banner_ui_open;
+}
+
+// Check if a block type is already in the priority list
+fn has_priority(banner: BannerData*, block_id: int) -> int {
+    for i in 0..banner.priority_count {
+        if banner.priority_blocks[i] == block_id { return 1; }
+    }
+    return 0;
+}
+
+// Toggle a block in priority list
+fn toggle_priority(banner: BannerData*, block_id: int) {
+    // Check if already in list
+    for i in 0..banner.priority_count {
+        if banner.priority_blocks[i] == block_id {
+            // Remove it: shift remaining items
+            for j in i..banner.priority_count - 1 {
+                banner.priority_blocks[j] = banner.priority_blocks[j + 1];
+            }
+            banner.priority_count--;
+            return;
+        }
+    }
+    // Add it (if space)
+    if banner.priority_count < 8 {
+        banner.priority_blocks[banner.priority_count] = block_id;
+        banner.priority_count++;
+    }
+}
+
+// Check if there's a chest near the banner
+fn find_chest_near_banner(chunks: Chunk*, num_chunks: int, bx: int, by: int, bz: int) -> int {
+    // Search 8 blocks around banner
+    for dx in -8..9 {
+        for dy in -3..4 {
+            for dz in -8..9 {
+                let wx = bx + dx;
+                let wy = by + dy;
+                let wz = bz + dz;
+                let b = get_block(chunks, num_chunks, wx, wy, wz);
+                if b == BLOCK_CHEST { return 1; }
+            }
+        }
+    }
+    return 0;
+}
+
+fn draw_banner_ui(chunks: Chunk*, num_chunks: int, total_zibis: int) {
+    if banner_ui_open == 0 { return; }
+    if banner_ui_chunk_idx < 0 || banner_ui_banner_idx < 0 { return; }
+    
+    let banner = &chunks[banner_ui_chunk_idx].banners[banner_ui_banner_idx];
+    
+    let screen_w = rl::GetScreenWidth();
+    let screen_h = rl::GetScreenHeight();
+    
+    // Dim background
+    rl::DrawRectangle(0, 0, screen_w, screen_h, rl::Color{r: 0, g: 0, b: 0, a: 150});
+    
+    // Panel
+    let panel_w = 400;
+    let panel_h = 420;
+    let px = (screen_w - panel_w) / 2;
+    let py = (screen_h - panel_h) / 2;
+    
+    // Background
+    rl::DrawRectangle(px, py, panel_w, panel_h, rl::Color{r: 40, g: 35, b: 30, a: 240});
+    rl::DrawRectangleLines(px, py, panel_w, panel_h, rl::Color{r: 120, g: 100, b: 60, a: 255});
+    
+    // Title
+    rl::DrawText("MINING BANNER", px + 110, py + 15, 24, rl::Color{r: 200, g: 180, b: 100, a: 255});
+    rl::DrawLine(px + 20, py + 45, px + panel_w - 20, py + 45, rl::Color{r: 100, g: 80, b: 40, a: 200});
+    
+    let mx = rl::GetMouseX();
+    let my = rl::GetMouseY();
+    let clicked = rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_LEFT);
+    
+    let total_assigned = 0;
+    for i in 0..num_chunks {
+        if chunks[i].x != -9999 {
+            for b in 0..chunks[i].banner_count {
+                if (chunks[i].banners[b].active > 0) {
+                    total_assigned += chunks[i].banners[b].assigned_zibis;
+                }
+            }
+        }
+    }
+    
+    let available_zibis = total_zibis - total_assigned;
+    if available_zibis < 0 { available_zibis = 0; }
+
+    // --- Zibi Count Selector ---
+    let avail_txt = rl::TextFormat("Assigned (Available: %d/%d)", available_zibis, total_zibis);
+    rl::DrawText(avail_txt, px + 30, py + 60, 20, rl::WHITE);
+    
+    let count_y = py + 90;
+    // Minus button
+    let minus_x = px + 30;
+    let btn_size = 35;
+    rl::DrawRectangle(minus_x, count_y, btn_size, btn_size, rl::Color{r: 180, g: 60, b: 60, a: 255});
+    rl::DrawText("-", minus_x + 12, count_y + 5, 24, rl::WHITE);
+    if clicked && mx >= minus_x && mx <= minus_x + btn_size && my >= count_y && my <= count_y + btn_size {
+        if banner.assigned_zibis > 0 { banner.assigned_zibis--; }
+    }
+    
+    // Count display
+    let count_txt = rl::TextFormat("%d", banner.assigned_zibis);
+    rl::DrawText(count_txt, minus_x + btn_size + 20, count_y + 5, 24, rl::GOLD);
+    
+    // Plus button
+    let plus_x = minus_x + btn_size + 60;
+    rl::DrawRectangle(plus_x, count_y, btn_size, btn_size, rl::Color{r: 60, g: 180, b: 60, a: 255});
+    rl::DrawText("+", plus_x + 10, count_y + 5, 24, rl::WHITE);
+    if clicked && mx >= plus_x && mx <= plus_x + btn_size && my >= count_y && my <= count_y + btn_size {
+        if banner.assigned_zibis < 10 && available_zibis > 0 { banner.assigned_zibis++; }
+    }
+    
+    // --- Priority Blocks Grid ---
+    rl::DrawText("Priority Blocks:", px + 30, py + 145, 20, rl::WHITE);
+    rl::DrawText("(click to toggle)", px + 200, py + 148, 14, rl::GRAY);
+    
+    let grid_x = px + 30;
+    let grid_y = py + 175;
+    let cell = 50;
+    let pad = 8;
+    
+    // Mineable blocks list
+    let mineable: int[8];
+    mineable[0] = BLOCK_STONE;
+    mineable[1] = BLOCK_DIRT;
+    mineable[2] = BLOCK_GOLD_ORE;
+    mineable[3] = BLOCK_SAND;
+    mineable[4] = BLOCK_COBBLESTONE;
+    mineable[5] = BLOCK_LOG;
+    mineable[6] = BLOCK_GRASS;
+    mineable[7] = BLOCK_CRYSTAL;
+    
+    let block_names: any[8];
+    block_names[0] = "Stone";
+    block_names[1] = "Dirt";
+    block_names[2] = "Gold";
+    block_names[3] = "Sand";
+    block_names[4] = "Cobble";
+    block_names[5] = "Wood";
+    block_names[6] = "Grass";
+    block_names[7] = "Crystal";
+    
+    for i in 0..8 {
+        let col = i % 4;
+        let row = i / 4;
+        let cx = grid_x + col * (cell + pad);
+        let cy = grid_y + row * (cell + pad + 15);
+        
+        let is_selected = has_priority(banner, mineable[i]);
+        
+        if is_selected == 1 {
+            rl::DrawRectangle(cx - 3, cy - 3, cell + 6, cell + 6, rl::GOLD);
+        }
+        
+        // Block color preview
+        let b_col = rl::GRAY;
+        if mineable[i] == BLOCK_STONE { b_col = rl::GRAY; }
+        else if mineable[i] == BLOCK_DIRT { b_col = rl::BROWN; }
+        else if mineable[i] == BLOCK_GOLD_ORE { b_col = rl::GOLD; }
+        else if mineable[i] == BLOCK_SAND { b_col = rl::BEIGE; }
+        else if mineable[i] == BLOCK_COBBLESTONE { b_col = rl::DARKGRAY; }
+        else if mineable[i] == BLOCK_LOG { b_col = rl::Color{r: 101, g: 67, b: 33, a: 255}; }
+        else if mineable[i] == BLOCK_GRASS { b_col = rl::LIME; }
+        else if mineable[i] == BLOCK_CRYSTAL { b_col = rl::Color{r: 180, g: 100, b: 255, a: 255}; }
+        
+        rl::DrawRectangle(cx, cy, cell, cell, rl::Color{r: 50, g: 50, b: 60, a: 220});
+        rl::DrawRectangle(cx + 5, cy + 5, cell - 10, cell - 10, b_col);
+        rl::DrawRectangleLines(cx, cy, cell, cell, rl::Color{r: 100, g: 100, b: 120, a: 255});
+        
+        // Label
+        rl::DrawText((char*)block_names[i], cx + 2, cy + cell + 2, 10, rl::LIGHTGRAY);
+        
+        // Click to toggle
+        if clicked && mx >= cx && mx <= cx + cell && my >= cy && my <= cy + cell {
+            toggle_priority(banner, mineable[i]);
+        }
+    }
+    
+    // --- Status Info ---
+    let status_y = py + 340;
+    rl::DrawLine(px + 20, status_y - 10, px + panel_w - 20, status_y - 10, rl::Color{r: 100, g: 80, b: 40, a: 200});
+    
+    let world_bx = (chunks[banner_ui_chunk_idx].x * 16) + banner.x;
+    let world_bz = (chunks[banner_ui_chunk_idx].z * 16) + banner.z;
+    let has_chest = find_chest_near_banner(chunks, num_chunks, world_bx, banner.y, world_bz);
+    if has_chest == 1 {
+        rl::DrawText("Nearby Chest: YES", px + 30, status_y, 18, rl::Color{r: 100, g: 255, b: 100, a: 255});
+    } else {
+        rl::DrawText("Nearby Chest: NO (place one!)", px + 30, status_y, 18, rl::Color{r: 255, g: 100, b: 100, a: 255});
+    }
+    
+    // --- Close Button ---
+    let close_x = px + panel_w - 90;
+    let close_y = py + panel_h - 50;
+    let close_w = 70;
+    let close_h = 30;
+    rl::DrawRectangle(close_x, close_y, close_w, close_h, rl::Color{r: 150, g: 60, b: 60, a: 255});
+    rl::DrawText("Close", close_x + 10, close_y + 6, 18, rl::WHITE);
+    if clicked && mx >= close_x && mx <= close_x + close_w && my >= close_y && my <= close_y + close_h {
+        close_banner_ui();
+    }
+    
+    // ESC also closes
+    if rl::IsKeyPressed(rl::KEY_ESCAPE) {
+        close_banner_ui();
+    }
+}
+
+// --- 3D Banner Rendering ---
+fn draw_banners_3d(chunks: Chunk*, num_chunks: int, day_time: float) {
+    let sh = get_shader_lighting();
+    let loc_use_entity = rl::GetShaderLocation(sh, "uUseEntityLight");
+    let loc_entity_light = rl::GetShaderLocation(sh, "uEntityLight");
+    
+    rl::BeginShaderMode(sh);
+    let use_ent = 1;
+    if loc_use_entity != -1 { rl::SetShaderValue(sh, loc_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+    
+    for ci in 0..num_chunks {
+        if chunks[ci].x == -9999 { continue; }
+        
+        let base_x = (float)(chunks[ci].x * 16);
+        let base_z = (float)(chunks[ci].z * 16);
+        
+        for i in 0..chunks[ci].banner_count {
+            if chunks[ci].banners[i].active == 0 { continue; }
+            
+            let b_dir = chunks[ci].banners[i].active - 1; // 0=East, 1=South, 2=West, 3=North
+            let rot_angle = 0.0;
+            if b_dir == 0 { rot_angle = 90.0; }      // East (+X)
+            else if b_dir == 1 { rot_angle = 0.0; }   // South (+Z)
+            else if b_dir == 2 { rot_angle = -90.0; } // West (-X)
+            else if b_dir == 3 { rot_angle = 180.0; } // North (-Z)
+            
+            let wx = base_x + (float)chunks[ci].banners[i].x + 0.5;
+            let wy = (float)chunks[ci].banners[i].y;
+            let wz = base_z + (float)chunks[ci].banners[i].z + 0.5;
+            
+            // Light at banner position
+            let lx = (int)floor(wx);
+            let ly = (int)floor(wy + 1.0);
+            let lz = (int)floor(wz);
+            let packed = get_light_levels(chunks, num_chunks, lx, ly, lz);
+            let el = rl::Vector2{x: (float)(packed & 0xF) / 15.0, y: (float)((packed >> 4) & 0xF) / 15.0};
+            if loc_entity_light != -1 { rl::SetShaderValue(sh, loc_entity_light, &el, rl::SHADER_UNIFORM_VEC2); }
+            
+            let c_wood = rl::Color{r: 90, g: 60, b: 30, a: 255};
+            let c_cloth = rl::Color{r: 220, g: 220, b: 200, a: 255};
+            let c_letter = rl::Color{r: 150, g: 30, b: 30, a: 255};
+            
+            rl::rlPushMatrix();
+            rl::rlTranslatef(wx, wy, wz);
+            rl::rlRotatef(rot_angle, 0.0, 1.0, 0.0);
+            
+            // Stick (in ground)
+            rl::DrawCube(rl::Vector3{x: 0.0, y: 0.8, z: 0.0}, 0.1, 1.6, 0.1, c_wood);
+            
+            // Cloth (hanging from top)
+            rl::DrawCube(rl::Vector3{x: 0.0, y: 1.2, z: 0.06}, 0.8, 0.6, 0.02, c_cloth);
+            
+            // Big 'M' letter (made of 4 thin strips/cubes)
+            // Left leg
+            rl::DrawCube(rl::Vector3{x: -0.2, y: 1.2, z: 0.08}, 0.06, 0.4, 0.02, c_letter);
+            // Right leg
+            rl::DrawCube(rl::Vector3{x: 0.2, y: 1.2, z: 0.08}, 0.06, 0.4, 0.02, c_letter);
+            // Middle top left drop
+            rl::DrawCube(rl::Vector3{x: -0.1, y: 1.3, z: 0.08}, 0.06, 0.2, 0.02, c_letter);
+            // Middle top right drop
+            rl::DrawCube(rl::Vector3{x: 0.1, y: 1.3, z: 0.08}, 0.06, 0.2, 0.02, c_letter);
+            
+            rl::rlPopMatrix();
+        }
+    }
+    
+    rl::EndShaderMode();
+    use_ent = 0;
+    if loc_use_entity != -1 { rl::SetShaderValue(sh, loc_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+}
+
+// Remove banner at world position
+fn remove_banner_at(chunks: Chunk*, num_chunks: int, wx: int, wy: int, wz: int) {
+    let cx = (int)floor((float)wx / 16.0);
+    let cz = (int)floor((float)wz / 16.0);
+    let lx = wx - cx * 16;
+    let lz = wz - cz * 16;
+    
+    for ci in 0..num_chunks {
+        if (chunks[ci].x == cx && chunks[ci].z == cz) {
+            for bi in 0..chunks[ci].banner_count {
+                if (chunks[ci].banners[bi].active > 0 &&
+                    chunks[ci].banners[bi].x == lx &&
+                    chunks[ci].banners[bi].y == wy &&
+                    chunks[ci].banners[bi].z == lz) {
+                    
+                    // [FIX] Clear assigned Zibis so they are "freed" back to the global pool
+                    chunks[ci].banners[bi].assigned_zibis = 0;
+                    chunks[ci].banners[bi].active = 0;
+
+                    // [FIX] Shift remaining banners to fill the gap and decrement count
+                    for bj in bi..chunks[ci].banner_count - 1 {
+                        chunks[ci].banners[bj] = chunks[ci].banners[bj + 1];
+                    }
+                    chunks[ci].banner_count--;
+                    return;
+                }
+            }
+        }
+    }
+}

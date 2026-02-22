@@ -88,9 +88,15 @@ fn handle_io_request(req: any, world_dir: char*) {
                     
                     if(offset + stored_size <= filesize) {
                         fseek(f, offset, SEEK_SET);
-                        // Read into r->data
-                        size_t read = fread(&r->data, sizeof(ChunkData), 1, f);
-                        if(read == 1) loaded = 1;
+                        // Zero structure for backwards compatibility
+                        memset(&r->data, 0, sizeof(ChunkData));
+                        size_t read_size = stored_size;
+                        if(read_size > sizeof(ChunkData)) read_size = sizeof(ChunkData);
+                        
+                        // Read exactly read_size bytes
+                        if(read_size > 0 && fread(&r->data, 1, read_size, f) == read_size) {
+                            loaded = 1;
+                        }
                     }
                 }
                 fclose(f);

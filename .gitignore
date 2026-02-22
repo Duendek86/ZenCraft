@@ -1,4 +1,6 @@
-bin/world/
+bin/saves/
 bin/titleworld/
 zc.com
 out.c
+.agent/
+.gitignore

@@ -33,6 +33,7 @@ import "entities/player.zc";
 import "world/persistence.zc";
 import "ui/title_generator.zc";
 import "entities/zibi.zc";
+import "ui/banner_ui.zc";
 import "render/grass_deco.zc";
 import "render/particles.zc";
 import "ui/spellbook.zc";
@@ -40,6 +41,7 @@ import "entities/fireball.zc";
 import "entities/shadow_wolf.zc";
 import "entities/player_interaction.zc";
 import "entities/obelisk.zc";
+import "ui/world_select_ui.zc";
 
 // Import modules from the refactoring
 import "ui/game_loading.zc";
@@ -48,7 +50,7 @@ import "render/bloom.zc";
 import "ui/inventory.zc";
 import "ui/chest_ui.zc";
 
-def VERSION_TEXT = "v0.0.1.16 alpha-dev";
+def VERSION_TEXT = "v0.0.1.17 alpha-dev";
 def MAX_ZIBIS = 10;
 def MAX_WOLVES = 8;
 def SAVE_DIR = "world";
@@ -56,10 +58,12 @@ def SAVE_DIR = "world";
 def STATE_TITLE = 0;
 def STATE_LOADING = 1;
 def STATE_GAME = 2;
+def STATE_WORLD_SELECT = 3;
 
 fn main() {
     rl::SetTraceLogLevel(rl::LOG_WARNING);
     rl::InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, TITLE);
+    rl::SetExitKey(0);
     rl::SetWindowState(rl::FLAG_WINDOW_RESIZABLE | rl::FLAG_VSYNC_HINT | rl::FLAG_WINDOW_ALWAYS_RUN);
     //rl::ToggleFullscreen();
     rl::SetTargetFPS(60);
@@ -88,6 +92,7 @@ fn main() {
     let selected_block = BLOCK_STONE;
     let spellbook = SpellbookState::new();
     let show_spellbook = 0;
+    let show_exit_confirm = 0;
     let zibis: Zibi[MAX_ZIBIS];
     let wolves: ShadowWolf[MAX_WOLVES];
     for wi in 0..MAX_WOLVES { wolves[wi].active = 0; }
@@ -111,25 +116,21 @@ fn main() {
 
     while rl::WindowShouldClose() == 0 {
         if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_LEFT) {
-            if show_settings == 0 && show_spellbook == 0 && is_chest_ui_open() == 0 && is_scepter_ui_open() == 0 { rl::DisableCursor(); }
+            if current_state == STATE_GAME && show_settings == 0 && show_spellbook == 0 && is_chest_ui_open() == 0 && is_scepter_ui_open() == 0 && is_banner_ui_open() == 0 && show_exit_confirm == 0 { rl::DisableCursor(); }
         }
 
         let dt = rl::GetFrameTime();
         if dt > 0.1 { dt = 0.1; }
+        
+        if rl::IsKeyPressed(rl::KEY_F11) { rl::ToggleFullscreen(); }
         
         // --- TITLE STATE ---
         if current_state == STATE_TITLE {
             update_day_night_cycle(0.12);
             
             if rl::IsKeyPressed(rl::KEY_ENTER) {
-                current_state = STATE_LOADING;
-                for i in 0..MAX_CHUNKS { chunks[i].x = -9999; chunks[i].z = -9999; chunks[i].mesh_built = 0; }
-                set_game_world_dir(SAVE_DIR);
-                
-                rl::BeginDrawing();
-                rl::ClearBackground(rl::BLACK);
-                rl::DrawText("GENERATING WORLD...", SCREEN_WIDTH/2 - 100, SCREEN_HEIGHT/2, 20, rl::WHITE);
-                rl::EndDrawing();
+                current_state = STATE_WORLD_SELECT;
+                init_world_select();
                 continue;
             }
 
@@ -156,10 +157,36 @@ fn main() {
             for i in 0..MAX_CHUNKS { if chunks[i].x != -9999 { chunks[i].draw_transparent(chunks, MAX_CHUNKS, 8, 25, grass_dist); } }
             rl::EndMode3D();
             
-            rl::DrawText("ZEN CRAFT", 100, 100, 60, rl::WHITE);
-            rl::DrawText(VERSION_TEXT, 100, 160, 20, rl::WHITE);
-            rl::DrawText("Press ENTER to Play", 150, 400, 30, rl::LIGHTGRAY);
+            rl::DrawText("ZEN CRAFT", SCREEN_WIDTH/2 - 250, 100, 80, rl::BLACK);
+            rl::DrawText("ZEN CRAFT", SCREEN_WIDTH/2 - 245, 95, 80, rl::WHITE);
+            rl::DrawText("Press ENTER to Start", SCREEN_WIDTH/2 - 120, SCREEN_HEIGHT - 100, 20, rl::RAYWHITE);
             rl::EndDrawing();
+        }
+        
+        // --- WORLD SELECT STATE ---
+        else if current_state == STATE_WORLD_SELECT {
+            let selected_world: char[128];
+            let selected_seed: char[64];
+            let res = update_and_draw_world_select(selected_world, selected_seed);
+            
+            if res == 1 {
+                // User picked a world, commence loading!
+                current_state = STATE_LOADING;
+                for i in 0..MAX_CHUNKS { chunks[i].x = -9999; chunks[i].z = -9999; chunks[i].mesh_built = 0; }
+                
+                // Set directory and seed (if new world)
+                set_game_world_dir(selected_world);
+                set_game_world_seed(selected_world, selected_seed);
+                
+                rl::BeginDrawing();
+                rl::ClearBackground(rl::BLACK);
+                rl::DrawText("LOADING WORLD...", SCREEN_WIDTH/2 - 100, SCREEN_HEIGHT/2, 20, rl::WHITE);
+                rl::EndDrawing();
+                continue;
+            } else if res == -1 {
+                // User clicked BACK
+                current_state = STATE_TITLE;
+            }
         }
         
         // --- LOADING STATE ---
@@ -189,6 +216,10 @@ fn main() {
                         zibis[zi].home_chunk_x = zibis_save[zi].home_chunk_x;
                         zibis[zi].home_chunk_z = zibis_save[zi].home_chunk_z;
                         zibis[zi].obelisk_idx = zibis_save[zi].obelisk_idx;
+                        zibis[zi].mine_banner_x = zibis_save[zi].mine_banner_x;
+                        zibis[zi].mine_banner_y = zibis_save[zi].mine_banner_y;
+                        zibis[zi].mine_banner_z = zibis_save[zi].mine_banner_z;
+                        zibis[zi].mine_target_y = -999;
                         
                         zibis[zi].hurt_flash = 0.0;
                         zibis[zi].anim_time = 0.0;
@@ -304,17 +335,34 @@ fn main() {
                  }
             }
             
+            if rl::IsKeyPressed(rl::KEY_ESCAPE) {
+                if show_spellbook == 1 { show_spellbook = 0; rl::DisableCursor(); }
+                else if show_settings == 1 { show_settings = 0; rl::DisableCursor(); }
+                else if is_chest_ui_open() == 1 { /* handled in chest_ui close logic */ rl::DisableCursor(); }
+                else if is_scepter_ui_open() == 1 { /* handled in inventory_ui close logic */ rl::DisableCursor(); }
+                else if is_banner_ui_open() == 1 { /* handled in banner_ui close logic */ rl::DisableCursor(); }
+                else if show_exit_confirm == 1 { show_exit_confirm = 0; rl::DisableCursor(); }
+                else { show_exit_confirm = 1; rl::EnableCursor(); }
+            }
+            if show_exit_confirm == 1 {
+                if rl::IsKeyPressed(rl::KEY_ENTER) {
+                    break;
+                }
+            }
+            
             if rl::IsKeyPressed(rl::KEY_E) {
-                show_spellbook = !show_spellbook;
-                if show_spellbook { rl::EnableCursor(); } else { rl::DisableCursor(); }
+                if show_exit_confirm == 0 && is_chest_ui_open() == 0 {
+                    show_spellbook = !show_spellbook;
+                    if show_spellbook { rl::EnableCursor(); } else { rl::DisableCursor(); }
+                }
             }
             if rl::IsKeyPressed(rl::KEY_I) {
-                if is_chest_ui_open() == 0 && show_spellbook == 0 && show_settings == 0 { // Don't allow overlapping UIs
+                if is_chest_ui_open() == 0 && show_spellbook == 0 && show_settings == 0 && is_banner_ui_open() == 0 && show_exit_confirm == 0 { // Don't allow overlapping UIs
                      toggle_scepter_ui();
                 }
             }
 
-            if show_settings == 0 && show_spellbook == 0 && is_scepter_ui_open() == 0 {
+            if show_settings == 0 && show_spellbook == 0 && is_scepter_ui_open() == 0 && is_chest_ui_open() == 0 && is_banner_ui_open() == 0 && show_exit_confirm == 0 {
                 (&p).update(chunks, MAX_CHUNKS, dt);
                 
                 if rl::IsKeyPressed(rl::KEY_ONE) { selected_block = BLOCK_DIRT; }
@@ -332,7 +380,7 @@ fn main() {
             for i in 0..MAX_ZIBIS {
                 if zibis[i].active == 1 {
                     active_zibis++;
-                    if zibis[i].update(chunks, MAX_CHUNKS, dt, p.x, p.y, p.z, day_time, &wolves[0], MAX_WOLVES) == 0 { active_zibis--; }
+                    if zibis[i].update(chunks, MAX_CHUNKS, dt, p.x, p.y, p.z, day_time, &wolves[0], MAX_WOLVES, &zibis[0], MAX_ZIBIS) == 0 { active_zibis--; }
                     if zibis[i].state == ZIBI_WORKER { worker_count++; }
                 }
             }
@@ -422,13 +470,12 @@ fn main() {
             }
             
             if rl::IsKeyPressed(rl::KEY_F3) { show_debug_info = !show_debug_info; }
-            if rl::IsKeyPressed(rl::KEY_F11) { rl::ToggleFullscreen(); }
             if rl::IsKeyPressed(rl::KEY_F1) { 
                 show_settings = !show_settings;
                 if show_settings { rl::EnableCursor(); } else { rl::DisableCursor(); }
             }
             
-            day_time = day_time + (dt / 240.0); // 240 seconds total for a full day+night cycle
+            day_time = day_time + (dt / 2400.0); // 2400 seconds total for a full day+night cycle
             if day_time > 1.0 { day_time = day_time - 1.0; }
             update_day_night_cycle(day_time);
             
@@ -640,10 +687,12 @@ fn main() {
             for i in 0..MAX_ZIBIS { zibis[i].draw(chunks, MAX_CHUNKS, day_time); }
             for wi in 0..MAX_WOLVES { wolves[wi].draw(chunks, MAX_CHUNKS, day_time); }
             draw_chests_3d(chunks, MAX_CHUNKS, day_time);
+            draw_banners_3d(chunks, MAX_CHUNKS, day_time);
+            draw_cages_3d(chunks, MAX_CHUNKS, day_time);
             draw_particles();
             draw_fireballs();
             
-            if show_settings == 0 && show_spellbook == 0 && is_chest_ui_open() == 0 && is_scepter_ui_open() == 0 {
+            if show_settings == 0 && show_spellbook == 0 && is_chest_ui_open() == 0 && is_scepter_ui_open() == 0 && is_banner_ui_open() == 0 && show_exit_confirm == 0 {
                 handle_player_interaction(&p, chunks, dt, selected_block, spellbook.selected_spell, &wolves[0], MAX_WOLVES, &zibis[0], MAX_ZIBIS);
             }
             
@@ -694,6 +743,11 @@ fn main() {
             if show_settings { draw_settings_menu(&draw_distance, &grass_dist); }
             if show_spellbook { draw_spellbook(&spellbook, &selected_block); }
             draw_chest_ui(chunks);
+            let total_active_zibis = 0;
+            for zi in 0..MAX_ZIBIS {
+                if zibis[zi].active == 1 { total_active_zibis++; }
+            }
+            draw_banner_ui(chunks, MAX_CHUNKS, total_active_zibis);
             draw_scepter_ui();
             
             // --- Wave Counter HUD ---
@@ -721,6 +775,26 @@ fn main() {
                 }
             }
 
+            // --- Exit Confirm Menu ---
+            if show_exit_confirm == 1 {
+                let screen_w = rl::GetScreenWidth();
+                let screen_h = rl::GetScreenHeight();
+                rl::DrawRectangle(0, 0, screen_w, screen_h, rl::Color{r: 0, g: 0, b: 0, a: 150});
+                
+                let box_w = 400; let box_h = 200;
+                let box_x = (screen_w - box_w) / 2; let box_y = (screen_h - box_h) / 2;
+                rl::DrawRectangle(box_x, box_y, box_w, box_h, rl::Color{r: 30, g: 30, b: 40, a: 240});
+                rl::DrawRectangleLines(box_x, box_y, box_w, box_h, rl::GOLD);
+                
+                let text1 = "SALIR DEL JUEGO";
+                let text2 = "Pulsa ENTER para confirmar";
+                let text3 = "Pulsa ESCAPE para volver";
+                
+                rl::DrawText(text1, box_x + box_w/2 - rl::MeasureText(text1, 24)/2, box_y + 40, 24, rl::WHITE);
+                rl::DrawText(text2, box_x + box_w/2 - rl::MeasureText(text2, 20)/2, box_y + 100, 20, rl::RED);
+                rl::DrawText(text3, box_x + box_w/2 - rl::MeasureText(text3, 18)/2, box_y + 140, 18, rl::GRAY);
+            }
+
             rl::EndDrawing();
         }
     }
@@ -743,6 +817,9 @@ fn main() {
             zibis_save[zi].home_chunk_x = zibis[zi].home_chunk_x;
             zibis_save[zi].home_chunk_z = zibis[zi].home_chunk_z;
             zibis_save[zi].obelisk_idx = zibis[zi].obelisk_idx;
+            zibis_save[zi].mine_banner_x = zibis[zi].mine_banner_x;
+            zibis_save[zi].mine_banner_y = zibis[zi].mine_banner_y;
+            zibis_save[zi].mine_banner_z = zibis[zi].mine_banner_z;
         }
         save_player_data(p.x, p.y, p.z, selected_block, p.yaw, p.pitch, wave_number, wave_spawned_today, day_time, &zibis_save);
     }

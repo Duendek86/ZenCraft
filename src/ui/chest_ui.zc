@@ -293,3 +293,17 @@ fn place_chest(chunks: Chunk*, num_chunks: int, wx: int, wy: int, wz: int) -> in
     }
     return 0;
 }
+
+// Remove a chest at world position
+fn remove_chest_at(chunks: Chunk*, num_chunks: int, wx: int, wy: int, wz: int) {
+    let out_ci = 0; let out_chi = 0;
+    if (find_chest_at(chunks, num_chunks, wx, wy, wz, &out_ci, &out_chi) == 1) {
+        chunks[out_ci].chests[out_chi].active = 0;
+        
+        // [FIX] Shift remaining chests to fill the gap and decrement count
+        for i in out_chi..chunks[out_ci].chest_count - 1 {
+            chunks[out_ci].chests[i] = chunks[out_ci].chests[i + 1];
+        }
+        chunks[out_ci].chest_count--;
+    }
+}
