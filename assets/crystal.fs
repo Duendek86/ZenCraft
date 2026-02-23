@@ -74,7 +74,7 @@ void main()
     vec3 lighting = sunLight + (ambientColor * skyLight) + torchColor;
     
     // Emisión base permanente (self-glow brillante verde)
-    vec3 selfGlow = vec3(0.0, 0.8, 0.1) * 0.7;
+    vec3 selfGlow = vec3(0.0, 0.8, 0.1) * 0.35;
     
     resultColor = (crystalBase * lighting) + specularColor + edgeGlow + selfGlow;
     

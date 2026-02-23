@@ -86,22 +86,30 @@ fn draw_banner_ui(chunks: Chunk*, num_chunks: int, total_zibis: int) {
     rl::DrawRectangle(0, 0, screen_w, screen_h, rl::Color{r: 0, g: 0, b: 0, a: 150});
     
     // Panel
-    let panel_w = 400;
-    let panel_h = 420;
+    let panel_w = 460;
+    let panel_h = 480;
     let px = (screen_w - panel_w) / 2;
     let py = (screen_h - panel_h) / 2;
     
     // Background
-    rl::DrawRectangle(px, py, panel_w, panel_h, rl::Color{r: 40, g: 35, b: 30, a: 240});
-    rl::DrawRectangleLines(px, py, panel_w, panel_h, rl::Color{r: 120, g: 100, b: 60, a: 255});
+    let border_col = rl::Color{r: 25, g: 30, b: 45, a: 240};
+    rl::DrawRectangle(px, py, panel_w, panel_h, border_col);
+    rl::DrawRectangle(px + 8, py + 8, panel_w - 16, panel_h - 16, rl::Color{r: 15, g: 15, b: 20, a: 255});
+    rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)px, y: (float)py, width: (float)panel_w, height: (float)panel_h}, 3.0, rl::GOLD);
     
-    // Title
+    // Title Header
+    rl::DrawRectangle(px + 8, py + 8, panel_w - 16, 50, border_col);
+    rl::DrawLine(px + 8, py + 58, px + panel_w - 8, py + 58, rl::GOLD);
+    
     if banner.banner_type == 1 {
-        rl::DrawText("LUMBER BANNER", px + 110, py + 15, 24, rl::Color{r: 100, g: 200, b: 100, a: 255});
+        let title_l = "LUMBER BANNER";
+        let tw_l = rl::MeasureText(title_l, 28);
+        rl::DrawText(title_l, px + (panel_w - tw_l) / 2, py + 20, 28, rl::Color{r: 100, g: 200, b: 100, a: 255});
     } else {
-        rl::DrawText("MINING BANNER", px + 110, py + 15, 24, rl::Color{r: 200, g: 180, b: 100, a: 255});
+        let title_m = "MINING BANNER";
+        let tw_m = rl::MeasureText(title_m, 28);
+        rl::DrawText(title_m, px + (panel_w - tw_m) / 2, py + 20, 28, rl::Color{r: 200, g: 180, b: 100, a: 255});
     }
-    rl::DrawLine(px + 20, py + 45, px + panel_w - 20, py + 45, rl::Color{r: 100, g: 80, b: 40, a: 200});
     
     let mx = rl::GetMouseX();
     let my = rl::GetMouseY();
@@ -122,40 +130,42 @@ fn draw_banner_ui(chunks: Chunk*, num_chunks: int, total_zibis: int) {
     if available_zibis < 0 { available_zibis = 0; }
 
     // --- Zibi Count Selector ---
-    let avail_txt = rl::TextFormat("Assigned (Available: %d/%d)", available_zibis, total_zibis);
-    rl::DrawText(avail_txt, px + 30, py + 60, 20, rl::WHITE);
+    let avail_txt = rl::TextFormat("Assigned Zibis (Available: %d/%d)", available_zibis, total_zibis);
+    rl::DrawText(avail_txt, px + 30, py + 75, 22, rl::RAYWHITE);
     
-    let count_y = py + 90;
+    let count_y = py + 110;
     // Minus button
-    let minus_x = px + 30;
-    let btn_size = 35;
+    let minus_x = px + 40;
+    let btn_size = 40;
     rl::DrawRectangle(minus_x, count_y, btn_size, btn_size, rl::Color{r: 180, g: 60, b: 60, a: 255});
-    rl::DrawText("-", minus_x + 12, count_y + 5, 24, rl::WHITE);
+    rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)minus_x, y: (float)count_y, width: (float)btn_size, height: (float)btn_size}, 2.0, rl::RAYWHITE);
+    rl::DrawText("-", minus_x + 15, count_y + 8, 28, rl::WHITE);
     if clicked && mx >= minus_x && mx <= minus_x + btn_size && my >= count_y && my <= count_y + btn_size {
         if banner.assigned_zibis > 0 { banner.assigned_zibis--; }
     }
     
     // Count display
     let count_txt = rl::TextFormat("%d", banner.assigned_zibis);
-    rl::DrawText(count_txt, minus_x + btn_size + 20, count_y + 5, 24, rl::GOLD);
+    rl::DrawText(count_txt, minus_x + btn_size + 30, count_y + 6, 32, rl::GOLD);
     
     // Plus button
-    let plus_x = minus_x + btn_size + 60;
+    let plus_x = minus_x + btn_size + 80;
     rl::DrawRectangle(plus_x, count_y, btn_size, btn_size, rl::Color{r: 60, g: 180, b: 60, a: 255});
-    rl::DrawText("+", plus_x + 10, count_y + 5, 24, rl::WHITE);
+    rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)plus_x, y: (float)count_y, width: (float)btn_size, height: (float)btn_size}, 2.0, rl::RAYWHITE);
+    rl::DrawText("+", plus_x + 12, count_y + 8, 28, rl::WHITE);
     if clicked && mx >= plus_x && mx <= plus_x + btn_size && my >= count_y && my <= count_y + btn_size {
         if banner.assigned_zibis < 10 && available_zibis > 0 { banner.assigned_zibis++; }
     }
     
     // --- Priority Blocks Grid (mining only) ---
     if banner.banner_type == 0 {
-    rl::DrawText("Priority Blocks:", px + 30, py + 145, 20, rl::WHITE);
-    rl::DrawText("(click to toggle)", px + 200, py + 148, 14, rl::GRAY);
+    rl::DrawText("Priority Blocks:", px + 30, py + 175, 22, rl::RAYWHITE);
+    rl::DrawText("(click to toggle)", px + 220, py + 180, 16, rl::GRAY);
     
     let grid_x = px + 30;
-    let grid_y = py + 175;
-    let cell = 50;
-    let pad = 8;
+    let grid_y = py + 210;
+    let cell = 64;
+    let pad = 12;
     
     // Mineable blocks list
     let mineable: int[8];
@@ -182,12 +192,15 @@ fn draw_banner_ui(chunks: Chunk*, num_chunks: int, total_zibis: int) {
         let col = i % 4;
         let row = i / 4;
         let cx = grid_x + col * (cell + pad);
-        let cy = grid_y + row * (cell + pad + 15);
+        let cy = grid_y + row * (cell + pad + 20);
         
         let is_selected = has_priority(banner, mineable[i]);
         
+        rl::DrawRectangle(cx, cy, cell, cell, rl::Color{r: 30, g: 35, b: 45, a: 255});
         if is_selected == 1 {
-            rl::DrawRectangle(cx - 3, cy - 3, cell + 6, cell + 6, rl::GOLD);
+            rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)cx - 2.0, y: (float)cy - 2.0, width: (float)cell + 4.0, height: (float)cell + 4.0}, 3.0, rl::GOLD);
+        } else {
+            rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)cx, y: (float)cy, width: (float)cell, height: (float)cell}, 2.0, rl::Color{r: 50, g: 50, b: 60, a: 255});
         }
         
         // Block color preview
@@ -201,12 +214,13 @@ fn draw_banner_ui(chunks: Chunk*, num_chunks: int, total_zibis: int) {
         else if mineable[i] == BLOCK_GRASS { b_col = rl::LIME; }
         else if mineable[i] == BLOCK_CRYSTAL { b_col = rl::Color{r: 180, g: 100, b: 255, a: 255}; }
         
-        rl::DrawRectangle(cx, cy, cell, cell, rl::Color{r: 50, g: 50, b: 60, a: 220});
-        rl::DrawRectangle(cx + 5, cy + 5, cell - 10, cell - 10, b_col);
-        rl::DrawRectangleLines(cx, cy, cell, cell, rl::Color{r: 100, g: 100, b: 120, a: 255});
+        rl::DrawRectangle(cx + 8, cy + 8, cell - 16, cell - 16, b_col);
+        let dark = rl::Color{r: (int)((float)b_col.r * 0.6), g: (int)((float)b_col.g * 0.6), b: (int)((float)b_col.b * 0.6), a: 255};
+        rl::DrawRectangle(cx + 8, cy + cell - 14, cell - 16, 6, dark);
         
         // Label
-        rl::DrawText((char*)block_names[i], cx + 2, cy + cell + 2, 10, rl::LIGHTGRAY);
+        let tw_b = rl::MeasureText((char*)block_names[i], 14);
+        rl::DrawText((char*)block_names[i], cx + (cell - tw_b)/2, cy + cell + 4, 14, rl::LIGHTGRAY);
         
         // Click to toggle
         if clicked && mx >= cx && mx <= cx + cell && my >= cy && my <= cy + cell {
@@ -215,31 +229,32 @@ fn draw_banner_ui(chunks: Chunk*, num_chunks: int, total_zibis: int) {
     }
     } else {
         // LUMBER BANNER: Show info text instead of priority grid
-        rl::DrawText("Zibis will chop trees", px + 30, py + 145, 20, rl::WHITE);
-        rl::DrawText("(LOG blocks) and deposit", px + 30, py + 172, 18, rl::LIGHTGRAY);
-        rl::DrawText("wood in nearby chests.", px + 30, py + 196, 18, rl::LIGHTGRAY);
+        rl::DrawText("Zibis will chop trees", px + 40, py + 185, 24, rl::RAYWHITE);
+        rl::DrawText("(LOG blocks) and deposit", px + 40, py + 220, 20, rl::LIGHTGRAY);
+        rl::DrawText("wood in nearby chests.", px + 40, py + 250, 20, rl::LIGHTGRAY);
     }
     
     // --- Status Info ---
-    let status_y = py + 340;
-    rl::DrawLine(px + 20, status_y - 10, px + panel_w - 20, status_y - 10, rl::Color{r: 100, g: 80, b: 40, a: 200});
+    let status_y = py + 390;
+    rl::DrawLine(px + 12, status_y - 15, px + panel_w - 12, status_y - 15, rl::GOLD);
     
     let world_bx = (chunks[banner_ui_chunk_idx].x * 16) + banner.x;
     let world_bz = (chunks[banner_ui_chunk_idx].z * 16) + banner.z;
     let has_chest = find_chest_near_banner(chunks, num_chunks, world_bx, banner.y, world_bz);
     if has_chest == 1 {
-        rl::DrawText("Nearby Chest: YES", px + 30, status_y, 18, rl::Color{r: 100, g: 255, b: 100, a: 255});
+        rl::DrawText("Nearby Chest: YES", px + 30, status_y, 22, rl::Color{r: 100, g: 255, b: 100, a: 255});
     } else {
-        rl::DrawText("Nearby Chest: NO (place one!)", px + 30, status_y, 18, rl::Color{r: 255, g: 100, b: 100, a: 255});
+        rl::DrawText("Nearby Chest: NO (place one!)", px + 30, status_y, 22, rl::Color{r: 255, g: 100, b: 100, a: 255});
     }
     
     // --- Close Button ---
-    let close_x = px + panel_w - 90;
-    let close_y = py + panel_h - 50;
-    let close_w = 70;
-    let close_h = 30;
+    let close_x = px + panel_w - 110;
+    let close_y = py + panel_h - 60;
+    let close_w = 90;
+    let close_h = 40;
     rl::DrawRectangle(close_x, close_y, close_w, close_h, rl::Color{r: 150, g: 60, b: 60, a: 255});
-    rl::DrawText("Close", close_x + 10, close_y + 6, 18, rl::WHITE);
+    rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)close_x, y: (float)close_y, width: (float)close_w, height: (float)close_h}, 2.0, rl::RAYWHITE);
+    rl::DrawText("Close", close_x + 18, close_y + 10, 20, rl::WHITE);
     if clicked && mx >= close_x && mx <= close_x + close_w && my >= close_y && my <= close_y + close_h {
         close_banner_ui();
     }

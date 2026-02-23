@@ -11,6 +11,12 @@ import "../render/rendering.zc";
 import "../world/persistence.zc";
 
 extern fn get_total_obelisk_count(chunks: Chunk*, num_chunks: int) -> int;
+extern fn get_snd_rayo_start() -> rl::Sound;
+extern fn get_snd_rayo_loop() -> rl::Sound;
+extern fn get_snd_rayo_end() -> rl::Sound;
+extern fn get_sfx_vol() -> float;
+
+let beam_sound_playing: int = 0;
 
 let destroy_timer: float = 0.0;
 let destroy_target_x: int = -999;
@@ -120,6 +126,18 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                     p.mana = p.mana + actual_drain;
                     if p.mana > 100.0 { p.mana = 100.0; }
                 }
+                
+                let s_vol = get_sfx_vol();
+                if beam_sound_playing == 0 {
+                    rl::SetSoundVolume(get_snd_rayo_start(), s_vol);
+                    rl::PlaySound(get_snd_rayo_start());
+                    beam_sound_playing = 1;
+                }
+                if !rl::IsSoundPlaying(get_snd_rayo_loop()) {
+                    rl::SetSoundVolume(get_snd_rayo_loop(), s_vol);
+                    rl::PlaySound(get_snd_rayo_loop());
+                }
+                
                 // --- Recharge Beam Animation ---
                 let cam_origin = p.camera.position;
                 let start_pos = cam_origin;
@@ -193,6 +211,18 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                 recharge_timer = 0.0; recharge_target_x = -999;
                 
                 if p.mana >= 1.0 {
+                    let s_vol = get_sfx_vol();
+                    if beam_sound_playing == 0 {
+                        rl::SetSoundVolume(get_snd_rayo_start(), s_vol);
+                        rl::PlaySound(get_snd_rayo_start());
+                        beam_sound_playing = 1;
+                    }
+                    // Loop is simulated by restarting it if it falls silent while active
+                    if !rl::IsSoundPlaying(get_snd_rayo_loop()) {
+                        rl::SetSoundVolume(get_snd_rayo_loop(), s_vol);
+                        rl::PlaySound(get_snd_rayo_loop());
+                    }
+                    
                     if base_x == destroy_target_x && base_y == destroy_target_y && base_z == destroy_target_z {
                         destroy_timer = destroy_timer + dt;
                         // Continuous mana drain while beam is active (3 mana/sec)
@@ -449,10 +479,20 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                     }
                 } else {
                     destroy_timer = 0.0; destroy_target_x = -999;
+                    if beam_sound_playing == 1 {
+                        rl::StopSound(get_snd_rayo_loop());
+                        rl::PlaySound(get_snd_rayo_end());
+                        beam_sound_playing = 0;
+                    }
                 }
             }
         } else {
             destroy_timer = 0.0; destroy_target_x = -999;
+            if beam_sound_playing == 1 {
+                rl::StopSound(get_snd_rayo_loop());
+                rl::PlaySound(get_snd_rayo_end());
+                beam_sound_playing = 0;
+            }
         }
         
         // --- Block Placement / Chest / Banner Interaction ---
@@ -690,5 +730,10 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
         }
     } else {
         destroy_timer = 0.0; destroy_target_x = -999;
+        if beam_sound_playing == 1 {
+            rl::StopSound(get_snd_rayo_loop());
+            rl::PlaySound(get_snd_rayo_end());
+            beam_sound_playing = 0;
+        }
     }
 }

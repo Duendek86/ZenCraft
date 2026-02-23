@@ -54,7 +54,7 @@ fn draw_obelisk_ui(chunks: Chunk*, num_chunks: int, zibis: Zibi*, num_zibis: int
             let oz = (float)(chunks[ci].z * 16) + chunks[ci].obelisks[si].z;
             
             // Center top of the obelisk
-            let ui_pos = rl::Vector3{x: ox, y: oy + 2.5, z: oz};
+            let ui_pos = rl::Vector3{x: ox, y: oy + 3.5, z: oz};
             
             // Check distance to camera
             let dx = ui_pos.x - camera.position.x;

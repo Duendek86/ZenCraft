@@ -50,6 +50,11 @@ let loc_grass_crystal_count: int;
 let loc_crystal_points: int;
 let loc_crystal_count: int;
 
+// Sound Effects
+let snd_rayo_start: rl::Sound;
+let snd_rayo_loop: rl::Sound;
+let snd_rayo_end: rl::Sound;
+
 fn load_texture_from_memory(_data: char*, _len: int) -> rl::Texture2D {
     let img = rl::LoadImageFromMemory(".png", _data, _len);
     let tex = rl::LoadTextureFromImage(img);
@@ -113,14 +118,26 @@ fn init_textures() {
     let w = img_dirt.width;
     let h = img_dirt.height;
     
-    // Create Atlas: 4 * w, 4 * h
-    let atlas = rl::GenImageColor(w * 4, h * 4, rl::BLANK);
+    // Create Atlas: 8 * w, 4 * h
+    let atlas = rl::GenImageColor(w * 8, h * 4, rl::BLANK);
     
     // Row 0 (Top half)
     rl::ImageDraw(&atlas, img_dirt, rl::Rectangle{x: 0.0, y: 0.0, width: (float)w, height: (float)h}, rl::Rectangle{x: 0.0, y: 0.0, width: (float)w, height: (float)h}, rl::WHITE);
     rl::ImageDraw(&atlas, img_grass_t, rl::Rectangle{x: 0.0, y: 0.0, width: (float)w, height: (float)h}, rl::Rectangle{x: (float)w, y: 0.0, width: (float)w, height: (float)h}, rl::WHITE);
     rl::ImageDraw(&atlas, img_log, rl::Rectangle{x: 0.0, y: 0.0, width: (float)w, height: (float)h}, rl::Rectangle{x: (float)(w*2), y: 0.0, width: (float)w, height: (float)h}, rl::WHITE);
     rl::ImageDraw(&atlas, img_log, rl::Rectangle{x: 0.0, y: 0.0, width: (float)w, height: (float)h}, rl::Rectangle{x: (float)(w*3), y: 0.0, width: (float)w, height: (float)h}, rl::WHITE);
+
+    // Gold Ore (Procedural) - Slot (4, 0)
+    let go_x = w * 4;
+    let go_y = 0;
+    // Base stone
+    rl::ImageDraw(&atlas, img_stone, rl::Rectangle{x: 0.0, y: 0.0, width: (float)w, height: (float)h}, rl::Rectangle{x: (float)go_x, y: (float)go_y, width: (float)w, height: (float)h}, rl::WHITE);
+    for i in 0..15 {
+        let rx = rl::GetRandomValue(1, w - 2);
+        let ry = rl::GetRandomValue(1, h - 2);
+        rl::ImageDrawPixel(&atlas, go_x+rx, go_y+ry, rl::Color{r: 255, g: 215, b: 0, a: 255});
+        rl::ImageDrawPixel(&atlas, go_x+rx+1, go_y+ry, rl::Color{r: 218, g: 165, b: 32, a: 255});
+    }
     
     // Row 1 (Bottom half)
     rl::ImageDraw(&atlas, img_grass_s, rl::Rectangle{x: 0.0, y: 0.0, width: (float)w, height: (float)h}, rl::Rectangle{x: 0.0, y: (float)h, width: (float)w, height: (float)h}, rl::WHITE);
@@ -257,6 +274,20 @@ fn init_textures() {
         rl::ImageDrawPixel(&atlas, cax+rx, cay+ry, rl::Color{r: 200, g: 220, b: 180, a: 255});
     }
 
+    // Cage (Procedural) - Slot (4, 3)
+    let cg_x = w * 4;
+    let cg_y = h * 3;
+    rl::ImageDrawRectangle(&atlas, cg_x, cg_y, w, h, rl::Color{r: 0, g: 0, b: 0, a: 0}); // Transparent inside
+    rl::ImageDrawRectangle(&atlas, cg_x, cg_y, w, 2, rl::Color{r: 60, g: 60, b: 60, a: 255});
+    rl::ImageDrawRectangle(&atlas, cg_x, cg_y+h-2, w, 2, rl::Color{r: 60, g: 60, b: 60, a: 255});
+    rl::ImageDrawRectangle(&atlas, cg_x, cg_y, 2, h, rl::Color{r: 60, g: 60, b: 60, a: 255});
+    rl::ImageDrawRectangle(&atlas, cg_x+w-2, cg_y, 2, h, rl::Color{r: 60, g: 60, b: 60, a: 255});
+    for i in 1..4 {
+        let bx = i * (w / 4);
+        rl::ImageDrawRectangle(&atlas, cg_x+bx, cg_y, 2, h, rl::Color{r: 100, g: 100, b: 100, a: 255});
+    }
+
+
     tex_atlas = rl::LoadTextureFromImage(atlas);
     rl::SetTextureFilter(tex_atlas, rl::TEXTURE_FILTER_POINT);
     
@@ -277,6 +308,11 @@ fn init_textures() {
     sh_grass = load_shader_from_memory(vs_grass_data.data, vs_grass_data.len, fs_grass_data.data, fs_grass_data.len);
     sh_beam = load_shader_from_memory(vs_beam_data.data, vs_beam_data.len, fs_beam_data.data, fs_beam_data.len);
     sh_crystal = load_shader_from_memory(vs_data.data, vs_data.len, fs_crystal_data.data, fs_crystal_data.len);
+
+    // Initialize ray sounds
+    snd_rayo_start = rl::LoadSound("assets/soundEffects/rayo1.wav");
+    snd_rayo_loop = rl::LoadSound("assets/soundEffects/rayo2.wav");
+    snd_rayo_end = rl::LoadSound("assets/soundEffects/rayo3.wav");
 
     // Get Uniform Locations
     loc_light_dir = rl::GetShaderLocation(sh_lighting, "uLightDir");
@@ -359,3 +395,15 @@ fn get_loc_grass_crystal_count() -> int { return loc_grass_crystal_count; }
 fn get_model_skull() -> rl::Model { return model_skull; }
 fn get_model_obelisco_base() -> rl::Model { return model_obelisco_base; }
 fn get_model_obelisco_cristal() -> rl::Model { return model_obelisco_cristal; }
+
+fn get_snd_rayo_start() -> rl::Sound { return snd_rayo_start; }
+fn get_snd_rayo_loop() -> rl::Sound { return snd_rayo_loop; }
+fn get_snd_rayo_end() -> rl::Sound { return snd_rayo_end; }
+
+let sys_master_vol: float = 1.0;
+let sys_sfx_vol: float = 1.0;
+
+fn get_master_vol() -> float { return sys_master_vol; }
+fn set_master_vol(v: float) { sys_master_vol = v; rl::SetMasterVolume(v); }
+fn get_sfx_vol() -> float { return sys_sfx_vol; }
+fn set_sfx_vol(v: float) { sys_sfx_vol = v; }

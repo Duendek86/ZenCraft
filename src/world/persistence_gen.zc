@@ -298,6 +298,8 @@ fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
                     }
                 } else if cy > 10 && cy < h - 4 && is_cave(wx, cy, wz, world_seed) == 1 {
                     data.blocks[cx][cy][cz] = BLOCK_AIR;
+                } else if cy > 1 && cy <= 10 && is_cave(wx, cy, wz, world_seed) == 1 { // Deep caves
+                    data.blocks[cx][cy][cz] = BLOCK_AIR;
                 } else if cy == h {
                     if h < SEA_LEVEL {
                         // Underwater floor
@@ -324,7 +326,15 @@ fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
                         data.blocks[cx][cy][cz] = BLOCK_DIRT;
                     }
                 } else {
-                    data.blocks[cx][cy][cz] = BLOCK_STONE;
+                    let b = BLOCK_STONE;
+                    if cy > 20 && cy <= 30 {
+                        let dirt_noise = noise3d((float)wx * 0.1f, (float)cy * 0.1f, (float)wz * 0.1f, world_seed + 7000);
+                        if dirt_noise > 0.7f { b = BLOCK_DIRT; }
+                    } else if cy > 10 && cy <= 20 {
+                        let cobble_noise = noise3d((float)wx * 0.1f, (float)cy * 0.1f, (float)wz * 0.1f, world_seed + 8000);
+                        if cobble_noise > 0.65f { b = BLOCK_COBBLESTONE; }
+                    }
+                    data.blocks[cx][cy][cz] = b;
                 }
                 
                 data.light[cx][cy][cz] = l;
@@ -336,14 +346,73 @@ fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
     let ore_seed = x * 73856093 ^ z * 19349663;
     for cx in 0..16 {
         for cz in 0..16 {
-            for cy in 3..30 {
-                if data.blocks[cx][cy][cz] == BLOCK_STONE {
-                    let r = my_rand(&ore_seed) % 200; // 0.5% chance
+            for cy in 1..30 {
+                if data.blocks[cx][cy][cz] == BLOCK_STONE || data.blocks[cx][cy][cz] == BLOCK_COBBLESTONE {
+                    let chance = 200; // 0.5%
+                    if cy <= 10 {
+                        chance = 60; // ~1.6%
+                    } else if cy <= 20 {
+                        chance = 120; // ~0.8%
+                    }
+                    
+                    let r = my_rand(&ore_seed) % chance;
                     if r == 0 {
                         data.blocks[cx][cy][cz] = BLOCK_GOLD_ORE;
                     }
                 }
             }
+        }
+    }
+    
+    // --- DEEP UNDERGROUND ENTITIES (Crystals & Cages) ---
+    for cx in 0..16 {
+        for cz in 0..16 {
+             for cy in 1..10 {
+                 if data.blocks[cx][cy][cz] == BLOCK_AIR && data.blocks[cx][cy-1][cz] != BLOCK_AIR {
+                      let r = my_rand(&ore_seed) % 1000;
+                      if r < 5 { // 0.5% chance per floor block
+                           data.blocks[cx][cy][cz] = BLOCK_CRYSTAL;
+                      } else if r < 8 { // 0.3% chance per floor block
+                           data.blocks[cx][cy][cz] = BLOCK_CAGE;
+                      }
+                 }
+             }
+        }
+    }
+    
+    // --- ABANDONED MINES (Mid underground) ---
+    for cx in 2..14 {
+        for cz in 2..14 {
+             for cy in 11..20 {
+                  // Find cave walls
+                  if data.blocks[cx][cy][cz] == BLOCK_AIR && data.blocks[cx][cy-1][cz] != BLOCK_AIR {
+                       let r = my_rand(&ore_seed) % 2000;
+                       if r < 5 { // 0.25% chance to spawn a small shelter
+                            // Generate a 3x3x3 shelter
+                            for sx in -1..2 {
+                                 for sz in -1..2 {
+                                      for sy in 0..3 {
+                                           let tx = cx + sx; let ty = cy + sy; let tz = cz + sz;
+                                           if tx >= 0 && tx < 16 && tz >= 0 && tz < 16 && ty < CHUNK_HEIGHT {
+                                                if sy == 0 {
+                                                     data.blocks[tx][ty-1][tz] = BLOCK_COBBLESTONE; // Floor
+                                                }
+                                                if sy == 2 || sx == -1 || sx == 1 || sz == -1 || sz == 1 {
+                                                     if sy == 1 && (sx == 0 || sz == 0) && (my_rand(&ore_seed) % 2 == 0) {
+                                                          data.blocks[tx][ty][tz] = BLOCK_GLASS_PANE; // Window
+                                                     } else if data.blocks[tx][ty][tz] == BLOCK_AIR {
+                                                          data.blocks[tx][ty][tz] = BLOCK_PLANKS; // Walls & Roof
+                                                     }
+                                                } else {
+                                                     data.blocks[tx][ty][tz] = BLOCK_AIR; // Inside
+                                                }
+                                           }
+                                      }
+                                 }
+                            }
+                       }
+                  }
+             }
         }
     }
     

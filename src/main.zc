@@ -152,6 +152,8 @@ fn main() {
         if current_state == STATE_GAME {
             let is_night = (day_time > 0.5);
             if is_night { target_music = 3; } else { target_music = 2; }
+        } else if current_state == STATE_LOADING {
+            target_music = 0; // Completely silence music during heavy generation
         }
         
         if fade_target_music != target_music {
@@ -250,6 +252,15 @@ fn main() {
                 // User picked a world, commence loading!
                 current_state = STATE_LOADING;
                 for i in 0..MAX_CHUNKS { chunks[i].x = -9999; chunks[i].z = -9999; chunks[i].mesh_built = 0; }
+                
+                // Force stop all music immediately to avoid audio stutter running during heavy blocking load
+                rl::StopMusicStream(menu_music);
+                rl::StopMusicStream(day_music);
+                rl::StopMusicStream(night_music);
+                current_music_playing = 0;
+                fade_target_music = 0;
+                fade_state = 0;
+                fade_vol = 0.0;
                 
                 // Set directory and seed (if new world)
                 set_game_world_dir(selected_world);
@@ -890,7 +901,7 @@ fn main() {
             
             let total_obelisks = get_total_obelisk_count(chunks, MAX_CHUNKS);
             if show_settings == 0 && show_exit_confirm == 0 {
-                 draw_hud(&p, &spellbook, VERSION_TEXT, total_obelisks);
+                 draw_hud(&p, &spellbook, VERSION_TEXT, total_obelisks, day_time);
             }
             
             if show_debug_info { draw_debug_info(&p, chunks, dt, day_time, draw_distance, worker_count, active_wolves); }

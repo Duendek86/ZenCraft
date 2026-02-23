@@ -14,6 +14,7 @@ struct SpellbookState {
 }
 
 extern fn get_total_obelisk_count(chunks: Chunk*, num_chunks: int) -> int;
+extern fn get_tex_atlas() -> rl::Texture2D;
 
 // Function to draw the spellbook UI
 // Returns 1 if a selection changed, 0 otherwise
@@ -23,128 +24,143 @@ fn draw_spellbook(state: SpellbookState*, selected_block: int*, chunks: Chunk*, 
     let cx = screen_w / 2;
     let cy = screen_h / 2;
     
-    // Book Dimensions
-    let book_w = 800;
-    let book_h = 500;
-    let book_x = cx - book_w / 2;
-    let book_y = cy - book_h / 2;
+    // Window Dimensions
+    let win_w = 1400;
+    let win_h = 900;
+    let win_x = cx - win_w / 2;
+    let win_y = cy - win_h / 2;
     
-    // Draw Book Background (Brown Cover, Cream Pages)
-    rl::DrawRectangle(book_x - 10, book_y - 10, book_w + 20, book_h + 20, rl::Color{r: 60, g: 40, b: 20, a: 255}); // Cover
-    rl::DrawRectangle(book_x, book_y, book_w / 2 - 5, book_h, rl::Color{r: 240, g: 230, b: 200, a: 255}); // Left Page
-    rl::DrawRectangle(book_x + book_w / 2 + 5, book_y, book_w / 2 - 5, book_h, rl::Color{r: 240, g: 230, b: 200, a: 255}); // Right Page
-    rl::DrawRectangle(book_x + book_w / 2 - 5, book_y, 10, book_h, rl::Color{r: 50, g: 30, b: 10, a: 255}); // Spine
+    let border_col = rl::Color{r: 25, g: 30, b: 45, a: 240};
     
-    // --- LEFT PAGE: SPELLS ---
-    rl::DrawText("SPELLS", book_x + 80, book_y + 30, 20, rl::BLACK);
+    // Draw Window Panel
+    rl::DrawRectangle(win_x, win_y, win_w, win_h, border_col);
+    rl::DrawRectangle(win_x + 12, win_y + 12, win_w - 24, win_h - 24, rl::Color{r: 15, g: 15, b: 20, a: 255});
+    rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)win_x, y: (float)win_y, width: (float)win_w, height: (float)win_h}, 4.0, rl::GOLD);
+    
+    // Header
+    rl::DrawRectangle(win_x + 12, win_y + 12, win_w - 24, 70, border_col);
+    rl::DrawLine(win_x + 12, win_y + 82, win_x + win_w - 12, win_y + 82, rl::GOLD);
+    rl::DrawText("SPELLBOOK", win_x + win_w/2 - rl::MeasureText("SPELLBOOK", 40)/2, win_y + 28, 40, rl::RAYWHITE);
+    
+    // Internal layout
+    let left_x = win_x + 50;
+    let right_x = win_x + win_w / 2 + 30;
+    let list_w = win_w / 2 - 80;
     
     let mx = rl::GetMouseX();
     let my = rl::GetMouseY();
     let clicked = rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_LEFT);
     
-    // Spell 1: Place Block
-    let s1_x = book_x + 30;
-    let s1_y = book_y + 70;
-    let s1_w = 240;
-    let s1_h = 40;
+    let s1_x = left_x;
+    let s1_y = win_y + 110;
+    let s1_h = 80;
     
+    rl::DrawRectangle(s1_x, s1_y, list_w, s1_h, rl::Color{r: 30, g: 35, b: 45, a: 255});
+    rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)s1_x, y: (float)s1_y, width: (float)list_w, height: (float)s1_h}, 3.0, rl::Color{r: 50, g: 50, b: 60, a: 255});
     if (state.selected_spell == 0) {
-        rl::DrawRectangle(s1_x, s1_y, s1_w, s1_h, rl::Color{r: 200, g: 200, b: 255, a: 255}); // Highlight
+        rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)s1_x, y: (float)s1_y, width: (float)list_w, height: (float)s1_h}, 3.0, rl::GOLD);
     }
-    rl::DrawRectangleLines(s1_x, s1_y, s1_w, s1_h, rl::BLACK);
-    rl::DrawText("Place Block", s1_x + 10, s1_y + 10, 20, rl::BLACK);
+    rl::DrawText("Place Block", s1_x + 70, s1_y + 22, 36, rl::RAYWHITE);
+    // Draw small cube icon here
+    rl::DrawRectangle(s1_x + 20, s1_y + 20, 36, 36, rl::Color{r: 150, g: 150, b: 150, a: 255});
     
-    if (clicked && mx >= s1_x && mx <= s1_x + s1_w && my >= s1_y && my <= s1_y + s1_h) {
+    if (clicked && mx >= s1_x && mx <= s1_x + list_w && my >= s1_y && my <= s1_y + s1_h) {
         state.selected_spell = 0;
     }
     
     // Spell 2: Fireball
-    let s2_x = book_x + 30;
-    let s2_y = book_y + 120;
-    let s2_w = 240;
-    let s2_h = 40;
+    let s2_x = left_x;
+    let s2_y = s1_y + s1_h + 25;
+    let s2_h = 80;
     
+    rl::DrawRectangle(s2_x, s2_y, list_w, s2_h, rl::Color{r: 30, g: 35, b: 45, a: 255});
+    rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)s2_x, y: (float)s2_y, width: (float)list_w, height: (float)s2_h}, 3.0, rl::Color{r: 50, g: 50, b: 60, a: 255});
     if (state.selected_spell == 1) {
-        rl::DrawRectangle(s2_x, s2_y, s2_w, s2_h, rl::Color{r: 255, g: 180, b: 100, a: 255}); // Fire highlight
+        rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)s2_x, y: (float)s2_y, width: (float)list_w, height: (float)s2_h}, 3.0, rl::GOLD);
     }
-    rl::DrawRectangleLines(s2_x, s2_y, s2_w, s2_h, rl::BLACK);
-    rl::DrawRectangle(s2_x + 5, s2_y + 8, 24, 24, rl::Color{r: 255, g: 100, b: 0, a: 255}); // Fire icon
-    rl::DrawRectangle(s2_x + 11, s2_y + 14, 12, 12, rl::Color{r: 255, g: 200, b: 50, a: 255}); // Inner flame
-    rl::DrawText("Fireball", s2_x + 35, s2_y + 5, 20, rl::Color{r: 180, g: 50, b: 0, a: 255});
-    rl::DrawText("20 Mana", s2_x + 35, s2_y + 24, 12, rl::DARKGRAY);
     
-    if (clicked && mx >= s2_x && mx <= s2_x + s2_w && my >= s2_y && my <= s2_y + s2_h) {
+    rl::DrawText("Fireball", s2_x + 70, s2_y + 12, 36, rl::Color{r: 255, g: 150, b: 80, a: 255});
+    rl::DrawText("20 Mana", s2_x + 70, s2_y + 50, 20, rl::GRAY);
+    // Draw icon
+    rl::DrawRectangle(s2_x + 20, s2_y + 20, 36, 36, rl::Color{r: 255, g: 100, b: 0, a: 255}); // Fire icon
+    
+    if (clicked && mx >= s2_x && mx <= s2_x + list_w && my >= s2_y && my <= s2_y + s2_h) {
         state.selected_spell = 1;
     }
     
-    // --- Zibi Control Category ---
-    rl::DrawText("ZIBI CONTROL", book_x + 60, book_y + 180, 18, rl::Color{r: 50, g: 100, b: 50, a: 255});
-    rl::DrawLine(book_x + 30, book_y + 200, book_x + 270, book_y + 200, rl::Color{r: 50, g: 100, b: 50, a: 150});
+    // --- LEFT PAGE (CONTINUED): ZIBI CONTROL ---
+    let header_y = s2_y + s2_h + 30;
+    rl::DrawText("ZIBI CONTROL", left_x + 20, header_y, 30, rl::Color{r: 100, g: 200, b: 100, a: 255});
+    rl::DrawLine(left_x, header_y + 40, left_x + list_w, header_y + 40, rl::Color{r: 80, g: 80, b: 80, a: 150});
     
     // Spell 3: Miner
-    let s3_x = book_x + 30;
-    let s3_y = book_y + 215;
-    let s3_w = 240;
-    let s3_h = 40;
+    let s3_x = left_x;
+    let s3_y = header_y + 60;
+    let s3_h = 80;
     
+    rl::DrawRectangle(s3_x, s3_y, list_w, s3_h, rl::Color{r: 30, g: 35, b: 45, a: 255});
+    rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)s3_x, y: (float)s3_y, width: (float)list_w, height: (float)s3_h}, 3.0, rl::Color{r: 50, g: 50, b: 60, a: 255});
     if (state.selected_spell == 2) {
-        rl::DrawRectangle(s3_x, s3_y, s3_w, s3_h, rl::Color{r: 180, g: 230, b: 180, a: 255}); // Green highlight
+        rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)s3_x, y: (float)s3_y, width: (float)list_w, height: (float)s3_h}, 3.0, rl::GOLD);
     }
-    rl::DrawRectangleLines(s3_x, s3_y, s3_w, s3_h, rl::BLACK);
-    // Pickaxe icon
-    rl::DrawRectangle(s3_x + 8, s3_y + 8, 4, 20, rl::Color{r: 139, g: 90, b: 43, a: 255}); // Handle
-    rl::DrawRectangle(s3_x + 3, s3_y + 6, 14, 4, rl::Color{r: 160, g: 170, b: 180, a: 255}); // Head
-    rl::DrawText("Miner Banner", s3_x + 35, s3_y + 5, 20, rl::Color{r: 40, g: 100, b: 40, a: 255});
-    rl::DrawText("15 Mana", s3_x + 35, s3_y + 24, 12, rl::DARKGRAY);
     
-    if (clicked && mx >= s3_x && mx <= s3_x + s3_w && my >= s3_y && my <= s3_y + s3_h) {
+    rl::DrawText("Miner Banner", s3_x + 70, s3_y + 12, 36, rl::Color{r: 80, g: 200, b: 80, a: 255});
+    rl::DrawText("15 Mana", s3_x + 70, s3_y + 50, 20, rl::GRAY);
+    // Draw Pickaxe icon base
+    rl::DrawRectangle(s3_x + 20, s3_y + 20, 36, 36, rl::BROWN);
+    
+    if (clicked && mx >= s3_x && mx <= s3_x + list_w && my >= s3_y && my <= s3_y + s3_h) {
         state.selected_spell = 2;
     }
     
-    rl::DrawLine(book_x + 30, s3_y + s3_h + 5, book_x + 270, s3_y + s3_h + 5, rl::Color{r: 50, g: 100, b: 50, a: 150});
-    
     // Spell 4: Lumberjack
-    let s4_x = book_x + 30;
-    let s4_y = s3_y + s3_h + 10;
-    let s4_w = 240;
-    let s4_h = 40;
+    let s4_x = left_x;
+    let s4_y = s3_y + s3_h + 25;
+    let s4_h = 80;
     
+    rl::DrawRectangle(s4_x, s4_y, list_w, s4_h, rl::Color{r: 30, g: 35, b: 45, a: 255});
+    rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)s4_x, y: (float)s4_y, width: (float)list_w, height: (float)s4_h}, 3.0, rl::Color{r: 50, g: 50, b: 60, a: 255});
     if (state.selected_spell == 3) {
-        rl::DrawRectangle(s4_x, s4_y, s4_w, s4_h, rl::Color{r: 180, g: 230, b: 180, a: 255});
+        rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)s4_x, y: (float)s4_y, width: (float)list_w, height: (float)s4_h}, 3.0, rl::GOLD);
     }
-    rl::DrawRectangleLines(s4_x, s4_y, s4_w, s4_h, rl::BLACK);
-    // Axe icon
-    rl::DrawRectangle(s4_x + 8, s4_y + 8, 4, 20, rl::Color{r: 101, g: 67, b: 33, a: 255}); // Handle
-    rl::DrawRectangle(s4_x + 3, s4_y + 6, 10, 8, rl::Color{r: 120, g: 120, b: 130, a: 255}); // Blade
-    rl::DrawText("Lumber Banner", s4_x + 35, s4_y + 5, 20, rl::Color{r: 40, g: 100, b: 40, a: 255});
-    rl::DrawText("15 Mana", s4_x + 35, s4_y + 24, 12, rl::DARKGRAY);
     
-    if (clicked && mx >= s4_x && mx <= s4_x + s4_w && my >= s4_y && my <= s4_y + s4_h) {
+    rl::DrawText("Lumber Banner", s4_x + 70, s4_y + 12, 36, rl::Color{r: 80, g: 200, b: 80, a: 255});
+    rl::DrawText("15 Mana", s4_x + 70, s4_y + 50, 20, rl::GRAY);
+    // Draw Axe icon base
+    rl::DrawRectangle(s4_x + 20, s4_y + 20, 36, 36, rl::BROWN);
+    
+    if (clicked && mx >= s4_x && mx <= s4_x + list_w && my >= s4_y && my <= s4_y + s4_h) {
         state.selected_spell = 3;
     }
     
-    // --- HOTBAR ASSIGNMENT ---
-    rl::DrawLine(book_x + 30, s4_y + s4_h + 10, book_x + 270, s4_y + s4_h + 10, rl::Color{r: 80, g: 80, b: 80, a: 150});
-    rl::DrawText("HOTBAR SLOTS", book_x + 60, s4_y + s4_h + 15, 16, rl::Color{r: 180, g: 180, b: 180, a: 255});
+    // --- HOTBAR ASSIGNMENT (centered at bottom) ---
+    rl::DrawLine(win_x + 40, win_y + win_h - 200, win_x + win_w - 40, win_y + win_h - 200, rl::Color{r: 80, g: 80, b: 80, a: 150});
+    rl::DrawText("ASSIGN TO HOTBAR", cx - rl::MeasureText("ASSIGN TO HOTBAR", 30)/2, win_y + win_h - 180, 30, rl::Color{r: 180, g: 180, b: 180, a: 255});
     
-    let hb_y = s4_y + s4_h + 35;
-    let hb_btn = 30;
-    let hb_pad = 5;
+    let hb_y = win_y + win_h - 130;
+    let hb_btn = 80;
+    let hb_pad = 16;
+    let hb_total_w = 7 * hb_btn + 6 * hb_pad;
+    let hb_start_x = cx - hb_total_w / 2;
+    
     for slot in 0..7 {
-        let bx = book_x + 30 + slot * (hb_btn + hb_pad);
+        let bx = hb_start_x + slot * (hb_btn + hb_pad);
         let by = hb_y;
         
-        // Background - highlight if this slot has the currently selected spell
         let is_active = state.hotbar[slot] == state.selected_spell;
-        if is_active {
-            rl::DrawRectangle(bx, by, hb_btn, hb_btn, rl::GOLD);
-        } else {
-            rl::DrawRectangle(bx, by, hb_btn, hb_btn, rl::Color{r: 60, g: 60, b: 70, a: 220});
-        }
-        rl::DrawRectangleLines(bx, by, hb_btn, hb_btn, rl::Color{r: 120, g: 120, b: 130, a: 255});
+        let slot_col = rl::Color{r: 25, g: 25, b: 35, a: 255};
         
-        // Slot number
-        rl::DrawText(rl::TextFormat("%d", slot + 1), bx + 10, by + 7, 16, rl::WHITE);
+        rl::DrawRectangle(bx, by, hb_btn, hb_btn, slot_col);
+        if is_active {
+            rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)bx, y: (float)by, width: (float)hb_btn, height: (float)hb_btn}, 2.0, rl::GOLD);
+        } else {
+            rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)bx, y: (float)by, width: (float)hb_btn, height: (float)hb_btn}, 2.0, rl::Color{r: 60, g: 60, b: 70, a: 255});
+        }
+        
+        // Slot number indicator inside diamond
+        rl::DrawRectangle(bx - 8, by - 8, 28, 28, rl::Color{r: 20, g: 25, b: 35, a: 255});
+        rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)bx - 8, y: (float)by - 8, width: 28.0, height: 28.0}, 2.0, rl::Color{r: 120, g: 120, b: 130, a: 255});
+        rl::DrawText(rl::TextFormat("%d", slot + 1), bx + 2, by, 20, rl::WHITE);
         
         // Click to assign current selected_spell to this slot
         if clicked && mx >= bx && mx <= bx + hb_btn && my >= by && my <= by + hb_btn {
@@ -155,103 +171,117 @@ fn draw_spellbook(state: SpellbookState*, selected_block: int*, chunks: Chunk*, 
     // Show what each slot currently has
     let hb_label_y = hb_y + hb_btn + 3;
     for slot in 0..7 {
-        let bx = book_x + 30 + slot * (hb_btn + hb_pad);
+        let bx = hb_start_x + slot * (hb_btn + hb_pad);
         let spell_id = state.hotbar[slot];
         let label = "-";
         if spell_id == 0 { label = "B"; }      // Block
         else if spell_id == 1 { label = "F"; }  // Fireball
         else if spell_id == 2 { label = "M"; }  // Miner
         else if spell_id == 3 { label = "L"; }  // Lumber
-        rl::DrawText(label, bx + 10, hb_label_y, 12, rl::LIGHTGRAY);
+        rl::DrawText(label, bx + 32, hb_label_y, 20, rl::LIGHTGRAY);
     }
     
     // --- RIGHT PAGE: INVENTORY ---
     // Tabs
-    let tab_x = book_x + book_w/2 + 20;
-    let tab_y = book_y + 20;
-    let tab_w = 100;
-    let tab_h = 25;
+    let tab_x = right_x;
+    let tab_y = win_y + 40;
+    let tab_w = 220;
+    let tab_h = 50;
     
     // Tab 1: Blocks
-    if (state.current_tab == 0) rl::DrawRectangle(tab_x, tab_y, tab_w, tab_h, rl::GOLD);
-    else rl::DrawRectangle(tab_x, tab_y, tab_w, tab_h, rl::GRAY);
-    rl::DrawText("Blocks", tab_x + 20, tab_y + 5, 20, rl::BLACK);
+    rl::DrawRectangle(tab_x, tab_y, tab_w, tab_h, rl::Color{r: 30, g: 35, b: 45, a: 255});
+    if (state.current_tab == 0) {
+        rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)tab_x, y: (float)tab_y, width: (float)tab_w, height: (float)tab_h}, 3.0, rl::GOLD);
+    } else {
+        rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)tab_x, y: (float)tab_y, width: (float)tab_w, height: (float)tab_h}, 2.0, rl::Color{r: 50, g: 50, b: 60, a: 255});
+    }
+    rl::DrawText("Blocks", tab_x + 60, tab_y + 12, 30, rl::RAYWHITE);
     if (clicked && mx >= tab_x && mx <= tab_x + tab_w && my >= tab_y && my <= tab_y + tab_h) { state.current_tab = 0; }
     
     // Tab 2: Structures
-    if (state.current_tab == 1) rl::DrawRectangle(tab_x + 110, tab_y, tab_w, tab_h, rl::GOLD);
-    else rl::DrawRectangle(tab_x + 110, tab_y, tab_w, tab_h, rl::GRAY);
-    rl::DrawText("Structures", tab_x + 115, tab_y + 5, 20, rl::BLACK);
-    if (clicked && mx >= tab_x + 110 && mx <= tab_x + 110 + tab_w && my >= tab_y && my <= tab_y + tab_h) { state.current_tab = 1; }
+    let tab2_x = tab_x + tab_w + 15;
+    rl::DrawRectangle(tab2_x, tab_y, tab_w, tab_h, rl::Color{r: 30, g: 35, b: 45, a: 255});
+    if (state.current_tab == 1) {
+        rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)tab2_x, y: (float)tab_y, width: (float)tab_w, height: (float)tab_h}, 3.0, rl::GOLD);
+    } else {
+        rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)tab2_x, y: (float)tab_y, width: (float)tab_w, height: (float)tab_h}, 2.0, rl::Color{r: 50, g: 50, b: 60, a: 255});
+    }
+    rl::DrawText("Structures", tab2_x + 35, tab_y + 12, 30, rl::RAYWHITE);
+    if (clicked && mx >= tab2_x && mx <= tab2_x + tab_w && my >= tab_y && my <= tab_y + tab_h) { state.current_tab = 1; }
 
     
     // Grid Setup
-    let grid_start_x = book_x + book_w/2 + 30;
-    let grid_start_y = book_y + 70;
-    let cell_size = 50;
-    let padding = 10;
+    let grid_start_x = right_x;
+    let grid_start_y = win_y + 120;
+    let cell_size = 110;
+    let padding = 20;
     
     if (state.current_tab == 0) {
         // --- BLOCKS TAB ---
-    
-    let col = 0;
-    let row = 0;
-    
-    for b in 1..15 { // Blocks 1 to 14
-        let display_block = b;
-        if (b >= 11 && b <= 14) continue; // Skip wall torches
+        let col = 0;
+        let row = 0;
         
-        let cell_x = grid_start_x + col * (cell_size + padding);
-        let cell_y = grid_start_y + row * (cell_size + padding);
+        let atlas = get_tex_atlas();
         
-        // Highlight if selected
-        if (*selected_block == display_block) {
-            rl::DrawRectangle(cell_x - 3, cell_y - 3, cell_size + 6, cell_size + 6, rl::GOLD);
-        }
-        
-        rl::DrawRectangleLines(cell_x, cell_y, cell_size, cell_size, rl::BLACK);
-        
-        // Draw Block Preview
-        let b_col: rl::Color = rl::WHITE; // Explicit type check
-        if (display_block == 1) b_col = rl::BROWN;
-        else if (display_block == 2) b_col = rl::LIME;
-        else if (display_block == 3) b_col = rl::GRAY;
-        else if (display_block == 4) b_col = rl::Color{r: 101, g: 67, b: 33, a: 255}; // Wood
-        else if (display_block == 5) b_col = rl::DARKGREEN;
-        else if (display_block == 8) b_col = rl::BEIGE; // Sand
-        else if (display_block == 9) b_col = rl::SKYBLUE; // Glass
-        else if (display_block == 10) b_col = rl::YELLOW; // Torch
-        else b_col = rl::MAGENTA; 
-        
-        let has_block = scepter_has_block(display_block);
-        if (has_block == 0) {
-            b_col.r = (char)((int)b_col.r / 4);
-            b_col.g = (char)((int)b_col.g / 4);
-            b_col.b = (char)((int)b_col.b / 4);
-            b_col.a = 200;
-        }
-        
-        rl::DrawRectangle(cell_x + 5, cell_y + 5, cell_size - 10, cell_size - 10, b_col);
-        
-        // Draw cross if not owned
-        if (has_block == 0) {
-            rl::DrawLine(cell_x + 5, cell_y + 5, cell_x + cell_size - 5, cell_y + cell_size - 5, rl::Color{r: 100, g: 0, b: 0, a: 150});
-            rl::DrawLine(cell_x + cell_size - 5, cell_y + 5, cell_x + 5, cell_y + cell_size - 5, rl::Color{r: 100, g: 0, b: 0, a: 150});
-        }
-        
-        // Selection Logic
-        if (has_block == 1) {
-            if (clicked && mx >= cell_x && mx <= cell_x + cell_size && my >= cell_y && my <= cell_y + cell_size) {
-                *selected_block = display_block;
+        for b in 1..15 { // Blocks 1 to 14
+            let display_block = b;
+            if (b >= 11 && b <= 14) continue; // Skip wall torches
+            
+            let cell_x = grid_start_x + col * (cell_size + padding);
+            let cell_y = grid_start_y + row * (cell_size + padding);
+            
+            // Highlight if selected
+            rl::DrawRectangle(cell_x, cell_y, cell_size, cell_size, rl::Color{r: 30, g: 35, b: 45, a: 255});
+            if (*selected_block == display_block) {
+                rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)cell_x - 2.0, y: (float)cell_y - 2.0, width: (float)cell_size + 4.0, height: (float)cell_size + 4.0}, 4.0, rl::GOLD);
+            } else {
+                rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)cell_x, y: (float)cell_y, width: (float)cell_size, height: (float)cell_size}, 2.0, rl::Color{r: 80, g: 80, b: 90, a: 255});
+            }
+            
+            // Calculate UVs from block ID (similar to chunk_mesh logic)
+            let base_u = 0;
+            let base_v = 0;
+            if display_block == 1 { base_u = 0; base_v = 0; } // Dirt
+            else if display_block == 2 { base_u = 1; base_v = 0; } // Grass side
+            else if display_block == 3 { base_u = 3; base_v = 2; } // Stone (cobblestone)
+            else if display_block == 4 { base_u = 2; base_v = 2; } // Wood
+            else if display_block == 5 { base_u = 3; base_v = 0; } // Leaves
+            else if display_block == 6 { base_u = 2; base_v = 0; } // Trunk side
+            else if display_block == 7 { base_u = 0; base_v = 1; } // Bedrock
+            else if display_block == 8 { base_u = 0; base_v = 2; } // Sand
+            else if display_block == 9 { base_u = 1; base_v = 2; } // Glass
+            else if display_block == 10 { base_u = 0; base_v = 4; } // Torch
+            
+            let source_rec = rl::Rectangle{x: (float)(base_u * 16), y: (float)(base_v * 16), width: 16.0, height: 16.0};
+            let dest_rec = rl::Rectangle{x: (float)(cell_x + 15), y: (float)(cell_y + 15), width: (float)(cell_size - 30), height: (float)(cell_size - 30)};
+            
+            let has_block = scepter_has_block(display_block);
+            let tint = rl::WHITE;
+            if (has_block == 0) {
+                tint = rl::Color{r: 100, g: 100, b: 100, a: 150};
+            }
+            
+            rl::DrawTexturePro(atlas, source_rec, dest_rec, rl::Vector2{x: 0.0, y: 0.0}, 0.0, tint);
+            
+            // Draw cross if not owned
+            if (has_block == 0) {
+                rl::DrawLine(cell_x + 5, cell_y + 5, cell_x + cell_size - 5, cell_y + cell_size - 5, rl::Color{r: 100, g: 0, b: 0, a: 150});
+                rl::DrawLine(cell_x + cell_size - 5, cell_y + 5, cell_x + 5, cell_y + cell_size - 5, rl::Color{r: 100, g: 0, b: 0, a: 150});
+            }
+            
+            // Selection Logic
+            if (has_block == 1) {
+                if (clicked && mx >= cell_x && mx <= cell_x + cell_size && my >= cell_y && my <= cell_y + cell_size) {
+                    *selected_block = display_block;
+                }
+            }
+            
+            col = col + 1;
+            if (col >= 4) {
+                col = 0;
+                row = row + 1;
             }
         }
-        
-        col = col + 1;
-        if (col >= 4) {
-            col = 0;
-            row = row + 1;
-        }
-    }
     } else {
         // --- STRUCTURES TAB ---
         // Item 1: Power Source
@@ -260,9 +290,10 @@ fn draw_spellbook(state: SpellbookState*, selected_block: int*, chunks: Chunk*, 
         let ps_y = grid_start_y;
         
         if (*selected_block == 21) {
-             rl::DrawRectangle(ps_x - 3, ps_y - 3, cell_size + 6, cell_size + 6, rl::GOLD);
+             rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)ps_x - 2.0, y: (float)ps_y - 2.0, width: (float)cell_size + 4.0, height: (float)cell_size + 4.0}, 4.0, rl::GOLD);
+        } else {
+            rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)ps_x, y: (float)ps_y, width: (float)cell_size, height: (float)cell_size}, 2.0, rl::Color{r: 80, g: 80, b: 90, a: 255});
         }
-        rl::DrawRectangleLines(ps_x, ps_y, cell_size, cell_size, rl::BLACK);
         
         // Icon (Purple Center)
         let ob_col = rl::PURPLE;
@@ -272,14 +303,14 @@ fn draw_spellbook(state: SpellbookState*, selected_block: int*, chunks: Chunk*, 
             ob_col.b = (char)((int)ob_col.b / 4);
             ob_col.a = 200;
         }
-        rl::DrawRectangle(ps_x + 5, ps_y + 5, cell_size - 10, cell_size - 10, ob_col);
+        rl::DrawRectangle(ps_x + 20, ps_y + 20, cell_size - 40, cell_size - 40, ob_col);
         
         if (obelisk_allowed == 0) {
-            rl::DrawLine(ps_x + 5, ps_y + 5, ps_x + cell_size - 5, ps_y + cell_size - 5, rl::Color{r: 100, g: 0, b: 0, a: 150});
-            rl::DrawLine(ps_x + cell_size - 5, ps_y + 5, ps_x + 5, ps_y + cell_size - 5, rl::Color{r: 100, g: 0, b: 0, a: 150});
+            rl::DrawLineEx(rl::Vector2{x: (float)ps_x + 20.0, y: (float)ps_y + 20.0}, rl::Vector2{x: (float)ps_x + cell_size - 20.0, y: (float)ps_y + cell_size - 20.0}, 5.0, rl::Color{r: 100, g: 0, b: 0, a: 150});
+            rl::DrawLineEx(rl::Vector2{x: (float)ps_x + cell_size - 20.0, y: (float)ps_y + 20.0}, rl::Vector2{x: (float)ps_x + 20.0, y: (float)ps_y + cell_size - 20.0}, 5.0, rl::Color{r: 100, g: 0, b: 0, a: 150});
         }
         
-        rl::DrawText("Obelisco", ps_x + 5, ps_y + cell_size + 5, 10, rl::BLACK);
+        rl::DrawText("Obelisk", ps_x + 15, ps_y + cell_size - 30, 24, rl::RAYWHITE);
         
         if (obelisk_allowed == 1) {
             if (clicked && mx >= ps_x && mx <= ps_x + cell_size && my >= ps_y && my <= ps_y + cell_size) {
@@ -288,15 +319,18 @@ fn draw_spellbook(state: SpellbookState*, selected_block: int*, chunks: Chunk*, 
         }
         
         // Item 2: Chest
-        let ch_x = ps_x + cell_size + 10;
+        let ch_x = ps_x + cell_size + 30;
         let ch_y = ps_y;
         
+        rl::DrawRectangle(ch_x, ch_y, cell_size, cell_size, rl::Color{r: 30, g: 35, b: 45, a: 255});
         if (*selected_block == BLOCK_CHEST) {
-             rl::DrawRectangle(ch_x - 3, ch_y - 3, cell_size + 6, cell_size + 6, rl::GOLD);
+             rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)ch_x - 2.0, y: (float)ch_y - 2.0, width: (float)cell_size + 4.0, height: (float)cell_size + 4.0}, 4.0, rl::GOLD);
+        } else {
+             rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)ch_x, y: (float)ch_y, width: (float)cell_size, height: (float)cell_size}, 2.0, rl::Color{r: 80, g: 80, b: 90, a: 255});
         }
-        rl::DrawRectangleLines(ch_x, ch_y, cell_size, cell_size, rl::BLACK);
-        rl::DrawRectangle(ch_x + 5, ch_y + 5, cell_size - 10, cell_size - 10, rl::Color{r: 160, g: 120, b: 50, a: 255});
-        rl::DrawText("Chest", ch_x + 8, ch_y + cell_size + 5, 10, rl::BLACK);
+        
+        rl::DrawRectangle(ch_x + 20, ch_y + 20, cell_size - 40, cell_size - 40, rl::Color{r: 160, g: 120, b: 50, a: 255});
+        rl::DrawText("Chest", ch_x + 20, ch_y + cell_size - 30, 24, rl::RAYWHITE);
         
         if (clicked && mx >= ch_x && mx <= ch_x + cell_size && my >= ch_y && my <= ch_y + cell_size) {
             *selected_block = BLOCK_CHEST;

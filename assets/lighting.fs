@@ -110,6 +110,11 @@ void main()
     vec3 resultColor = vec3(0.0);
     float finalAlpha = texelColor.a;
 
+    // Reducir la transparencia de las hojas (Vertex Color Blue ~ 0.39)
+    if (uUseEntityLight == 0 && fragColor.b > 0.35 && fragColor.b < 0.45) {
+        finalAlpha = 1.0; 
+    }
+
     // Detectar si es agua (Vertex color Blue > 0.7), pero solo si no es una entidad
     bool isWater = (uUseEntityLight == 0) && (fragColor.b > 0.7);
 
@@ -125,31 +130,41 @@ void main()
         vec2 cuv = vWorldPos.xz;
         float c1 = fbm(cuv * 0.6 + time * vec2(0.15, 0.1));
         float c2 = fbm(cuv * 0.9 - time * vec2(0.1, 0.18) + 3.7);
-        // Sharp caustic lines
-        float caustic = pow(abs(sin(c1 * 6.28) * sin(c2 * 6.28)), 0.3);
+        // Wider, softer caustic lines
+        float caustic = pow(abs(sin(c1 * 6.28) * sin(c2 * 6.28)), 0.25) * 1.2;
         
         // --- FOAM ---
-        float foam = 0.0;
+        float waveFoam = 0.0;
         if (isFlowing) {
-            foam = smoothstep(0.3, 0.55, waterNormal.y);
+            waveFoam = smoothstep(0.3, 0.55, waterNormal.y);
         }
         
-        // --- MUCH BRIGHTER BASE COLORS ---
-        vec3 colDeep    = vec3(0.02, 0.12, 0.25);   // Rich deep blue
-        vec3 colShallow = vec3(0.08, 0.45, 0.55);   // Vivid teal
+        // Edge Foam (uses vertex alpha which is typically lower near shores/edges)
+        // High foam when fragColor.a < 0.8
+        float edgeFoam = clamp(1.0 - (fragColor.a * 1.25), 0.0, 1.0);
+        // Add animated pulsing to edge foam
+        edgeFoam *= 0.5 + 0.5 * sin(time * 3.0 + vWorldPos.x * 2.0 + vWorldPos.z * 2.0);
+        
+        float foam = clamp(waveFoam + edgeFoam, 0.0, 1.0);
+        
+        // --- DEEP BLUE VIVID COLORS ---
+        vec3 colDeep    = vec3(0.01, 0.20, 0.85);   // Strong deep blue
+        vec3 colShallow = vec3(0.05, 0.40, 0.95);   // Clear vibrant blue
         if (isFlowing) {
-            colDeep    = vec3(0.05, 0.18, 0.30);
-            colShallow = vec3(0.15, 0.55, 0.60);
+            colDeep    = vec3(0.02, 0.25, 0.90);
+            colShallow = vec3(0.10, 0.50, 1.00);
         }
         
         float df = waterNormal.y * 0.5 + 0.5;
         vec3 albedo = mix(colDeep, colShallow, df);
         
-        // Strong caustic overlay - bright teal lines on surface
-        albedo += vec3(0.15, 0.5, 0.55) * caustic * 0.6;
+        // Additive overlay for caustics - brighter cyan/white to integrate smoothly
+        albedo += vec3(0.25, 0.75, 0.95) * caustic * 0.4;
         
-        // Foam
-        if (isFlowing) albedo = mix(albedo, vec3(0.9, 0.95, 1.0), foam * 0.6);
+        // Apply Foam
+        if (foam > 0.0) {
+            albedo = mix(albedo, vec3(0.9, 0.95, 1.0), foam * 0.85); // Blends to white foam
+        }
 
         // --- SPECULAR ---
         vec3 halfDir = normalize(lightDir + viewDir);
@@ -178,7 +193,7 @@ void main()
         for(int i=0; i<uCrystalCount; i++) {
              float dist = distance(vWorldPos, uCrystalPoints[i]);
              if (dist < 12.0) {
-                 float intensity = pow(1.0 - (dist / 12.0), 2.0) * 0.8;
+                 float intensity = pow(1.0 - (dist / 12.0), 2.0) * 0.4;
                  waterFinal += vec3(0.1, 0.9, 0.4) * intensity;
              }
         }
@@ -188,7 +203,12 @@ void main()
         waterFinal *= max(skyLight, 0.25);
 
         resultColor = waterFinal;
-        finalAlpha = clamp(0.55 + fresnel * 0.4 + foam * 0.15, 0.0, 0.88);
+        
+        resultColor = waterFinal;
+        
+        // Fresnel-based fake transparency: looking straight down is more opaque now to show depth, looking far away is solid
+        float baseAlpha = mix(0.65, 0.98, fresnel); 
+        finalAlpha = clamp(baseAlpha + foam * 0.25, 0.2, 0.98);
         
     } else {
         // ==========================================
@@ -196,13 +216,16 @@ void main()
         // ==========================================
         float blockLight = (uUseEntityLight > 0) ? uEntityLight.x : fragColor.r;
         float skyLight = (uUseEntityLight > 0) ? uEntityLight.y : fragColor.g;
+        float ao = (uUseEntityLight > 0) ? 1.0 : fragColor.a;
 
         // Difusa
         float diff = max(dot(normal, lightDir), 0.0);
-        vec3 sunLight = (diff * uLightCol) * skyLight;
+        // Suavizamos un poco el contraste de diff para que la luz directa no apague tanto lo demas si es muy bajo
+        // Limitamos diff para que tenga un factor "wrap" o luz indirecta base mayor del sol
+        vec3 sunLight = (diff * 0.7 + 0.3) * uLightCol * skyLight;
         
-        // Ambiental
-        vec3 ambientColor = uAmbient * (normal.y * 0.5 + 0.5); // Hemisférica
+        // Ambiental: subimos la base de Y para que los techos/paredes laterales reciban más luz rebotada.
+        vec3 ambientColor = uAmbient * (normal.y * 0.15 + 0.95) + vec3(0.05);
         
         // Luz de antorcha
         vec3 torchColor = vec3(1.0, 0.7, 0.4) * pow(blockLight, 2.0) * 2.0;
@@ -212,13 +235,13 @@ void main()
         for(int i=0; i<uCrystalCount; i++) {
              float dist = distance(vWorldPos, uCrystalPoints[i]);
              if (dist < 8.0) {
-                 float intensity = pow(1.0 - (dist / 8.0), 2.0) * 0.8;
+                 float intensity = pow(1.0 - (dist / 8.0), 2.0) * 0.4;
                  crystalGlow += vec3(0.1, 1.0, 0.3) * intensity;
              }
         }
         
         vec3 lighting = sunLight + (ambientColor * skyLight) + torchColor + crystalGlow;
-        resultColor = texelColor.rgb * lighting;
+        resultColor = texelColor.rgb * lighting * ao;
         
         // Añadir emisión (brillo propio) sin verse afectado por las luces
         resultColor += texelColor.rgb * uEmission;

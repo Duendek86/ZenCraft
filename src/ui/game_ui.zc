@@ -39,7 +39,23 @@ fn draw_spell_icon(spell_id: int, x: int, y: int, size: int) {
     }
 }
 
-fn draw_hud(p: Player*, spellbook: SpellbookState*, version: char*, obelisk_count: int) {
+fn draw_diamond(cx: int, cy: int, size: int, c: rl::Color) {
+    let half = (float)size / 2.0;
+    let fcx = (float)cx; let fcy = (float)cy;
+    rl::DrawTriangle(rl::Vector2{x: fcx, y: fcy - half}, rl::Vector2{x: fcx - half, y: fcy}, rl::Vector2{x: fcx + half, y: fcy}, c);
+    rl::DrawTriangle(rl::Vector2{x: fcx - half, y: fcy}, rl::Vector2{x: fcx, y: fcy + half}, rl::Vector2{x: fcx + half, y: fcy}, c);
+}
+
+fn draw_diamond_lines(cx: int, cy: int, size: int, thick: float, c: rl::Color) {
+    let half = (float)size / 2.0;
+    let fcx = (float)cx; let fcy = (float)cy;
+    rl::DrawLineEx(rl::Vector2{x: fcx, y: fcy - half}, rl::Vector2{x: fcx - half, y: fcy}, thick, c);
+    rl::DrawLineEx(rl::Vector2{x: fcx - half, y: fcy}, rl::Vector2{x: fcx, y: fcy + half}, thick, c);
+    rl::DrawLineEx(rl::Vector2{x: fcx, y: fcy + half}, rl::Vector2{x: fcx + half, y: fcy}, thick, c);
+    rl::DrawLineEx(rl::Vector2{x: fcx + half, y: fcy}, rl::Vector2{x: fcx, y: fcy - half}, thick, c);
+}
+
+fn draw_hud(p: Player*, sb_state: SpellbookState*, version: char*, obelisk_count: int, day_time: float) {
     raw { rlDisableDepthTest(); }
     let screen_w = rl::GetScreenWidth(); let screen_h = rl::GetScreenHeight();
     let cx = screen_w / 2; let cy = screen_h / 2;
@@ -52,86 +68,151 @@ fn draw_hud(p: Player*, spellbook: SpellbookState*, version: char*, obelisk_coun
     // Dot center
     rl::DrawRectangle(cx - 1, cy - 1, 2, 2, rl::Color{r: 255, g: 220, b: 80, a: 255});
 
-    // ===== HOTBAR (bottom center) =====
-    let slot_size = 52;
-    let slot_pad = 4;
+    // ===== PROFESSIONAL HOTBAR (bottom center) =====
+    let slot_size = 48;
+    let slot_pad = 6;
     let hotbar_slots = 7;
     let hotbar_w = hotbar_slots * slot_size + (hotbar_slots - 1) * slot_pad;
     let hotbar_x = cx - hotbar_w / 2;
-    let hotbar_y = screen_h - slot_size - 16;
+    let hotbar_y = screen_h - slot_size - 24;
     
-    // Hotbar background panel (glassmorphism)
-    rl::DrawRectangle(hotbar_x - 8, hotbar_y - 8, hotbar_w + 16, slot_size + 16, rl::Color{r: 10, g: 10, b: 20, a: 160});
-    rl::DrawRectangleLines(hotbar_x - 8, hotbar_y - 8, hotbar_w + 16, slot_size + 16, rl::Color{r: 80, g: 80, b: 100, a: 120});
-    // Inner glow line at top
-    rl::DrawRectangle(hotbar_x - 6, hotbar_y - 7, hotbar_w + 12, 1, rl::Color{r: 200, g: 200, b: 255, a: 40});
+    // Background panel
+    let panel_pad = 12;
+    rl::DrawRectangle(hotbar_x - panel_pad, hotbar_y - panel_pad, hotbar_w + panel_pad*2, slot_size + panel_pad*2 + 4, rl::Color{r: 25, g: 30, b: 45, a: 210});
+    rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)(hotbar_x - panel_pad), y: (float)(hotbar_y - panel_pad), width: (float)(hotbar_w + panel_pad*2), height: (float)(slot_size + panel_pad*2 + 4)}, 2.0, rl::Color{r: 15, g: 20, b: 35, a: 255});
+    // Inner bevel
+    rl::DrawRectangle(hotbar_x - panel_pad + 2, hotbar_y - panel_pad + 2, hotbar_w + panel_pad*2 - 4, 2, rl::Color{r: 50, g: 60, b: 80, a: 180});
     
     for i in 0..hotbar_slots {
         let sx = hotbar_x + i * (slot_size + slot_pad);
         let sy = hotbar_y;
-        let spell_id = spellbook.hotbar[i];
-        let is_selected = i == spellbook.hotbar_selected;
         
-        // Slot background
+        let spell_id = sb_state.hotbar[i];
+        let is_selected = i == sb_state.hotbar_selected;
+        
+        let border_color = rl::Color{r: 15, g: 20, b: 35, a: 255};
+        let bg_color = rl::Color{r: 35, g: 42, b: 60, a: 255};
+        
         if is_selected {
-            // Active slot - golden glow
-            rl::DrawRectangle(sx - 2, sy - 2, slot_size + 4, slot_size + 4, rl::Color{r: 255, g: 200, b: 50, a: 180});
-            rl::DrawRectangle(sx, sy, slot_size, slot_size, rl::Color{r: 40, g: 35, b: 25, a: 230});
-        } else {
-            rl::DrawRectangle(sx, sy, slot_size, slot_size, rl::Color{r: 25, g: 25, b: 35, a: 200});
+            // Gold border
+            border_color = rl::Color{r: 220, g: 180, b: 60, a: 255};
+            bg_color = rl::Color{r: 50, g: 55, b: 70, a: 255};
         }
-        rl::DrawRectangleLines(sx, sy, slot_size, slot_size, rl::Color{r: 80, g: 80, b: 90, a: 180});
         
-        // Spell icon
+        // Slot border & bg
+        rl::DrawRectangle(sx, sy, slot_size, slot_size, border_color);
+        rl::DrawRectangle(sx + 2, sy + 2, slot_size - 4, slot_size - 4, bg_color);
+        
+        // Inner shadow
+        rl::DrawRectangle(sx + 2, sy + 2, slot_size - 4, 4, rl::Color{r: 0, g: 0, b: 0, a: 60});
+        
+        // Icon
         draw_spell_icon(spell_id, sx, sy, slot_size);
         
-        // Slot number (top-left corner, small)
-        rl::DrawText(rl::TextFormat("%d", i + 1), sx + 3, sy + 2, 12, rl::Color{r: 200, g: 200, b: 200, a: 150});
+        // Diamond Number Box (Top Left)
+        draw_diamond(sx + 4, sy + 4, 16, rl::Color{r: 20, g: 25, b: 40, a: 255});
+        draw_diamond_lines(sx + 4, sy + 4, 16, 1.5, rl::Color{r: 150, g: 150, b: 160, a: 255});
+        rl::DrawText(rl::TextFormat("%d", i + 1), sx - 1, sy - 1, 10, rl::WHITE);
     }
     
-    // Active spell name (above hotbar)
-    let active_spell = spellbook.hotbar[spellbook.hotbar_selected];
+    // Active spell name
+    let active_spell = sb_state.hotbar[sb_state.hotbar_selected];
     let spell_name = get_spell_name(active_spell);
     let name_w = rl::MeasureText(spell_name, 16);
-    rl::DrawText(spell_name, cx - name_w / 2, hotbar_y - 22, 16, rl::Color{r: 220, g: 220, b: 220, a: 220});
+    rl::DrawText(spell_name, cx - name_w / 2, hotbar_y - 24, 16, rl::Color{r: 240, g: 240, b: 230, a: 255});
     
-    // ===== HP & MANA BARS (bottom-left, above hotbar) =====
-    let bar_w = 180; let bar_h = 14;
-    let bar_x = 16;
-    let bar_y_hp = screen_h - 52;
-    let bar_y_mp = screen_h - 32;
+    // ===== RPG STYLE HP & MANA BARS (centered above hotbar) =====
+    let bar_w = 420; let bar_h = 24;
+    let base_x = cx - bar_w / 2; 
+    let bar_y_mp = hotbar_y - 24 - bar_h - 16;
+    let bar_y_hp = bar_y_mp - bar_h - 12;
+    let border_col = rl::Color{r: 25, g: 30, b: 45, a: 255}; // Dark slate frame
     
-    // HP Bar
-    // Background
-    rl::DrawRectangle(bar_x, bar_y_hp, bar_w, bar_h, rl::Color{r: 20, g: 8, b: 8, a: 200});
-    // Fill (red gradient)
-    let hp_fill = (int)((float)bar_w * (p.health / 100.0));
+    // ---- HP Bar ----
+    // Diamond cap left
+    draw_diamond(base_x, bar_y_hp + bar_h/2, 48, border_col);
+    // Outer frame
+    rl::DrawRectangle(base_x + 10, bar_y_hp - 2, bar_w, bar_h + 4, border_col);
+    // Inner background
+    rl::DrawRectangle(base_x + 10, bar_y_hp, bar_w - 2, bar_h, rl::Color{r: 15, g: 15, b: 20, a: 255});
+    // Fill
+    let hp_fill = (int)((float)(bar_w - 4) * (p.health / 100.0));
     if hp_fill > 0 {
-        rl::DrawRectangle(bar_x, bar_y_hp, hp_fill, bar_h / 2, rl::Color{r: 220, g: 50, b: 50, a: 255});
-        rl::DrawRectangle(bar_x, bar_y_hp + bar_h / 2, hp_fill, bar_h / 2, rl::Color{r: 180, g: 30, b: 30, a: 255});
-        // Shine highlight
-        rl::DrawRectangle(bar_x, bar_y_hp, hp_fill, 2, rl::Color{r: 255, g: 120, b: 120, a: 100});
+        rl::DrawRectangle(base_x + 10, bar_y_hp + 2, hp_fill, bar_h - 4, rl::Color{r: 200, g: 40, b: 50, a: 255});
+        // Gradient highlight
+        rl::DrawRectangle(base_x + 10, bar_y_hp + 2, hp_fill, (bar_h - 4)/2, rl::Color{r: 240, g: 80, b: 90, a: 255});
     }
-    rl::DrawRectangleLines(bar_x, bar_y_hp, bar_w, bar_h, rl::Color{r: 60, g: 20, b: 20, a: 200});
-    // Heart icon
-    rl::DrawText("HP", bar_x + 4, bar_y_hp + 1, 12, rl::Color{r: 255, g: 200, b: 200, a: 220});
-    rl::DrawText(rl::TextFormat("%.0f", p.health), bar_x + bar_w - 35, bar_y_hp + 1, 12, rl::WHITE);
     
-    // Mana Bar
-    rl::DrawRectangle(bar_x, bar_y_mp, bar_w, bar_h, rl::Color{r: 8, g: 8, b: 25, a: 200});
-    let mp_fill = (int)((float)bar_w * (p.mana / 100.0));
+    // Inner diamond motif
+    draw_diamond(base_x, bar_y_hp + bar_h/2, 32, rl::Color{r: 15, g: 20, b: 35, a: 255});
+    draw_diamond(base_x, bar_y_hp + bar_h/2, 18, rl::Color{r: 240, g: 80, b: 90, a: 255}); // Red heart substitute
+    draw_diamond_lines(base_x, bar_y_hp + bar_h/2, 32, 2.0, rl::Color{r: 80, g: 90, b: 110, a: 255}); // Trim
+
+    // Text
+    rl::DrawText(rl::TextFormat("%.0f / 100", p.health), base_x + 36, bar_y_hp + 5, 16, rl::WHITE);
+
+    // ---- Mana Bar ----
+    draw_diamond(base_x, bar_y_mp + bar_h/2, 42, border_col);
+    rl::DrawRectangle(base_x + 10, bar_y_mp - 2, bar_w - 20, bar_h + 4, border_col);
+    rl::DrawRectangle(base_x + 10, bar_y_mp, bar_w - 22, bar_h, rl::Color{r: 15, g: 15, b: 20, a: 255});
+    
+    let mp_fill = (int)((float)(bar_w - 24) * (p.mana / 100.0));
     if mp_fill > 0 {
-        rl::DrawRectangle(bar_x, bar_y_mp, mp_fill, bar_h / 2, rl::Color{r: 60, g: 120, b: 255, a: 255});
-        rl::DrawRectangle(bar_x, bar_y_mp + bar_h / 2, mp_fill, bar_h / 2, rl::Color{r: 40, g: 80, b: 200, a: 255});
-        rl::DrawRectangle(bar_x, bar_y_mp, mp_fill, 2, rl::Color{r: 140, g: 180, b: 255, a: 100});
+        rl::DrawRectangle(base_x + 10, bar_y_mp + 2, mp_fill, bar_h - 4, rl::Color{r: 40, g: 140, b: 220, a: 255});
+        rl::DrawRectangle(base_x + 10, bar_y_mp + 2, mp_fill, (bar_h - 4)/2, rl::Color{r: 80, g: 180, b: 250, a: 255});
     }
-    rl::DrawRectangleLines(bar_x, bar_y_mp, bar_w, bar_h, rl::Color{r: 20, g: 20, b: 60, a: 200});
-    rl::DrawText("MP", bar_x + 4, bar_y_mp + 1, 12, rl::Color{r: 200, g: 200, b: 255, a: 220});
-    rl::DrawText(rl::TextFormat("%.0f", p.mana), bar_x + bar_w - 35, bar_y_mp + 1, 12, rl::WHITE);
+    
+    draw_diamond(base_x, bar_y_mp + bar_h/2, 24, rl::Color{r: 15, g: 20, b: 35, a: 255});
+    draw_diamond(base_x, bar_y_mp + bar_h/2, 12, rl::Color{r: 80, g: 180, b: 250, a: 255}); // Blue crystal base
+    draw_diamond_lines(base_x, bar_y_mp + bar_h/2, 24, 2.0, rl::Color{r: 80, g: 90, b: 110, a: 255});
+    
+    rl::DrawText(rl::TextFormat("%.0f / 100", p.mana), base_x + 36, bar_y_mp + 5, 16, rl::WHITE);
+
+    // End caps for bars
+    rl::DrawLineEx(rl::Vector2{x:(float)(base_x+10+bar_w), y:(float)(bar_y_hp-2)}, rl::Vector2{x:(float)(base_x+10+bar_w), y:(float)(bar_y_hp+bar_h+2)}, 4.0, border_col);
+    rl::DrawLineEx(rl::Vector2{x:(float)(base_x+10+bar_w-20), y:(float)(bar_y_mp-2)}, rl::Vector2{x:(float)(base_x+10+bar_w-20), y:(float)(bar_y_mp+bar_h+2)}, 4.0, border_col);
     
     // ===== VERSION TEXT =====
-    rl::DrawText(version, 10, 10, 14, rl::Color{r: 180, g: 180, b: 180, a: 120});
+    rl::DrawText(version, screen_w - rl::MeasureText(version, 14) - 10, 10, 14, rl::Color{r: 180, g: 180, b: 180, a: 120});
     
+    // ===== DAY/NIGHT SOLAR CLOCK =====
+    let clock_r = 28;
+    let clock_x = screen_w - clock_r - 20;
+    let clock_y = 60;
+    
+    // Background bezel
+    rl::DrawCircle(clock_x, clock_y, clock_r + 4, rl::Color{r: 25, g: 30, b: 45, a: 255});
+    rl::DrawCircleLines(clock_x, clock_y, clock_r + 4, rl::Color{r: 15, g: 20, b: 35, a: 255}); // Outer border
+    rl::DrawCircleLines(clock_x, clock_y, clock_r + 5, rl::GOLD); // Outer gold ring
+    
+    let time_angle = (day_time * 360.0) + 90.0; // Rotate the disc
+    
+    // Draw Day sector
+    rl::DrawCircleSector(rl::Vector2{x: (float)clock_x, y: (float)clock_y}, (float)clock_r, time_angle, time_angle + 180.0, 36, rl::Color{r: 255, g: 220, b: 100, a: 255});
+    // Draw Night sector
+    rl::DrawCircleSector(rl::Vector2{x: (float)clock_x, y: (float)clock_y}, (float)clock_r, time_angle + 180.0, time_angle + 360.0, 36, rl::Color{r: 20, g: 30, b: 80, a: 255});
+    
+    // Frame over the sectors
+    rl::DrawCircleLines(clock_x, clock_y, clock_r, rl::Color{r: 15, g: 20, b: 35, a: 255});
+    
+    // Center pin of the clock
+    draw_diamond(clock_x, clock_y, 8, rl::Color{r: 25, g: 30, b: 45, a: 255});
+    draw_diamond_lines(clock_x, clock_y, 8, 1.5, rl::GOLD);
+    
+    // Indicator arrow pointing fixed downwards (reading the time from the top)
+    rl::DrawTriangle(
+        rl::Vector2{x: (float)clock_x - 6.0, y: (float)clock_y - clock_r - 8.0},
+        rl::Vector2{x: (float)clock_x + 6.0, y: (float)clock_y - clock_r - 8.0},
+        rl::Vector2{x: (float)clock_x,       y: (float)clock_y - clock_r + 2.0},
+        rl::Color{r: 220, g: 60, b: 60, a: 255}
+    );
+    rl::DrawTriangleLines(
+        rl::Vector2{x: (float)clock_x - 6.0, y: (float)clock_y - clock_r - 8.0},
+        rl::Vector2{x: (float)clock_x + 6.0, y: (float)clock_y - clock_r - 8.0},
+        rl::Vector2{x: (float)clock_x,       y: (float)clock_y - clock_r + 2.0},
+        rl::Color{r: 15, g: 20, b: 35, a: 255}
+    );
+
     // ===== OBELISK NOTIFICATION =====
     if obelisk_count == 0 {
         let notif_text = "Place an Obelisk to start a village.";
@@ -189,6 +270,11 @@ fn draw_debug_info(p: Player*, chunks: Chunk*, dt: float, day_time: float, draw_
     rl::DrawText(rl::TextFormat("Light Prop: %.2f ms", prof.prop_ms), 20, dy, 20, rl::ORANGE);
 }
 
+extern fn get_master_vol() -> float;
+extern fn set_master_vol(v: float);
+extern fn get_sfx_vol() -> float;
+extern fn set_sfx_vol(v: float);
+
 fn draw_settings_menu(draw_distance: int*, grass_dist: float*) {
     let screen_w = rl::GetScreenWidth(); let screen_h = rl::GetScreenHeight();
     let mx = rl::GetMouseX(); let my = rl::GetMouseY();
@@ -196,62 +282,124 @@ fn draw_settings_menu(draw_distance: int*, grass_dist: float*) {
     let click_held = rl::IsMouseButtonDown(rl::MOUSE_BUTTON_LEFT);
     
     // Centered, larger main panel
-    let menu_w = 400; let menu_h = 240;
+    let menu_w = 400; let menu_h = 340;
     let menu_x = screen_w/2 - menu_w/2; let menu_y = screen_h/2 - menu_h/2;
     
-    // Background with soft gradient (simulated via semi-transparent rectangles)
-    rl::DrawRectangle(menu_x, menu_y, menu_w, menu_h, rl::Color{r: 30, g: 30, b: 35, a: 230});
-    rl::DrawRectangleLines(menu_x, menu_y, menu_w, menu_h, rl::Color{r: 100, g: 100, b: 110, a: 255});
-    rl::DrawRectangleLines(menu_x - 1, menu_y - 1, menu_w + 2, menu_h + 2, rl::BLACK); // Shadow border
+    // Background with dark slate panel and styling
+    let border_col = rl::Color{r: 25, g: 30, b: 45, a: 240};
+    rl::DrawRectangle(menu_x, menu_y, menu_w, menu_h, border_col);
+    rl::DrawRectangle(menu_x + 6, menu_y + 6, menu_w - 12, menu_h - 12, rl::Color{r: 15, g: 15, b: 20, a: 255});
+    rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)menu_x, y: (float)menu_y, width: (float)menu_w, height: (float)menu_h}, 2.0, rl::GOLD);
     
     // Header
-    rl::DrawRectangle(menu_x, menu_y, menu_w, 40, rl::Color{r: 45, g: 45, b: 55, a: 255});
-    rl::DrawText("GAME SETTINGS", menu_x + menu_w/2 - rl::MeasureText("GAME SETTINGS", 20)/2, menu_y + 10, 20, rl::RAYWHITE);
-    rl::DrawLine(menu_x, menu_y + 40, menu_x + menu_w, menu_y + 40, rl::Color{r: 100, g: 100, b: 110, a: 255});
+    rl::DrawRectangle(menu_x + 6, menu_y + 6, menu_w - 12, 40, border_col);
+    draw_diamond_lines(menu_x + menu_w/2, menu_y + 26, 24, 2.0, rl::GOLD);
+    rl::DrawText("GAME SETTINGS", menu_x + menu_w/2 - rl::MeasureText("GAME SETTINGS", 20)/2, menu_y + 16, 20, rl::RAYWHITE);
+    rl::DrawLine(menu_x + 6, menu_y + 46, menu_x + menu_w - 6, menu_y + 46, rl::GOLD);
+    
+    let m_vol = get_master_vol();
+    // --- Master Volume ---
+    rl::DrawText("Master Volume", menu_x + 30, menu_y + 70, 20, rl::LIGHTGRAY);
+    let vol_pct = (int)(m_vol * 100.0);
+    rl::DrawText(rl::TextFormat("%d%%", vol_pct), menu_x + 30, menu_y + 95, 15, rl::GRAY);
+    
+    let btn_bg = rl::Color{r: 35, g: 40, b: 55, a: 255};
+    let btn_v_m_rect = rl::Rectangle{x: (float)(menu_x + 240), y: (float)(menu_y + 65), width: 40.0, height: 40.0};
+    let btn_v_p_rect = rl::Rectangle{x: (float)(menu_x + 320), y: (float)(menu_y + 65), width: 40.0, height: 40.0};
+    let v_m_hover = rl::CheckCollisionPointRec(rl::Vector2{x: (float)mx, y: (float)my}, btn_v_m_rect);
+    let v_p_hover = rl::CheckCollisionPointRec(rl::Vector2{x: (float)mx, y: (float)my}, btn_v_p_rect);
+    
+    if v_m_hover { rl::DrawRectangleRec(btn_v_m_rect, rl::ColorTint(btn_bg, rl::WHITE)); } else { rl::DrawRectangleRec(btn_v_m_rect, btn_bg); }
+    rl::DrawRectangleLinesEx(btn_v_m_rect, 2.0, rl::Color{r: 15, g: 15, b: 20, a: 255});
+    if v_m_hover { rl::DrawRectangleLinesEx(btn_v_m_rect, 1.0, rl::GOLD); }
+    rl::DrawText("-", (int)btn_v_m_rect.x + 20 - rl::MeasureText("-", 20)/2, (int)btn_v_m_rect.y + 10, 20, rl::RAYWHITE);
+    
+    if v_p_hover { rl::DrawRectangleRec(btn_v_p_rect, rl::ColorTint(btn_bg, rl::WHITE)); } else { rl::DrawRectangleRec(btn_v_p_rect, btn_bg); }
+    rl::DrawRectangleLinesEx(btn_v_p_rect, 2.0, rl::Color{r: 15, g: 15, b: 20, a: 255});
+    if v_p_hover { rl::DrawRectangleLinesEx(btn_v_p_rect, 1.0, rl::GOLD); }
+    rl::DrawText("+", (int)btn_v_p_rect.x + 20 - rl::MeasureText("+", 20)/2, (int)btn_v_p_rect.y + 10, 20, rl::RAYWHITE);
+    
+    rl::DrawText(rl::TextFormat("%d", vol_pct), (int)btn_v_m_rect.x + 45, (int)btn_v_m_rect.y + 10, 20, rl::GOLD);
+    
+    if clicked == 1 {
+         if v_m_hover && m_vol > 0.0 { m_vol = m_vol - 0.1; if m_vol < 0.0 { m_vol = 0.0; } set_master_vol(m_vol); }
+         if v_p_hover && m_vol < 1.0 { m_vol = m_vol + 0.1; if m_vol > 1.0 { m_vol = 1.0; } set_master_vol(m_vol); }
+    }
+    
+    let sf_vol = get_sfx_vol();
+    // --- SFX Volume ---
+    rl::DrawText("SFX Volume", menu_x + 30, menu_y + 120, 20, rl::LIGHTGRAY);
+    let sfx_pct = (int)(sf_vol * 100.0);
+    rl::DrawText(rl::TextFormat("%d%%", sfx_pct), menu_x + 30, menu_y + 145, 15, rl::GRAY);
+    
+    let btn_sfx_m_rect = rl::Rectangle{x: (float)(menu_x + 240), y: (float)(menu_y + 115), width: 40.0, height: 40.0};
+    let btn_sfx_p_rect = rl::Rectangle{x: (float)(menu_x + 320), y: (float)(menu_y + 115), width: 40.0, height: 40.0};
+    let sfx_m_hover = rl::CheckCollisionPointRec(rl::Vector2{x: (float)mx, y: (float)my}, btn_sfx_m_rect);
+    let sfx_p_hover = rl::CheckCollisionPointRec(rl::Vector2{x: (float)mx, y: (float)my}, btn_sfx_p_rect);
+    
+    if sfx_m_hover { rl::DrawRectangleRec(btn_sfx_m_rect, rl::ColorTint(btn_bg, rl::WHITE)); } else { rl::DrawRectangleRec(btn_sfx_m_rect, btn_bg); }
+    rl::DrawRectangleLinesEx(btn_sfx_m_rect, 2.0, rl::Color{r: 15, g: 15, b: 20, a: 255});
+    if sfx_m_hover { rl::DrawRectangleLinesEx(btn_sfx_m_rect, 1.0, rl::GOLD); }
+    rl::DrawText("-", (int)btn_sfx_m_rect.x + 20 - rl::MeasureText("-", 20)/2, (int)btn_sfx_m_rect.y + 10, 20, rl::RAYWHITE);
+    
+    if sfx_p_hover { rl::DrawRectangleRec(btn_sfx_p_rect, rl::ColorTint(btn_bg, rl::WHITE)); } else { rl::DrawRectangleRec(btn_sfx_p_rect, btn_bg); }
+    rl::DrawRectangleLinesEx(btn_sfx_p_rect, 2.0, rl::Color{r: 15, g: 15, b: 20, a: 255});
+    if sfx_p_hover { rl::DrawRectangleLinesEx(btn_sfx_p_rect, 1.0, rl::GOLD); }
+    rl::DrawText("+", (int)btn_sfx_p_rect.x + 20 - rl::MeasureText("+", 20)/2, (int)btn_sfx_p_rect.y + 10, 20, rl::RAYWHITE);
+    
+    rl::DrawText(rl::TextFormat("%d", sfx_pct), (int)btn_sfx_m_rect.x + 45, (int)btn_sfx_m_rect.y + 10, 20, rl::GOLD);
+    
+    if clicked == 1 {
+         if sfx_m_hover && sf_vol > 0.0 { sf_vol = sf_vol - 0.1; if sf_vol < 0.0 { sf_vol = 0.0; } set_sfx_vol(sf_vol); }
+         if sfx_p_hover && sf_vol < 1.0 { sf_vol = sf_vol + 0.1; if sf_vol > 1.0 { sf_vol = 1.0; } set_sfx_vol(sf_vol); }
+    }
     
     // --- Grass Deco Toggle ---
-    rl::DrawText("Grass Decorations", menu_x + 30, menu_y + 80, 20, rl::LIGHTGRAY);
+    rl::DrawText("Grass Decorations", menu_x + 30, menu_y + 170, 20, rl::LIGHTGRAY);
     let is_on = *grass_dist > 0.1;
     
-    let btn_grass_rect = rl::Rectangle{x: (float)(menu_x + 280), y: (float)(menu_y + 75), width: 80.0, height: 30.0};
+    let btn_grass_rect = rl::Rectangle{x: (float)(menu_x + 280), y: (float)(menu_y + 165), width: 80.0, height: 30.0};
     let btn_grass_hover = rl::CheckCollisionPointRec(rl::Vector2{x: (float)mx, y: (float)my}, btn_grass_rect);
     
-    let g_col = rl::RED; let g_text = "OFF";
-    if is_on { g_col = rl::LIME; g_text = "ON"; }
+    let g_col = rl::Color{r: 200, g: 40, b: 50, a: 255}; let g_text = "OFF"; // Red
+    if is_on { g_col = rl::Color{r: 40, g: 150, b: 40, a: 255}; g_text = "ON"; } // Green
     
     // Button background & hover effect
-    if btn_grass_hover { rl::DrawRectangleRec(btn_grass_rect, rl::ColorTint(g_col, rl::WHITE)); }
+    if btn_grass_hover { rl::DrawRectangleRec(btn_grass_rect, rl::ColorTint(g_col, rl::Color{r: 200, g: 200, b: 200, a: 255})); }
     else { rl::DrawRectangleRec(btn_grass_rect, g_col); }
     
-    rl::DrawRectangleLinesEx(btn_grass_rect, 2.0, rl::BLACK);
-    rl::DrawText(g_text, (int)btn_grass_rect.x + 40 - rl::MeasureText(g_text, 18)/2, (int)btn_grass_rect.y + 6, 18, rl::BLACK);
+    rl::DrawRectangleLinesEx(btn_grass_rect, 2.0, rl::Color{r: 15, g: 15, b: 20, a: 255});
+    if btn_grass_hover { rl::DrawRectangleLinesEx(btn_grass_rect, 1.0, rl::GOLD); }
+    rl::DrawText(g_text, (int)btn_grass_rect.x + 40 - rl::MeasureText(g_text, 18)/2, (int)btn_grass_rect.y + 6, 18, rl::RAYWHITE);
     
     if clicked == 1 && btn_grass_hover {
         if is_on { *grass_dist = 0.0; } else { *grass_dist = 64.0; } // Safe grass distance
     }
     
     // --- Render Distance ---
-    rl::DrawText("Render Distance", menu_x + 30, menu_y + 130, 20, rl::LIGHTGRAY);
-    rl::DrawText(rl::TextFormat("%d Chunks", *draw_distance), menu_x + 30, menu_y + 155, 15, rl::GRAY);
+    rl::DrawText("Render Distance", menu_x + 30, menu_y + 220, 20, rl::LIGHTGRAY);
+    rl::DrawText(rl::TextFormat("%d Chunks", *draw_distance), menu_x + 30, menu_y + 245, 15, rl::GRAY);
     
-    let btn_minus_rect = rl::Rectangle{x: (float)(menu_x + 240), y: (float)(menu_y + 125), width: 40.0, height: 40.0};
-    let btn_plus_rect = rl::Rectangle{x: (float)(menu_x + 320), y: (float)(menu_y + 125), width: 40.0, height: 40.0};
+    let btn_minus_rect = rl::Rectangle{x: (float)(menu_x + 240), y: (float)(menu_y + 215), width: 40.0, height: 40.0};
+    let btn_plus_rect = rl::Rectangle{x: (float)(menu_x + 320), y: (float)(menu_y + 215), width: 40.0, height: 40.0};
     
     let minus_hover = rl::CheckCollisionPointRec(rl::Vector2{x: (float)mx, y: (float)my}, btn_minus_rect);
     let plus_hover = rl::CheckCollisionPointRec(rl::Vector2{x: (float)mx, y: (float)my}, btn_plus_rect);
     
     // Minus Button
-    if minus_hover { rl::DrawRectangleRec(btn_minus_rect, rl::LIGHTGRAY); } else { rl::DrawRectangleRec(btn_minus_rect, rl::GRAY); }
-    rl::DrawRectangleLinesEx(btn_minus_rect, 2.0, rl::BLACK);
-    rl::DrawText("-", (int)btn_minus_rect.x + 20 - rl::MeasureText("-", 20)/2, (int)btn_minus_rect.y + 10, 20, rl::BLACK);
+    if minus_hover { rl::DrawRectangleRec(btn_minus_rect, rl::ColorTint(btn_bg, rl::WHITE)); } else { rl::DrawRectangleRec(btn_minus_rect, btn_bg); }
+    rl::DrawRectangleLinesEx(btn_minus_rect, 2.0, rl::Color{r: 15, g: 15, b: 20, a: 255});
+    if minus_hover { rl::DrawRectangleLinesEx(btn_minus_rect, 1.0, rl::GOLD); }
+    rl::DrawText("-", (int)btn_minus_rect.x + 20 - rl::MeasureText("-", 20)/2, (int)btn_minus_rect.y + 10, 20, rl::RAYWHITE);
     
     // Plus Button
-    if plus_hover { rl::DrawRectangleRec(btn_plus_rect, rl::LIGHTGRAY); } else { rl::DrawRectangleRec(btn_plus_rect, rl::GRAY); }
-    rl::DrawRectangleLinesEx(btn_plus_rect, 2.0, rl::BLACK);
-    rl::DrawText("+", (int)btn_plus_rect.x + 20 - rl::MeasureText("+", 20)/2, (int)btn_plus_rect.y + 10, 20, rl::BLACK);
+    if plus_hover { rl::DrawRectangleRec(btn_plus_rect, rl::ColorTint(btn_bg, rl::WHITE)); } else { rl::DrawRectangleRec(btn_plus_rect, btn_bg); }
+    rl::DrawRectangleLinesEx(btn_plus_rect, 2.0, rl::Color{r: 15, g: 15, b: 20, a: 255});
+    if plus_hover { rl::DrawRectangleLinesEx(btn_plus_rect, 1.0, rl::GOLD); }
+    rl::DrawText("+", (int)btn_plus_rect.x + 20 - rl::MeasureText("+", 20)/2, (int)btn_plus_rect.y + 10, 20, rl::RAYWHITE);
     
     // Current Value display
-    rl::DrawText(rl::TextFormat("%d", *draw_distance), (int)btn_minus_rect.x + 55, (int)btn_minus_rect.y + 10, 20, rl::WHITE);
+    rl::DrawText(rl::TextFormat("%d", *draw_distance), (int)btn_minus_rect.x + 45, (int)btn_minus_rect.y + 10, 20, rl::GOLD);
     
     if clicked == 1 {
         if minus_hover && *draw_distance > 2 { *draw_distance = *draw_distance - 1; }

@@ -199,13 +199,13 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                     float u_min, v_min, u_max, v_max;
 
                     // MACROS PROTEGIDAS PARA EVITAR EL ERROR "ELSE WITHOUT PREVIOUS IF"
-                    #define SET_UV(c, r) do { u_min = (float)(c) * 0.25f; v_min = (float)(r) * 0.25f; u_max = u_min + 0.25f; v_max = v_min + 0.25f; } while(0)
+                    #define SET_UV(c, r) do { u_min = (float)(c) * 0.125f; v_min = (float)(r) * 0.25f; u_max = u_min + 0.125f; v_max = v_min + 0.25f; } while(0)
                     #define CALC_LIGHT(gx, gy, gz, v) do { (v) = get_light_levels(chunks, num_chunks, (gx), (gy), (gz)); } while(0)
 
                     // --- TORCH HANDLING ---
                     if (btype >= 10 && btype <= 14) {
-                         float tu_min = 0.75; float tu_max = 1.0; 
-                         float tv_min = 0.25; float tv_max = 0.50;
+                         float tu_min = 0.375f; float tu_max = 0.5f; 
+                         float tv_min = 0.25f; float tv_max = 0.50f;
                          int t_light = 255; 
                          float tw_x = 0.125; float tw_z = 0.125; float th = 0.5;
                          float bx = px + 0.5 - tw_x/2.0; float by = py; float bz = pz + 0.5 - tw_z/2.0;
@@ -258,7 +258,7 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
 
                     // --- GLASS PANE HANDLING ---
                     if (btype == BLOCK_GLASS_PANE) {
-                         float tu_min = 0.25f; float tu_max = 0.5f; 
+                         float tu_min = 0.125f; float tu_max = 0.25f; 
                          float tv_min = 0.5f; float tv_max = 0.75f;
                          int t_light = 255; CALC_LIGHT(b_gx, y, b_gz, t_light);
                          float post_size = 0.10f;
@@ -623,7 +623,8 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
                         else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
                         else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
-                        else if (btype == BLOCK_CAGE) { SET_UV(0, 3); }
+                        else if (btype == BLOCK_CAGE) { SET_UV(4, 3); }
+                        else if (btype == BLOCK_GOLD_ORE) { SET_UV(4, 0); }
                         else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px, py, pz, 0,-1,0, u_min, v_min, light_val, 0);
@@ -647,7 +648,8 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
                         else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
                         else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
-                        else if (btype == BLOCK_CAGE) { SET_UV(0, 3); }
+                        else if (btype == BLOCK_CAGE) { SET_UV(4, 3); }
+                        else if (btype == BLOCK_GOLD_ORE) { SET_UV(4, 0); }
                         else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px+1, py, pz, 1,0,0, u_min, v_max, light_val, 0);
@@ -671,7 +673,8 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
                         else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
                         else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
-                        else if (btype == BLOCK_CAGE) { SET_UV(0, 3); }
+                        else if (btype == BLOCK_CAGE) { SET_UV(4, 3); }
+                        else if (btype == BLOCK_GOLD_ORE) { SET_UV(4, 0); }
                         else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px, py, pz, -1,0,0, u_min, v_max, light_val, 0);
@@ -695,7 +698,8 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
                         else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
                         else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
-                        else if (btype == BLOCK_CAGE) { SET_UV(0, 3); }
+                        else if (btype == BLOCK_CAGE) { SET_UV(4, 3); }
+                        else if (btype == BLOCK_GOLD_ORE) { SET_UV(4, 0); }
                         else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px, py, pz+1, 0,0,1, u_min, v_max, light_val, 0);
@@ -719,7 +723,8 @@ fn compute_chunk_mesh(c: Chunk*, chunks: Chunk*, num_chunks: int) -> ChunkMeshes
                         else if (btype == BLOCK_SNOW) { SET_UV(1, 3); }
                         else if (btype == BLOCK_ICE) { SET_UV(2, 3); }
                         else if (btype == BLOCK_CACTUS) { SET_UV(3, 3); }
-                        else if (btype == BLOCK_CAGE) { SET_UV(0, 3); }
+                        else if (btype == BLOCK_CAGE) { SET_UV(4, 3); }
+                        else if (btype == BLOCK_GOLD_ORE) { SET_UV(4, 0); }
                         else { SET_UV(0, 0); }
 
                         ADD_VERTEX_GENERIC(px, py, pz, 0,0,-1, u_min, v_max, light_val, 0);
