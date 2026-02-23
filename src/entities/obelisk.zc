@@ -4,6 +4,17 @@ import "zibi.zc";
 import "raylib.h" as rl;
 import "math.h";
 
+// Helper: get total active obelisks in the loaded world
+fn get_total_obelisk_count(chunks: Chunk*, num_chunks: int) -> int {
+    let count = 0;
+    for ci in 0..num_chunks {
+        if chunks[ci].x != -9999 {
+            count = count + chunks[ci].obelisk_count;
+        }
+    }
+    return count;
+}
+
 // Updates all obelisks, handles mana generation
 fn update_obelisks(chunks: Chunk*, num_chunks: int, dt: float) {
     for ci in 0..num_chunks {

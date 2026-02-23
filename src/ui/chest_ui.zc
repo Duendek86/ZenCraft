@@ -222,6 +222,14 @@ fn draw_chests_3d(chunks: Chunk*, num_chunks: int, day_time: float) {
             rl::rlPushMatrix();
             rl::rlTranslatef(wx, wy, wz);
             
+            let c_dir = chunks[ci].chests[i].active - 1;
+            let rot_angle = 0.0;
+            if c_dir == 0 { rot_angle = 90.0; }
+            else if c_dir == 1 { rot_angle = 0.0; }
+            else if c_dir == 2 { rot_angle = -90.0; }
+            else if c_dir == 3 { rot_angle = 180.0; }
+            rl::rlRotatef(rot_angle, 0.0, 1.0, 0.0);
+            
             // Body (bottom part) — slightly smaller than a full block
             rl::DrawCube(rl::Vector3{x: 0.0, y: 0.3, z: 0.0}, 0.85, 0.55, 0.75, c_body);
             
@@ -271,7 +279,7 @@ fn find_chest_at(chunks: Chunk*, num_chunks: int, wx: int, wy: int, wz: int, out
 }
 
 // Register a new chest in a chunk
-fn place_chest(chunks: Chunk*, num_chunks: int, wx: int, wy: int, wz: int) -> int {
+fn place_chest(chunks: Chunk*, num_chunks: int, wx: int, wy: int, wz: int, player_yaw: float) -> int {
     let cx = (int)floor((float)wx / 16.0);
     let cz = (int)floor((float)wz / 16.0);
     let lx = wx - cx * 16;
@@ -285,7 +293,21 @@ fn place_chest(chunks: Chunk*, num_chunks: int, wx: int, wy: int, wz: int) -> in
             chunks[ci].chests[idx].y = wy;
             chunks[ci].chests[idx].z = lz;
             chunks[ci].chests[idx].open = 0.0;
-            chunks[ci].chests[idx].active = 1;
+            
+            let yaw_norm = player_yaw;
+            while yaw_norm < 0.0 { yaw_norm = yaw_norm + 6.2831853; }
+            while yaw_norm >= 6.2831853 { yaw_norm = yaw_norm - 6.2831853; }
+            
+            let dir_idx = 0; // 0=East(+X), 1=South(+Z), 2=West(-X), 3=North(-Z)
+            if yaw_norm < 0.785398 || yaw_norm >= 5.497787 { dir_idx = 0; }
+            else if yaw_norm < 2.356194 { dir_idx = 1; }
+            else if yaw_norm < 3.926991 { dir_idx = 2; }
+            else { dir_idx = 3; }
+            
+            // Reverse rotation by 180 degrees so Chest faces the player immediately
+            dir_idx = (dir_idx + 2) % 4;
+            
+            chunks[ci].chests[idx].active = 1 + dir_idx;
             init_inventory(&chunks[ci].chests[idx].items);
             chunks[ci].chest_count++;
             return 1;

@@ -96,7 +96,11 @@ fn draw_banner_ui(chunks: Chunk*, num_chunks: int, total_zibis: int) {
     rl::DrawRectangleLines(px, py, panel_w, panel_h, rl::Color{r: 120, g: 100, b: 60, a: 255});
     
     // Title
-    rl::DrawText("MINING BANNER", px + 110, py + 15, 24, rl::Color{r: 200, g: 180, b: 100, a: 255});
+    if banner.banner_type == 1 {
+        rl::DrawText("LUMBER BANNER", px + 110, py + 15, 24, rl::Color{r: 100, g: 200, b: 100, a: 255});
+    } else {
+        rl::DrawText("MINING BANNER", px + 110, py + 15, 24, rl::Color{r: 200, g: 180, b: 100, a: 255});
+    }
     rl::DrawLine(px + 20, py + 45, px + panel_w - 20, py + 45, rl::Color{r: 100, g: 80, b: 40, a: 200});
     
     let mx = rl::GetMouseX();
@@ -143,7 +147,8 @@ fn draw_banner_ui(chunks: Chunk*, num_chunks: int, total_zibis: int) {
         if banner.assigned_zibis < 10 && available_zibis > 0 { banner.assigned_zibis++; }
     }
     
-    // --- Priority Blocks Grid ---
+    // --- Priority Blocks Grid (mining only) ---
+    if banner.banner_type == 0 {
     rl::DrawText("Priority Blocks:", px + 30, py + 145, 20, rl::WHITE);
     rl::DrawText("(click to toggle)", px + 200, py + 148, 14, rl::GRAY);
     
@@ -207,6 +212,12 @@ fn draw_banner_ui(chunks: Chunk*, num_chunks: int, total_zibis: int) {
         if clicked && mx >= cx && mx <= cx + cell && my >= cy && my <= cy + cell {
             toggle_priority(banner, mineable[i]);
         }
+    }
+    } else {
+        // LUMBER BANNER: Show info text instead of priority grid
+        rl::DrawText("Zibis will chop trees", px + 30, py + 145, 20, rl::WHITE);
+        rl::DrawText("(LOG blocks) and deposit", px + 30, py + 172, 18, rl::LIGHTGRAY);
+        rl::DrawText("wood in nearby chests.", px + 30, py + 196, 18, rl::LIGHTGRAY);
     }
     
     // --- Status Info ---
@@ -280,6 +291,11 @@ fn draw_banners_3d(chunks: Chunk*, num_chunks: int, day_time: float) {
             let c_wood = rl::Color{r: 90, g: 60, b: 30, a: 255};
             let c_cloth = rl::Color{r: 220, g: 220, b: 200, a: 255};
             let c_letter = rl::Color{r: 150, g: 30, b: 30, a: 255};
+            let is_lumber = chunks[ci].banners[i].banner_type == 1;
+            if is_lumber {
+                c_cloth = rl::Color{r: 140, g: 220, b: 140, a: 255}; // Green cloth
+                c_letter = rl::Color{r: 30, g: 100, b: 30, a: 255};  // Dark green letter
+            }
             
             rl::rlPushMatrix();
             rl::rlTranslatef(wx, wy, wz);
@@ -291,17 +307,37 @@ fn draw_banners_3d(chunks: Chunk*, num_chunks: int, day_time: float) {
             // Cloth (hanging from top)
             rl::DrawCube(rl::Vector3{x: 0.0, y: 1.2, z: 0.06}, 0.8, 0.6, 0.02, c_cloth);
             
-            // Big 'M' letter (made of 4 thin strips/cubes)
-            // Left leg
-            rl::DrawCube(rl::Vector3{x: -0.2, y: 1.2, z: 0.08}, 0.06, 0.4, 0.02, c_letter);
-            // Right leg
-            rl::DrawCube(rl::Vector3{x: 0.2, y: 1.2, z: 0.08}, 0.06, 0.4, 0.02, c_letter);
-            // Middle top left drop
-            rl::DrawCube(rl::Vector3{x: -0.1, y: 1.3, z: 0.08}, 0.06, 0.2, 0.02, c_letter);
-            // Middle top right drop
-            rl::DrawCube(rl::Vector3{x: 0.1, y: 1.3, z: 0.08}, 0.06, 0.2, 0.02, c_letter);
+            if is_lumber {
+                // 'L' letter
+                // Vertical stroke
+                rl::DrawCube(rl::Vector3{x: -0.12, y: 1.2, z: 0.08}, 0.06, 0.4, 0.02, c_letter);
+                // Horizontal bottom stroke
+                rl::DrawCube(rl::Vector3{x: 0.05, y: 1.02, z: 0.08}, 0.28, 0.06, 0.02, c_letter);
+            } else {
+                // 'M' letter (original mining)
+                // Left leg
+                rl::DrawCube(rl::Vector3{x: -0.2, y: 1.2, z: 0.08}, 0.06, 0.4, 0.02, c_letter);
+                // Right leg
+                rl::DrawCube(rl::Vector3{x: 0.2, y: 1.2, z: 0.08}, 0.06, 0.4, 0.02, c_letter);
+                // Middle top left drop
+                rl::DrawCube(rl::Vector3{x: -0.1, y: 1.3, z: 0.08}, 0.06, 0.2, 0.02, c_letter);
+                // Middle top right drop
+                rl::DrawCube(rl::Vector3{x: 0.1, y: 1.3, z: 0.08}, 0.06, 0.2, 0.02, c_letter);
+            }
             
             rl::rlPopMatrix();
+            // --- NEED WOOD INDICATOR ---
+            if (chunks[ci].banners[i].need_wood == 1) {
+                rl::rlPushMatrix();
+                // Draw a small pulsing orange cube above the banner
+                rl::rlTranslatef(wx, wy + 2.0, wz);
+                let pulse = 0.5 + 0.5 * (float)sin(day_time * 6.0 + (float)(ci + i));
+                let sz = 0.18 + pulse * 0.06;
+                let c_ind = rl::Color{r: 255, g: 140, b: 0, a: 255};
+                rl::DrawCube(rl::Vector3{x: 0.0, y: 0.0 + pulse * 0.1, z: 0.0}, sz, sz, sz, c_ind);
+                rl::DrawCubeWires(rl::Vector3{x: 0.0, y: 0.0 + pulse * 0.1, z: 0.0}, sz, sz, sz, rl::BLACK);
+                rl::rlPopMatrix();
+            }
         }
     }
     

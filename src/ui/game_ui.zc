@@ -4,38 +4,150 @@ import "rlgl.h";
 import "../entities/player.zc";
 import "../world/chunk_core.zc";
 import "../world/persistence.zc";
+import "spellbook.zc";
 
-fn draw_hud(p: Player*, selected_block: int, version: char*) {
+fn get_spell_name(spell_id: int) -> char* {
+    if spell_id == 0 { return "Place Block"; }
+    else if spell_id == 1 { return "Fireball"; }
+    else if spell_id == 2 { return "Miner Banner"; }
+    else if spell_id == 3 { return "Lumber Banner"; }
+    return "Empty";
+}
+
+fn draw_spell_icon(spell_id: int, x: int, y: int, size: int) {
+    if spell_id == 0 {
+        // Block icon - stone cube
+        rl::DrawRectangle(x + 4, y + 4, size - 8, size - 8, rl::Color{r: 130, g: 130, b: 140, a: 255});
+        rl::DrawRectangle(x + 6, y + 6, size - 12, size - 16, rl::Color{r: 160, g: 160, b: 170, a: 255});
+    } else if spell_id == 1 {
+        // Fireball icon
+        rl::DrawRectangle(x + 8, y + 6, size - 16, size - 10, rl::Color{r: 255, g: 100, b: 0, a: 255});
+        rl::DrawRectangle(x + 12, y + 10, size - 24, size - 18, rl::Color{r: 255, g: 200, b: 50, a: 255});
+    } else if spell_id == 2 {
+        // Miner banner icon
+        rl::DrawRectangle(x + size/2 - 2, y + 4, 4, size - 8, rl::Color{r: 139, g: 90, b: 43, a: 255});
+        rl::DrawRectangle(x + 6, y + 6, size - 12, size/3, rl::Color{r: 220, g: 220, b: 200, a: 255});
+        rl::DrawRectangle(x + 10, y + 8, 4, size/3 - 4, rl::Color{r: 150, g: 30, b: 30, a: 255});
+    } else if spell_id == 3 {
+        // Lumber banner icon
+        rl::DrawRectangle(x + size/2 - 2, y + 4, 4, size - 8, rl::Color{r: 139, g: 90, b: 43, a: 255});
+        rl::DrawRectangle(x + 6, y + 6, size - 12, size/3, rl::Color{r: 140, g: 220, b: 140, a: 255});
+        rl::DrawRectangle(x + 10, y + 8, 4, size/3 - 4, rl::Color{r: 30, g: 100, b: 30, a: 255});
+    } else {
+        // Empty slot
+        rl::DrawRectangle(x + 10, y + 10, size - 20, size - 20, rl::Color{r: 40, g: 40, b: 50, a: 100});
+    }
+}
+
+fn draw_hud(p: Player*, spellbook: SpellbookState*, version: char*, obelisk_count: int) {
     raw { rlDisableDepthTest(); }
     let screen_w = rl::GetScreenWidth(); let screen_h = rl::GetScreenHeight();
     let cx = screen_w / 2; let cy = screen_h / 2;
     
-    // Crosshair
-    rl::DrawRectangle(cx - 6, cy - 2, 12, 4, rl::BLACK);
-    rl::DrawRectangle(cx - 2, cy - 6, 4, 12, rl::BLACK);
-    rl::DrawRectangle(cx - 5, cy - 1, 10, 2, rl::WHITE);
-    rl::DrawRectangle(cx - 1, cy - 5, 2, 10, rl::WHITE);
+    // ===== CROSSHAIR =====
+    rl::DrawRectangle(cx - 6, cy - 2, 12, 4, rl::Color{r: 0, g: 0, b: 0, a: 140});
+    rl::DrawRectangle(cx - 2, cy - 6, 4, 12, rl::Color{r: 0, g: 0, b: 0, a: 140});
+    rl::DrawRectangle(cx - 5, cy - 1, 10, 2, rl::Color{r: 255, g: 255, b: 255, a: 200});
+    rl::DrawRectangle(cx - 1, cy - 5, 2, 10, rl::Color{r: 255, g: 255, b: 255, a: 200});
+    // Dot center
+    rl::DrawRectangle(cx - 1, cy - 1, 2, 2, rl::Color{r: 255, g: 220, b: 80, a: 255});
 
-    rl::DrawText("Zen Craft", 10, 10, 40, rl::WHITE);
+    // ===== HOTBAR (bottom center) =====
+    let slot_size = 52;
+    let slot_pad = 4;
+    let hotbar_slots = 7;
+    let hotbar_w = hotbar_slots * slot_size + (hotbar_slots - 1) * slot_pad;
+    let hotbar_x = cx - hotbar_w / 2;
+    let hotbar_y = screen_h - slot_size - 16;
     
-    // Stats Bars
-    let bar_w = 200; let bar_h = 20; let bar_x = 20;
-    let bar_y_health = screen_h - 50; let bar_y_mana = screen_h - 25;
+    // Hotbar background panel (glassmorphism)
+    rl::DrawRectangle(hotbar_x - 8, hotbar_y - 8, hotbar_w + 16, slot_size + 16, rl::Color{r: 10, g: 10, b: 20, a: 160});
+    rl::DrawRectangleLines(hotbar_x - 8, hotbar_y - 8, hotbar_w + 16, slot_size + 16, rl::Color{r: 80, g: 80, b: 100, a: 120});
+    // Inner glow line at top
+    rl::DrawRectangle(hotbar_x - 6, hotbar_y - 7, hotbar_w + 12, 1, rl::Color{r: 200, g: 200, b: 255, a: 40});
     
-    rl::DrawRectangle(bar_x, bar_y_health, bar_w, bar_h, rl::GRAY);
-    rl::DrawRectangle(bar_x, bar_y_health, (int)((float)bar_w * (p.health / 100.0)), bar_h, rl::RED);
-    rl::DrawRectangleLines(bar_x, bar_y_health, bar_w, bar_h, rl::BLACK);
-    rl::DrawText(rl::TextFormat("%.0f", p.health), bar_x + 5, bar_y_health + 2, 20, rl::WHITE);
-
-    rl::DrawRectangle(bar_x, bar_y_mana, bar_w, bar_h, rl::GRAY);
-    rl::DrawRectangle(bar_x, bar_y_mana, (int)((float)bar_w * (p.mana / 100.0)), bar_h, rl::BLUE);
-    rl::DrawRectangleLines(bar_x, bar_y_mana, bar_w, bar_h, rl::BLACK);
-    rl::DrawText(rl::TextFormat("%.0f", p.mana), bar_x + 5, bar_y_mana + 2, 20, rl::WHITE);
-
-    rl::DrawText(version, 10, screen_h - 75, 16, rl::Color{r: 200, g: 200, b: 200, a: 180});
-
-    rl::DrawText("Select: 1-8", 10, 60, 20, rl::WHITE);
-    rl::DrawText(rl::TextFormat("Block: %d", selected_block), 10, 90, 20, rl::WHITE);
+    for i in 0..hotbar_slots {
+        let sx = hotbar_x + i * (slot_size + slot_pad);
+        let sy = hotbar_y;
+        let spell_id = spellbook.hotbar[i];
+        let is_selected = i == spellbook.hotbar_selected;
+        
+        // Slot background
+        if is_selected {
+            // Active slot - golden glow
+            rl::DrawRectangle(sx - 2, sy - 2, slot_size + 4, slot_size + 4, rl::Color{r: 255, g: 200, b: 50, a: 180});
+            rl::DrawRectangle(sx, sy, slot_size, slot_size, rl::Color{r: 40, g: 35, b: 25, a: 230});
+        } else {
+            rl::DrawRectangle(sx, sy, slot_size, slot_size, rl::Color{r: 25, g: 25, b: 35, a: 200});
+        }
+        rl::DrawRectangleLines(sx, sy, slot_size, slot_size, rl::Color{r: 80, g: 80, b: 90, a: 180});
+        
+        // Spell icon
+        draw_spell_icon(spell_id, sx, sy, slot_size);
+        
+        // Slot number (top-left corner, small)
+        rl::DrawText(rl::TextFormat("%d", i + 1), sx + 3, sy + 2, 12, rl::Color{r: 200, g: 200, b: 200, a: 150});
+    }
+    
+    // Active spell name (above hotbar)
+    let active_spell = spellbook.hotbar[spellbook.hotbar_selected];
+    let spell_name = get_spell_name(active_spell);
+    let name_w = rl::MeasureText(spell_name, 16);
+    rl::DrawText(spell_name, cx - name_w / 2, hotbar_y - 22, 16, rl::Color{r: 220, g: 220, b: 220, a: 220});
+    
+    // ===== HP & MANA BARS (bottom-left, above hotbar) =====
+    let bar_w = 180; let bar_h = 14;
+    let bar_x = 16;
+    let bar_y_hp = screen_h - 52;
+    let bar_y_mp = screen_h - 32;
+    
+    // HP Bar
+    // Background
+    rl::DrawRectangle(bar_x, bar_y_hp, bar_w, bar_h, rl::Color{r: 20, g: 8, b: 8, a: 200});
+    // Fill (red gradient)
+    let hp_fill = (int)((float)bar_w * (p.health / 100.0));
+    if hp_fill > 0 {
+        rl::DrawRectangle(bar_x, bar_y_hp, hp_fill, bar_h / 2, rl::Color{r: 220, g: 50, b: 50, a: 255});
+        rl::DrawRectangle(bar_x, bar_y_hp + bar_h / 2, hp_fill, bar_h / 2, rl::Color{r: 180, g: 30, b: 30, a: 255});
+        // Shine highlight
+        rl::DrawRectangle(bar_x, bar_y_hp, hp_fill, 2, rl::Color{r: 255, g: 120, b: 120, a: 100});
+    }
+    rl::DrawRectangleLines(bar_x, bar_y_hp, bar_w, bar_h, rl::Color{r: 60, g: 20, b: 20, a: 200});
+    // Heart icon
+    rl::DrawText("HP", bar_x + 4, bar_y_hp + 1, 12, rl::Color{r: 255, g: 200, b: 200, a: 220});
+    rl::DrawText(rl::TextFormat("%.0f", p.health), bar_x + bar_w - 35, bar_y_hp + 1, 12, rl::WHITE);
+    
+    // Mana Bar
+    rl::DrawRectangle(bar_x, bar_y_mp, bar_w, bar_h, rl::Color{r: 8, g: 8, b: 25, a: 200});
+    let mp_fill = (int)((float)bar_w * (p.mana / 100.0));
+    if mp_fill > 0 {
+        rl::DrawRectangle(bar_x, bar_y_mp, mp_fill, bar_h / 2, rl::Color{r: 60, g: 120, b: 255, a: 255});
+        rl::DrawRectangle(bar_x, bar_y_mp + bar_h / 2, mp_fill, bar_h / 2, rl::Color{r: 40, g: 80, b: 200, a: 255});
+        rl::DrawRectangle(bar_x, bar_y_mp, mp_fill, 2, rl::Color{r: 140, g: 180, b: 255, a: 100});
+    }
+    rl::DrawRectangleLines(bar_x, bar_y_mp, bar_w, bar_h, rl::Color{r: 20, g: 20, b: 60, a: 200});
+    rl::DrawText("MP", bar_x + 4, bar_y_mp + 1, 12, rl::Color{r: 200, g: 200, b: 255, a: 220});
+    rl::DrawText(rl::TextFormat("%.0f", p.mana), bar_x + bar_w - 35, bar_y_mp + 1, 12, rl::WHITE);
+    
+    // ===== VERSION TEXT =====
+    rl::DrawText(version, 10, 10, 14, rl::Color{r: 180, g: 180, b: 180, a: 120});
+    
+    // ===== OBELISK NOTIFICATION =====
+    if obelisk_count == 0 {
+        let notif_text = "Place an Obelisk to start a village.";
+        let font_size = 20;
+        let pad = 15;
+        let txt_w = rl::MeasureText(notif_text, font_size);
+        
+        let bg_w = txt_w + pad * 2;
+        let bg_h = font_size + pad * 2;
+        let bg_x = screen_w - bg_w - 20;
+        let bg_y = 20;
+        
+        rl::DrawRectangle(bg_x, bg_y, bg_w, bg_h, rl::Color{r: 30, g: 30, b: 40, a: 220});
+        rl::DrawRectangleLines(bg_x, bg_y, bg_w, bg_h, rl::GOLD);
+        rl::DrawText(notif_text, bg_x + pad, bg_y + pad, font_size, rl::WHITE);
+    }
 }
 
 fn draw_debug_info(p: Player*, chunks: Chunk*, dt: float, day_time: float, draw_distance: int, worker_count: int, wolf_count: int) {

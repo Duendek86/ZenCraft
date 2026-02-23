@@ -1,0 +1,352 @@
+2: d=1 raw {
+14: d=1 void* sys_zdebug_malloc(int sz) { return zdebug_malloc((size_t)sz); }
+15: d=1 void sys_zdebug_free(void* p) { zdebug_free(p); }
+16: d=1 void sys_zdebug_register_atexit() { zdebug_register_atexit(); }
+17: d=0 }
+63: d=1 fn main() {
+104: d=1 let title_cam = rl::Camera3D{ position: rl::Vector3{x: 8.0, y: 15.0, z: 25.0}, target: rl::Vector3{x: 8.0, y: 12.0, z: 0.0}, up: rl::Vector3{x: 0.0, y: 1.0, z: 0.0}, fovy: 50.0, projection: rl::CAMERA_PERSPECTIVE };
+113: d=1 for wi in 0..MAX_WOLVES { wolves[wi].active = 0; }
+115: d=2 defer {
+127: d=1 }
+129: d=1 for i in 0..MAX_CHUNKS { chunks[i].x = -9999; chunks[i].z = -9999; chunks[i].locked = 0; chunks[i].chest_count = 0; }
+140: d=2 while rl::WindowShouldClose() == 0 {
+141: d=3 if rl::IsMouseButtonPressed(rl::MOUSE_BUTTON_LEFT) {
+142: d=3 if current_state == STATE_GAME && show_settings == 0 && show_spellbook == 0 && is_chest_ui_open() == 0 && is_scepter_ui_open() == 0 && is_banner_ui_open() == 0 && show_exit_confirm == 0 { rl::DisableCursor(); }
+143: d=2 }
+146: d=2 if dt > 0.1 { dt = 0.1; }
+148: d=2 if rl::IsKeyPressed(rl::KEY_F11) { rl::ToggleFullscreen(); }
+152: d=3 if current_state == STATE_GAME {
+154: d=3 if is_night { target_music = 3; } else { target_music = 2; }
+155: d=2 }
+157: d=3 if fade_target_music != target_music {
+159: d=4 if current_music_playing == 0 {
+162: d=4 if current_music_playing == 1 { rl::PlayMusicStream(menu_music); }
+163: d=4 else if current_music_playing == 2 { rl::PlayMusicStream(day_music); }
+164: d=4 else if current_music_playing == 3 { rl::PlayMusicStream(night_music); }
+165: d=4 } else {
+167: d=3 }
+168: d=2 }
+170: d=3 if fade_state == 1 { // FADE OUT
+172: d=4 if fade_vol <= 0.0 {
+174: d=4 if current_music_playing == 1 { rl::StopMusicStream(menu_music); }
+175: d=4 else if current_music_playing == 2 { rl::StopMusicStream(day_music); }
+176: d=4 else if current_music_playing == 3 { rl::StopMusicStream(night_music); }
+180: d=3 }
+181: d=3 } else if fade_state == 2 { // WAIT
+183: d=4 if fade_timer <= 0.0 {
+186: d=4 if current_music_playing == 1 { rl::PlayMusicStream(menu_music); }
+187: d=4 else if current_music_playing == 2 { rl::PlayMusicStream(day_music); }
+188: d=4 else if current_music_playing == 3 { rl::PlayMusicStream(night_music); }
+190: d=3 }
+191: d=3 } else if fade_state == 3 { // FADE IN
+193: d=4 if fade_vol >= 1.0 {
+196: d=3 }
+197: d=2 }
+200: d=2 if current_music_playing == 1 { rl::SetMusicVolume(menu_music, fade_vol); rl::UpdateMusicStream(menu_music); }
+201: d=2 else if current_music_playing == 2 { rl::SetMusicVolume(day_music, fade_vol); rl::UpdateMusicStream(day_music); }
+202: d=2 else if current_music_playing == 3 { rl::SetMusicVolume(night_music, fade_vol); rl::UpdateMusicStream(night_music); }
+205: d=3 if current_state == STATE_TITLE {
+208: d=4 if rl::IsKeyPressed(rl::KEY_ENTER) {
+212: d=3 }
+216: d=4 for i in 0..MAX_CHUNKS {
+217: d=4 if chunks[i].x != -9999 && chunks[i].mesh_dirty != 0 && chunks[i].locked == 0 { request_mesh_async(i, 0); }
+218: d=3 }
+221: d=3 rl::ClearBackground(rl::Color{r: 20, g: 20, b: 30, a: 255});
+231: d=3 raw { rlDisableBackfaceCulling(); }
+233: d=3 for i in 0..MAX_CHUNKS { if chunks[i].x != -9999 { chunks[i].draw_opaque(chunks, MAX_CHUNKS, &title_builds, 100, 8, 25); } }
+234: d=3 for i in 0..MAX_CHUNKS { if chunks[i].x != -9999 { chunks[i].draw_transparent(chunks, MAX_CHUNKS, 8, 25, grass_dist); } }
+241: d=2 }
+244: d=3 else if current_state == STATE_WORLD_SELECT {
+249: d=4 if res == 1 {
+252: d=4 for i in 0..MAX_CHUNKS { chunks[i].x = -9999; chunks[i].z = -9999; chunks[i].mesh_built = 0; }
+263: d=4 } else if res == -1 {
+266: d=3 }
+267: d=2 }
+270: d=3 else if current_state == STATE_LOADING {
+274: d=4 if loading_is_done == 1 {
+280: d=5 if has_save == 0 { py = 64.0; } else {
+282: d=6 for zi in 0..MAX_ZIBIS {
+317: d=7 if zibis[zi].active == 1 {
+318: d=8 if zibis[zi].state == ZIBI_WORKER || zibis[zi].state == ZIBI_WALK_TO_OBELISK {
+319: d=9 if zibis[zi].find_obelisk(chunks, MAX_CHUNKS) == 0 {
+322: d=8 }
+323: d=7 }
+324: d=6 }
+325: d=5 }
+326: d=4 }
+333: d=5 for ci in 0..MAX_CHUNKS {
+334: d=6 if chunks[ci].x != -9999 {
+336: d=5 }
+337: d=4 }
+341: d=3 }
+343: d=2 }
+346: d=3 else {
+352: d=4 for i in 0..MAX_CHUNKS {
+353: d=5 if chunks[i].x != -9999 && chunks[i].locked == 0 {
+355: d=6 if dist_x > unload_dist || dist_z > unload_dist {
+359: d=5 }
+360: d=4 }
+361: d=3 }
+363: d=3 for i in 0..MAX_CHUNKS { if chunks[i].x != -9999 && chunks[i].locked == 0 { tick_chunk(&chunks[i], chunks, MAX_CHUNKS); } }
+369: d=4 for dist in 0..(draw_distance + 1) {
+370: d=4 if requests_this_frame >= max_req { break; }
+371: d=5 if dist == 0 {
+373: d=6 if chunks[idx].x != pcx || chunks[idx].z != pcz {
+374: d=7 if is_chunk_pending(pcx, pcz) == 0 && chunks[idx].locked == 0 {
+375: d=7 if chunks[idx].x != -9999 { request_save_async(&chunks[idx]); }
+379: d=6 }
+380: d=5 }
+382: d=4 }
+384: d=5 for side in 0..4 {
+385: d=6 for step in 0..(dist * 2) {
+386: d=6 if requests_this_frame >= max_req { break; }
+388: d=6 if side == 0 { dx = -dist + step; dz = -dist; }
+389: d=6 else if side == 1 { dx = dist; dz = -dist + step; }
+390: d=6 else if side == 2 { dx = dist - step; dz = dist; }
+391: d=6 else { dx = -dist; dz = dist - step; }
+396: d=7 if chunks[idx].x != cx || chunks[idx].z != cz {
+397: d=8 if is_chunk_pending(cx, cz) == 0 && chunks[idx].locked == 0 {
+398: d=8 if chunks[idx].x != -9999 { request_save_async(&chunks[idx]); }
+402: d=7 }
+403: d=6 }
+404: d=5 }
+405: d=4 }
+406: d=3 }
+408: d=3 if first_frame == 1 { init_particles(); first_frame = 0; }
+415: d=4 for i in 0..MAX_CHUNKS {
+416: d=4 if mesh_requests >= 32 { break; }
+417: d=5 if chunks[i].x != -9999 && chunks[i].mesh_dirty != 0 && chunks[i].locked == 0 {
+418: d=5 if request_mesh_async(i, 0) == 1 { mesh_requests++; }
+419: d=4 }
+420: d=3 }
+422: d=4 for i in 0..MAX_CHUNKS {
+423: d=5 if chunks[i].x != -9999 && chunks[i].mesh_built != 0 && chunks[i].grass_deco_built == 0 {
+424: d=5 if grass_dist > 0.0 { build_grass_decorations(&chunks[i], chunks, MAX_CHUNKS); }
+425: d=4 }
+426: d=3 }
+428: d=4 if rl::IsKeyPressed(rl::KEY_ESCAPE) {
+429: d=4 if show_spellbook == 1 { show_spellbook = 0; rl::DisableCursor(); }
+430: d=4 else if show_settings == 1 { show_settings = 0; rl::DisableCursor(); }
+431: d=4 else if is_chest_ui_open() == 1 { /* handled in chest_ui close logic */ rl::DisableCursor(); }
+432: d=4 else if is_scepter_ui_open() == 1 { /* handled in inventory_ui close logic */ rl::DisableCursor(); }
+433: d=4 else if is_banner_ui_open() == 1 { /* handled in banner_ui close logic */ rl::DisableCursor(); }
+434: d=4 else if show_exit_confirm == 1 { show_exit_confirm = 0; rl::DisableCursor(); }
+435: d=4 else { show_exit_confirm = 1; rl::EnableCursor(); }
+436: d=3 }
+437: d=4 if show_exit_confirm == 1 {
+438: d=5 if rl::IsKeyPressed(rl::KEY_ENTER) {
+440: d=4 }
+441: d=3 }
+443: d=4 if rl::IsKeyPressed(rl::KEY_E) {
+444: d=5 if show_exit_confirm == 0 && is_chest_ui_open() == 0 {
+446: d=5 if show_spellbook { rl::EnableCursor(); } else { rl::DisableCursor(); }
+447: d=4 }
+448: d=3 }
+449: d=4 if rl::IsKeyPressed(rl::KEY_I) {
+450: d=5 if is_chest_ui_open() == 0 && show_spellbook == 0 && show_settings == 0 && is_banner_ui_open() == 0 && show_exit_confirm == 0 { // Don't allow overlapping UIs
+452: d=4 }
+453: d=3 }
+455: d=4 if show_settings == 0 && show_spellbook == 0 && is_scepter_ui_open() == 0 && is_chest_ui_open() == 0 && is_banner_ui_open() == 0 && show_exit_confirm == 0 {
+457: d=3 }
+461: d=4 for i in 0..MAX_ZIBIS {
+462: d=5 if zibis[i].active == 1 {
+464: d=5 if zibis[i].update(chunks, MAX_CHUNKS, dt, p.x, p.y, p.z, day_time, &wolves[0], MAX_WOLVES, &zibis[0], MAX_ZIBIS) == 0 { active_zibis--; }
+465: d=5 if zibis[i].state == ZIBI_WORKER { worker_count++; }
+466: d=4 }
+467: d=3 }
+470: d=4 if cage_break_pending == 1 {
+473: d=4 for i in 0..MAX_ZIBIS { if zibis[i].active == 0 { slot = i; break; } }
+474: d=5 if slot != -1 {
+476: d=5 spawn_explosion(cage_break_x, cage_break_y, cage_break_z, 15, rl::Color{r: 200, g: 255, b: 200, a: 200});
+477: d=4 }
+478: d=3 }
+484: d=3 for wi in 0..MAX_WOLVES { if wolves[wi].active == 1 { active_wolves++; } }
+487: d=4 if is_night && was_night == 0 {
+494: d=5 for ci in 0..MAX_CHUNKS {
+495: d=5 if chunks[ci].x == -9999 { continue; }
+496: d=6 for si in 0..chunks[ci].obelisk_count {
+497: d=7 if chunks[ci].obelisks[si].level > max_obelisk_level {
+499: d=6 }
+500: d=5 }
+501: d=4 }
+505: d=4 if wave_size > MAX_WOLVES { wave_size = MAX_WOLVES; }
+508: d=5 for ws in 0..wave_size {
+510: d=5 for wi in 0..MAX_WOLVES { if wolves[wi].active == 0 { wolf_slot = wi; break; } }
+511: d=5 if wolf_slot == -1 { break; } // No free slots
+519: d=6 if chunks[widx].x == wcx && chunks[widx].z == wcz && chunks[widx].mesh_built == 1 {
+521: d=7 for sy_search in 0..CHUNK_HEIGHT {
+524: d=8 if b != BLOCK_AIR && b != BLOCK_TALLGRASS && b != BLOCK_LEAVES && b != BLOCK_WATER {
+527: d=7 }
+528: d=6 }
+529: d=7 if spawn_y > 0.0 {
+531: d=6 }
+532: d=5 }
+533: d=4 }
+534: d=3 }
+537: d=4 if !is_night && was_night == 1 {
+539: d=3 }
+543: d=4 for wi in 0..MAX_WOLVES {
+544: d=5 if wolves[wi].active == 1 {
+546: d=6 if wolf_result == 2 {
+549: d=6 if p.health < 0.0 { p.health = 0.0; }
+550: d=5 }
+551: d=4 }
+552: d=3 }
+554: d=3 if rl::IsKeyPressed(rl::KEY_F3) { show_debug_info = !show_debug_info; }
+555: d=4 if rl::IsKeyPressed(rl::KEY_F1) {
+557: d=4 if show_settings { rl::EnableCursor(); } else { rl::DisableCursor(); }
+558: d=3 }
+561: d=3 if day_time > 1.0 { day_time = day_time - 1.0; }
+570: d=3 if day_time < 0.166 { let t = day_time / 0.166; sky_r = (int)(135.0 * t); sky_g = (int)(206.0 * t); sky_b = (int)(5.0 * (1.0 - t) + 235.0 * t); }
+571: d=3 else if day_time < 0.5 { sky_r = 135; sky_g = 206; sky_b = 235; }
+572: d=3 else if day_time < 0.666 { let t = (day_time - 0.5) / 0.166; sky_r = (int)(135.0 * (1.0 - t)); sky_g = (int)(206.0 * (1.0 - t)); sky_b = (int)(235.0 * (1.0 - t) + 5.0 * t); }
+574: d=3 rl::ClearBackground(rl::Color{r: sky_r, g: sky_g, b: sky_b, a: 255});
+579: d=3 rl::ClearBackground(rl::Color{r: sky_r, g: sky_g, b: sky_b, a: 255});
+583: d=3 raw { rlDisableBackfaceCulling(); rlEnableDepthTest(); rlSetBlendMode(BLEND_ALPHA); }
+588: d=3 if cam_len > 0.001 { cam_fx = cam_fx / cam_len; cam_fz = cam_fz / cam_len; }
+594: d=4 for i in 0..MAX_CHUNKS {
+596: d=5 if c.x != -9999 {
+598: d=6 if dist_x <= draw_distance && dist_z <= draw_distance && crystal_count < 16 {
+599: d=7 for s in 0..c.obelisk_count {
+600: d=7 if crystal_count >= 16 { break; }
+606: d=6 }
+607: d=5 }
+608: d=4 }
+609: d=3 }
+615: d=3 if loc_c_cnt != -1 { rl::SetShaderValue(sh_light, loc_c_cnt, &crystal_count, rl::SHADER_UNIFORM_INT); }
+616: d=3 if loc_c_pts != -1 && crystal_count > 0 { rl::SetShaderValueV(sh_light, loc_c_pts, &crystal_points[0], rl::SHADER_UNIFORM_VEC3, crystal_count); }
+622: d=3 if loc_g_c_cnt != -1 { rl::SetShaderValue(sh_grass_fx, loc_g_c_cnt, &crystal_count, rl::SHADER_UNIFORM_INT); }
+623: d=3 if loc_g_c_pts != -1 && crystal_count > 0 { rl::SetShaderValueV(sh_grass_fx, loc_g_c_pts, &crystal_points[0], rl::SHADER_UNIFORM_VEC3, crystal_count); }
+625: d=4 for i in 0..MAX_CHUNKS {
+627: d=5 if c.x != -9999 {
+629: d=6 if dist_x <= draw_distance && dist_z <= draw_distance {
+630: d=7 if dist_x > 1 || dist_z > 1 {
+633: d=7 if chunk_dist > 0.001 { if ((cam_fx * chunk_cx + cam_fz * chunk_cz) / chunk_dist) < -0.2 { continue; } }
+634: d=6 }
+636: d=5 }
+639: d=6 if dist_x <= draw_distance && dist_z <= draw_distance {
+640: d=7 if c.skull_count > 0 {
+652: d=7 if loc_use_entity != -1 { rl::SetShaderValue(sh, loc_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+654: d=8 for s in 0..c.skull_count {
+655: d=8 let pos = rl::Vector3{x: (float)(c.x * 16) + c.skulls[s].x, y: c.skulls[s].y + 0.1, z: (float)(c.z * 16) + c.skulls[s].z};
+660: d=8 let el = rl::Vector2{x: (float)(packed_light & 0xF) / 15.0, y: (float)((packed_light >> 4) & 0xF) / 15.0};
+661: d=8 if loc_entity_light != -1 { rl::SetShaderValue(sh, loc_entity_light, &el, rl::SHADER_UNIFORM_VEC2); }
+663: d=8 rl::DrawModelEx(model, pos, rl::Vector3{x: 0.0, y: 1.0, z: 0.0}, c.skulls[s].rotation, rl::Vector3{x: 1.0, y: 1.0, z: 1.0}, rl::WHITE);
+664: d=7 }
+669: d=7 if loc_use_entity != -1 { rl::SetShaderValue(sh, loc_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+670: d=6 }
+671: d=5 }
+674: d=6 if dist_x <= draw_distance && dist_z <= draw_distance {
+675: d=7 if c.obelisk_count > 0 {
+690: d=7 if loc_use_entity != -1 { rl::SetShaderValue(sh, loc_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+691: d=7 if loc_c_use_entity != -1 { rl::SetShaderValue(sh_c, loc_c_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+695: d=8 for s in 0..c.obelisk_count {
+696: d=8 let pos = rl::Vector3{x: (float)(c.x * 16) + c.obelisks[s].x, y: c.obelisks[s].y, z: (float)(c.z * 16) + c.obelisks[s].z};
+701: d=8 let el = rl::Vector2{x: (float)(packed_light & 0xF) / 15.0, y: (float)((packed_light >> 4) & 0xF) / 15.0};
+702: d=8 if loc_entity_light != -1 { rl::SetShaderValue(sh, loc_entity_light, &el, rl::SHADER_UNIFORM_VEC2); }
+703: d=8 if loc_c_entity_light != -1 { rl::SetShaderValue(sh_c, loc_c_entity_light, &el, rl::SHADER_UNIFORM_VEC2); }
+705: d=8 rl::DrawModelEx(model_base, pos, rl::Vector3{x: 0.0, y: 1.0, z: 0.0}, 0.0, rl::Vector3{x: 1.0, y: 1.0, z: 1.0}, rl::WHITE);
+725: d=9 if bcx == rx && bcy == ry && bcz == rz {
+728: d=9 if emission_val > 2.0 { emission_val = 2.0; } // Max brightness limit
+729: d=8 }
+732: d=8 if loc_em != -1 { rl::SetShaderValue(sh, loc_em, &emission_val, rl::SHADER_UNIFORM_FLOAT); }
+734: d=8 if loc_c_em != -1 { rl::SetShaderValue(sh_c, loc_c_em, &emission_val, rl::SHADER_UNIFORM_FLOAT); }
+736: d=8 rl::DrawModelEx(model_cristal, cristal_pos, rl::Vector3{x: 0.0, y: 1.0, z: 0.0}, spin_angle, rl::Vector3{x: 1.0, y: 1.0, z: 1.0}, rl::WHITE);
+740: d=8 if loc_em != -1 { rl::SetShaderValue(sh, loc_em, &emission_val, rl::SHADER_UNIFORM_FLOAT); }
+741: d=8 if loc_c_em != -1 { rl::SetShaderValue(sh_c, loc_c_em, &emission_val, rl::SHADER_UNIFORM_FLOAT); }
+742: d=7 }
+747: d=7 if loc_use_entity != -1 { rl::SetShaderValue(sh, loc_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+748: d=7 if loc_c_use_entity != -1 { rl::SetShaderValue(sh_c, loc_c_use_entity, &use_ent, rl::SHADER_UNIFORM_INT); }
+749: d=6 }
+750: d=5 }
+751: d=4 }
+752: d=3 }
+754: d=4 for i in 0..MAX_CHUNKS {
+756: d=5 if c.x != -9999 {
+758: d=6 if dist_x <= draw_distance && dist_z <= draw_distance {
+759: d=7 if dist_x > 1 || dist_z > 1 {
+762: d=7 if chunk_dist > 0.001 { if ((cam_fx * chunk_cx + cam_fz * chunk_cz) / chunk_dist) < -0.2 { continue; } }
+763: d=6 }
+765: d=5 }
+766: d=4 }
+767: d=3 }
+770: d=4 if show_debug_info {
+771: d=5 for i in 0..MAX_CHUNKS {
+773: d=5 if c.x == -9999 { continue; }
+775: d=5 if dist_x > draw_distance || dist_z > draw_distance { continue; }
+776: d=6 for wi in 0..c.waypoint_count {
+779: d=6 rl::DrawCube(rl::Vector3{x: (float)wp.x + 0.5, y: (float)wp.y + 0.02, z: (float)wp.z + 0.5}, 0.2, 0.04, 0.2, rl::Color{r:255, g:200, b:0, a:220});
+780: d=6 rl::DrawCubeWires(rl::Vector3{x: (float)wp.x + 0.5, y: (float)wp.y + 0.02, z: (float)wp.z + 0.5}, 0.2, 0.04, 0.2, rl::BLACK);
+781: d=5 }
+782: d=4 }
+783: d=3 }
+785: d=4 for zi in 0..MAX_ZIBIS {
+787: d=4 if zb.active == 0 { continue; }
+789: d=5 if zb.state == ZIBI_WALK_TO_OBELISK {
+790: d=6 if !(zb.waypoint_target_x == 0 && zb.waypoint_target_y == 0 && zb.waypoint_target_z == 0) {
+794: d=6 rl::DrawCube(rl::Vector3{x: wx, y: wy, z: wz}, 0.35, 0.35, 0.35, rl::Color{r:0, g:220, b:0, a:200});
+795: d=6 rl::DrawCubeWires(rl::Vector3{x: wx, y: wy, z: wz}, 0.35, 0.35, 0.35, rl::BLACK);
+796: d=6 rl::DrawLine3D(rl::Vector3{x: zb.x, y: zb.y + 0.5, z: zb.z}, rl::Vector3{x: wx, y: wy, z: wz}, rl::Color{r:0, g:180, b:0, a:180});
+797: d=5 }
+799: d=6 for pi in zb.path_idx..zb.path_len {
+802: d=6 rl::DrawCube(rl::Vector3{x: px, y: py, z: pz}, 0.18, 0.04, 0.18, rl::Color{r:50, g:150, b:255, a:200});
+803: d=6 rl::DrawCubeWires(rl::Vector3{x: px, y: py, z: pz}, 0.18, 0.04, 0.18, rl::BLACK);
+804: d=5 }
+805: d=4 }
+806: d=3 }
+808: d=3 for i in 0..MAX_ZIBIS { zibis[i].draw(chunks, MAX_CHUNKS, day_time); }
+809: d=3 for wi in 0..MAX_WOLVES { wolves[wi].draw(chunks, MAX_CHUNKS, day_time); }
+816: d=4 if show_settings == 0 && show_spellbook == 0 && is_chest_ui_open() == 0 && is_scepter_ui_open() == 0 && is_banner_ui_open() == 0 && show_exit_confirm == 0 {
+818: d=3 }
+829: d=4 for i in 0..MAX_ZIBIS {
+830: d=5 if zibis[i].active == 1 && zibis[i].hp < 30 {
+831: d=5 let ui_pos = rl::Vector3{x: zibis[i].x, y: zibis[i].y + 1.2, z: zibis[i].z};
+834: d=6 if (dx*fwd_x + dy*fwd_y + dz*fwd_z) > 0.0 {
+837: d=6 if pct < 0.0 { pct = 0.0; }
+842: d=5 }
+843: d=4 }
+844: d=3 }
+845: d=4 for i in 0..MAX_WOLVES {
+846: d=5 if wolves[i].active == 1 && wolves[i].hp < 50 { // WOLF_HP isn't exported globally easily, hardcoded to 50
+847: d=5 let ui_pos = rl::Vector3{x: wolves[i].x, y: wolves[i].y + 1.5, z: wolves[i].z};
+850: d=6 if (dx*fwd_x + dy*fwd_y + dz*fwd_z) > 0.0 {
+853: d=6 if pct < 0.0 { pct = 0.0; }
+858: d=5 }
+859: d=4 }
+863: d=5 if show_settings == 0 && show_exit_confirm == 0 {
+865: d=4 }
+867: d=4 if show_debug_info { draw_debug_info(&p, chunks, dt, day_time, draw_distance, worker_count, active_wolves); }
+868: d=4 if show_settings { draw_settings_menu(&draw_distance, &grass_dist); }
+869: d=4 if show_spellbook { draw_spellbook(&spellbook, &selected_block, chunks, MAX_CHUNKS); }
+872: d=5 for zi in 0..MAX_ZIBIS {
+873: d=5 if zibis[zi].active == 1 { total_active_zibis++; }
+874: d=4 }
+879: d=5 if wave_number > 0 {
+887: d=5 rl::DrawRectangle(hx - 10, hy - 5, tw + 20, 34, rl::Color{r: 20, g: 10, b: 30, a: 180});
+888: d=5 rl::DrawRectangleLines(hx - 10, hy - 5, tw + 20, 34, rl::Color{r: 180, g: 80, b: 80, a: 200});
+890: d=5 let wave_col = rl::Color{r: 255, g: 100, b: 100, a: 255};
+891: d=5 if active_wolves == 0 && is_night { wave_col = rl::Color{r: 100, g: 255, b: 100, a: 255}; } // Green if cleared
+895: d=6 if is_night {
+898: d=6 rl::DrawRectangle(screen_w - etw - 30, hy + 34, etw + 20, 24, rl::Color{r: 20, g: 10, b: 30, a: 150});
+899: d=6 rl::DrawText(enemies_txt, screen_w - etw - 20, hy + 37, 16, rl::Color{r: 200, g: 200, b: 200, a: 220});
+900: d=5 }
+901: d=4 }
+904: d=5 if show_exit_confirm == 1 {
+907: d=5 rl::DrawRectangle(0, 0, screen_w, screen_h, rl::Color{r: 0, g: 0, b: 0, a: 150});
+911: d=5 rl::DrawRectangle(box_x, box_y, box_w, box_h, rl::Color{r: 30, g: 30, b: 40, a: 240});
+921: d=4 }
+924: d=3 }
+925: d=2 }
+928: d=3 if current_state == STATE_GAME {
+930: d=4 for zi in 0..MAX_ZIBIS {
+948: d=3 }
+951: d=4 for i in 0..MAX_CHUNKS {
+952: d=5 if chunks[i].x != -9999 {
+953: d=6 while get_pending_req_count() >= 250 {
+957: d=5 }
+959: d=4 }
+960: d=3 }
+963: d=4 while get_pending_req_count() > 0 && (rl::GetTime() - start_wait) < 5.0 {
+968: d=3 }
+969: d=2 }
+970: d=1 }

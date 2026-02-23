@@ -10,6 +10,8 @@ import "../render/particles.zc";
 import "../render/rendering.zc";
 import "../world/persistence.zc";
 
+extern fn get_total_obelisk_count(chunks: Chunk*, num_chunks: int) -> int;
+
 let destroy_timer: float = 0.0;
 let destroy_target_x: int = -999;
 let destroy_target_y: int = -999;
@@ -419,7 +421,7 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                             remove_chest_at(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z);
                         }
                         
-                        if b_hit == BLOCK_BANNER {
+                        if b_hit == BLOCK_BANNER || b_hit == BLOCK_LUMBER_BANNER {
                             remove_banner_at(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z);
                         }
                         
@@ -458,7 +460,7 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
             let hit_block = get_block(chunks, MAX_CHUNKS, hit.x, hit.y, hit.z);
             
             // Check for Banner first (regardless of spell)
-            if hit_block == BLOCK_BANNER {
+            if hit_block == BLOCK_BANNER || hit_block == BLOCK_LUMBER_BANNER {
                 let bcx = (int)floor((float)hit.x / 16.0);
                 let bcz = (int)floor((float)hit.z / 16.0);
                 let c_idx = get_chunk_index(bcx, bcz);
@@ -491,8 +493,19 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
             if selected_block == BLOCK_TORCH { min_dist = 0.5; }
             
             if (dist_x*dist_x + dist_y*dist_y + dist_z*dist_z) > min_dist {
-                if p.mana >= 10.0 {
-                    p.mana = p.mana - 10.0;
+                // Obelisks and Chests are magical invocations (mana cost, no inventory needed)
+                let is_magical = 0;
+                if selected_block == BLOCK_OBELISK || selected_block == BLOCK_CHEST { is_magical = 1; }
+                
+                let has_resource = 0;
+                if is_magical == 1 {
+                    if p.mana >= 10.0 { has_resource = 1; }
+                } else {
+                    // Normal blocks: must be in scepter inventory
+                    if scepter_has_block(selected_block) == 1 { has_resource = 1; }
+                }
+                
+                if has_resource == 1 {
                     let block_to_place = selected_block;
                     if block_to_place == BLOCK_GRASS { block_to_place = BLOCK_DIRT; }
                     
@@ -515,7 +528,10 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                     }
                     
                     if block_to_place == BLOCK_OBELISK {
-                         if ny + 2 >= CHUNK_HEIGHT { can_place = 0; }
+                         // Only 1 obelisk allowed at a time
+                         if get_total_obelisk_count(chunks, MAX_CHUNKS) >= 1 {
+                             can_place = 0;
+                         } else if ny + 2 >= CHUNK_HEIGHT { can_place = 0; }
                          else {
                               let up1 = get_block(chunks, MAX_CHUNKS, nx, ny + 1, nz);
                               let up2 = get_block(chunks, MAX_CHUNKS, nx, ny + 2, nz);
@@ -524,6 +540,13 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                     }
 
                     if can_place == 1 {
+                        // Consume resource
+                        if is_magical == 1 {
+                            p.mana = p.mana - 10.0;
+                        } else {
+                            scepter_remove_block_type(selected_block);
+                        }
+                        
                         set_block(chunks, MAX_CHUNKS, nx, ny, nz, block_to_place);
                         if block_to_place == BLOCK_OBELISK {
                              set_block(chunks, MAX_CHUNKS, nx, ny + 1, nz, BLOCK_POWER_CRYSTAL);
@@ -550,7 +573,7 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                     
                     // Register chest placement
                     if block_to_place == BLOCK_CHEST {
-                        place_chest(chunks, MAX_CHUNKS, nx, ny, nz);
+                        place_chest(chunks, MAX_CHUNKS, nx, ny, nz, p.yaw);
                     }
                     }
                 }
@@ -590,6 +613,8 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                             else if yaw_norm < 3.926991 { dir_idx = 2; }
                             else { dir_idx = 3; }
                             
+                            dir_idx = (dir_idx + 2) % 4;
+                            
                             chunks[target_chunk].banners[b_idx].active = 1 + dir_idx;
                             chunks[target_chunk].banners[b_idx].assigned_zibis = 0;
                             chunks[target_chunk].banners[b_idx].priority_count = 0;
@@ -601,6 +626,59 @@ fn handle_player_interaction(p: Player*, chunks: Chunk*, dt: float, selected_blo
                             }
                             
                             // Rebuild mesh and save
+                            request_mesh_async(target_chunk, 1);
+                            request_light_async(target_chunk, 4, 1);
+                            request_save_async(&chunks[target_chunk]);
+                        }
+                    }
+                }
+            }
+            }
+            else if selected_spell == 3 {
+            // LUMBER SPELL: Place Lumber Banner
+            if p.mana >= 15.0 {
+                let nx = hit.x + hit.face_x; let ny = hit.y + hit.face_y; let nz = hit.z + hit.face_z;
+                
+                if get_block(chunks, MAX_CHUNKS, nx, ny, nz) == BLOCK_AIR {
+                    let ny_bottom = ny - 1;
+                    let b_below = get_block(chunks, MAX_CHUNKS, nx, ny_bottom, nz);
+                    
+                    if b_below != BLOCK_AIR && b_below != BLOCK_WATER && b_below != BLOCK_WATER_0 && b_below != BLOCK_WATER_1 && b_below != BLOCK_WATER_2 {
+                        let cx2 = (int)floor((float)nx / 16.0);
+                        let cz2 = (int)floor((float)nz / 16.0);
+                        let target_chunk = get_chunk_index(cx2, cz2);
+                        
+                        if target_chunk >= 0 && chunks[target_chunk].banner_count < 4 {
+                            p.mana = p.mana - 15.0;
+                            set_block(chunks, MAX_CHUNKS, nx, ny, nz, BLOCK_LUMBER_BANNER);
+                            
+                            let b_idx = chunks[target_chunk].banner_count;
+                            chunks[target_chunk].banners[b_idx].x = nx - (cx2 * 16);
+                            chunks[target_chunk].banners[b_idx].y = ny;
+                            chunks[target_chunk].banners[b_idx].z = nz - (cz2 * 16);
+                            
+                            let yaw_norm = p.yaw;
+                            while yaw_norm < 0.0 { yaw_norm = yaw_norm + 6.2831853; }
+                            while yaw_norm >= 6.2831853 { yaw_norm = yaw_norm - 6.2831853; }
+                            
+                            let dir_idx = 0;
+                            if yaw_norm < 0.785398 || yaw_norm >= 5.497787 { dir_idx = 0; }
+                            else if yaw_norm < 2.356194 { dir_idx = 1; }
+                            else if yaw_norm < 3.926991 { dir_idx = 2; }
+                            else { dir_idx = 3; }
+                            
+                            dir_idx = (dir_idx + 2) % 4;
+                            
+                            chunks[target_chunk].banners[b_idx].active = 1 + dir_idx;
+                            chunks[target_chunk].banners[b_idx].assigned_zibis = 0;
+                            chunks[target_chunk].banners[b_idx].priority_count = 0;
+                            chunks[target_chunk].banners[b_idx].banner_type = 1; // Lumberjack
+                            chunks[target_chunk].banner_count++;
+                            
+                            for pi in 0..10 {
+                                spawn_particle((float)nx + 0.5, (float)ny + 0.5, (float)nz + 0.5, rl::Color{r: 60, g: 200, b: 60, a: 255});
+                            }
+                            
                             request_mesh_async(target_chunk, 1);
                             request_light_async(target_chunk, 4, 1);
                             request_save_async(&chunks[target_chunk]);

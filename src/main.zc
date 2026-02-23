@@ -68,6 +68,21 @@ fn main() {
     //rl::ToggleFullscreen();
     rl::SetTargetFPS(60);
 
+    // --- Audio init ---
+    rl::InitAudioDevice();
+    let menu_music: rl::Music;
+    let day_music: rl::Music;
+    let night_music: rl::Music;
+    // Load music files (streaming)
+    menu_music = rl::LoadMusicStream("assets/music/Ethereal Sandbox Exploration.mp3");
+    day_music = rl::LoadMusicStream("assets/music/Voxel Village Vibe.mp3");
+    night_music = rl::LoadMusicStream("assets/music/Crystal Cavern Depths.mp3");
+    let current_music_playing: int = 0; // 0=none,1=menu,2=day,3=night
+    let fade_state: int = 0; // 0=play, 1=fade_out, 2=wait, 3=fade_in
+    let fade_target_music: int = 0;
+    let fade_timer: float = 0.0;
+    let fade_vol: float = 0.0;
+
     init_textures();
     init_clouds();
     init_bloom(SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -100,6 +115,14 @@ fn main() {
     defer { 
         cleanup_persistence();
         sys_zdebug_free((any)chunks);
+        // Stop and unload music
+        rl::StopMusicStream(menu_music);
+        rl::StopMusicStream(day_music);
+        rl::StopMusicStream(night_music);
+        rl::UnloadMusicStream(menu_music);
+        rl::UnloadMusicStream(day_music);
+        rl::UnloadMusicStream(night_music);
+        rl::CloseAudioDevice();
         rl::CloseWindow();
     }
 
@@ -123,6 +146,60 @@ fn main() {
         if dt > 0.1 { dt = 0.1; }
         
         if rl::IsKeyPressed(rl::KEY_F11) { rl::ToggleFullscreen(); }
+        
+        // --- Music Fade State Machine ---
+        let target_music = 1; // Default to menu
+        if current_state == STATE_GAME {
+            let is_night = (day_time > 0.5);
+            if is_night { target_music = 3; } else { target_music = 2; }
+        }
+        
+        if fade_target_music != target_music {
+            fade_target_music = target_music;
+            if current_music_playing == 0 {
+                fade_state = 3; // Fade-in immediately
+                current_music_playing = target_music;
+                if current_music_playing == 1 { rl::PlayMusicStream(menu_music); }
+                else if current_music_playing == 2 { rl::PlayMusicStream(day_music); }
+                else if current_music_playing == 3 { rl::PlayMusicStream(night_music); }
+            } else {
+                fade_state = 1; // Fade-out current track
+            }
+        }
+        
+        if fade_state == 1 { // FADE OUT
+            fade_vol = fade_vol - dt * 0.5;
+            if fade_vol <= 0.0 {
+                fade_vol = 0.0;
+                if current_music_playing == 1 { rl::StopMusicStream(menu_music); }
+                else if current_music_playing == 2 { rl::StopMusicStream(day_music); }
+                else if current_music_playing == 3 { rl::StopMusicStream(night_music); }
+                current_music_playing = 0;
+                fade_state = 2;
+                fade_timer = 2.0; // Wait 2 seconds
+            }
+        } else if fade_state == 2 { // WAIT
+            fade_timer = fade_timer - dt;
+            if fade_timer <= 0.0 {
+                fade_state = 3;
+                current_music_playing = fade_target_music;
+                if current_music_playing == 1 { rl::PlayMusicStream(menu_music); }
+                else if current_music_playing == 2 { rl::PlayMusicStream(day_music); }
+                else if current_music_playing == 3 { rl::PlayMusicStream(night_music); }
+                fade_vol = 0.0;
+            }
+        } else if fade_state == 3 { // FADE IN
+            fade_vol = fade_vol + dt * 0.5;
+            if fade_vol >= 1.0 {
+                fade_vol = 1.0;
+                fade_state = 0;
+            }
+        }
+        
+        // Apply volume and update active stream
+        if current_music_playing == 1 { rl::SetMusicVolume(menu_music, fade_vol); rl::UpdateMusicStream(menu_music); }
+        else if current_music_playing == 2 { rl::SetMusicVolume(day_music, fade_vol); rl::UpdateMusicStream(day_music); }
+        else if current_music_playing == 3 { rl::SetMusicVolume(night_music, fade_vol); rl::UpdateMusicStream(night_music); }
         
         // --- TITLE STATE ---
         if current_state == STATE_TITLE {
@@ -192,6 +269,7 @@ fn main() {
         // --- LOADING STATE ---
         else if current_state == STATE_LOADING {
             process_loading_step(chunks, draw_distance);
+            draw_loading_screen();
             
             if loading_is_done == 1 {
                 let px = load_start_x; let py = load_start_y; let pz = load_start_z;
@@ -220,7 +298,12 @@ fn main() {
                         zibis[zi].mine_banner_y = zibis_save[zi].mine_banner_y;
                         zibis[zi].mine_banner_z = zibis_save[zi].mine_banner_z;
                         zibis[zi].mine_target_y = -999;
-                        
+
+                        // Reset navigation-related transient fields so loaded zibis recompute routes
+                        zibis[zi].path_len = 0; zibis[zi].path_idx = 0; zibis[zi].path_timer = 0.0;
+                        zibis[zi].waypoint_target_x = 0; zibis[zi].waypoint_target_y = 0; zibis[zi].waypoint_target_z = 0;
+                        zibis[zi].stuck_timer = 0.0; zibis[zi].last_stuck_check_x = zibis[zi].x; zibis[zi].last_stuck_check_z = zibis[zi].z;
+
                         zibis[zi].hurt_flash = 0.0;
                         zibis[zi].anim_time = 0.0;
                         zibis[zi].combat_target_x = 0.0;
@@ -245,6 +328,13 @@ fn main() {
                 p = Player::new(px, py, pz);
                 p.yaw = pyaw; p.pitch = ppitch;
                 selected_block = pb;
+                
+                // Regenerate waypoints for all loaded chunks to ensure they exist after load
+                for ci in 0..MAX_CHUNKS {
+                    if chunks[ci].x != -9999 {
+                        build_chunk_waypoints(chunks, MAX_CHUNKS, ci);
+                    }
+                }
                 
                 current_state = STATE_GAME;
                 rl::DisableCursor();
@@ -364,15 +454,6 @@ fn main() {
 
             if show_settings == 0 && show_spellbook == 0 && is_scepter_ui_open() == 0 && is_chest_ui_open() == 0 && is_banner_ui_open() == 0 && show_exit_confirm == 0 {
                 (&p).update(chunks, MAX_CHUNKS, dt);
-                
-                if rl::IsKeyPressed(rl::KEY_ONE) { selected_block = BLOCK_DIRT; }
-                if rl::IsKeyPressed(rl::KEY_TWO) { selected_block = BLOCK_GRASS; }
-                if rl::IsKeyPressed(rl::KEY_THREE) { selected_block = BLOCK_STONE; } 
-                if rl::IsKeyPressed(rl::KEY_FOUR) { selected_block = BLOCK_LOG; }
-                if rl::IsKeyPressed(rl::KEY_FIVE) { selected_block = BLOCK_LEAVES; }
-                if rl::IsKeyPressed(rl::KEY_SIX) { selected_block = BLOCK_TORCH; }
-                if rl::IsKeyPressed(rl::KEY_SEVEN) { selected_block = BLOCK_WATER; }
-                if rl::IsKeyPressed(rl::KEY_EIGHT) { selected_block = BLOCK_GLASS_PANE; }
             }
             
             let active_zibis = 0;
@@ -398,6 +479,7 @@ fn main() {
 
             // --- Wave-Based Night Spawning ---
             let is_night = (day_time > 0.5);  // Night is second half of day cycle
+            
             let active_wolves = 0;
             for wi in 0..MAX_WOLVES { if wolves[wi].active == 1 { active_wolves++; } }
             
@@ -683,6 +765,45 @@ fn main() {
                     }
                 }
             }
+
+            // Debug: draw chunk waypoints as small pegs when F3 debug view is enabled
+            if show_debug_info {
+                for i in 0..MAX_CHUNKS {
+                    let c = &chunks[i];
+                    if c.x == -9999 { continue; }
+                    let dist_x = abs(c.x - pcx); let dist_z = abs(c.z - pcz);
+                    if dist_x > draw_distance || dist_z > draw_distance { continue; }
+                    for wi in 0..c.waypoint_count {
+                        let wp = c.waypoints[wi];
+                        // small vertical peg slightly sunk into ground
+                        rl::DrawCube(rl::Vector3{x: (float)wp.x + 0.5, y: (float)wp.y + 0.02, z: (float)wp.z + 0.5}, 0.2, 0.04, 0.2, rl::Color{r:255, g:200, b:0, a:220});
+                        rl::DrawCubeWires(rl::Vector3{x: (float)wp.x + 0.5, y: (float)wp.y + 0.02, z: (float)wp.z + 0.5}, 0.2, 0.04, 0.2, rl::BLACK);
+                    }
+                }
+            }
+            // Debug: per-zibi waypoint & path visualization
+            for zi in 0..MAX_ZIBIS {
+                let zb = &zibis[zi];
+                if zb.active == 0 { continue; }
+                // Show current waypoint target for WALK_TO_OBELISK state
+                if zb.state == ZIBI_WALK_TO_OBELISK {
+                    if !(zb.waypoint_target_x == 0 && zb.waypoint_target_y == 0 && zb.waypoint_target_z == 0) {
+                        let wx = (float)zb.waypoint_target_x + 0.5;
+                        let wy = (float)zb.waypoint_target_y + 0.5;
+                        let wz = (float)zb.waypoint_target_z + 0.5;
+                        rl::DrawCube(rl::Vector3{x: wx, y: wy, z: wz}, 0.35, 0.35, 0.35, rl::Color{r:0, g:220, b:0, a:200});
+                        rl::DrawCubeWires(rl::Vector3{x: wx, y: wy, z: wz}, 0.35, 0.35, 0.35, rl::BLACK);
+                        rl::DrawLine3D(rl::Vector3{x: zb.x, y: zb.y + 0.5, z: zb.z}, rl::Vector3{x: wx, y: wy, z: wz}, rl::Color{r:0, g:180, b:0, a:180});
+                    }
+                    // Draw A* path points if any
+                    for pi in zb.path_idx..zb.path_len {
+                        let pp = (&zb.path[0])[pi];
+                        let px = (float)pp.x + 0.5; let py = (float)pp.y + 0.02; let pz = (float)pp.z + 0.5;
+                        rl::DrawCube(rl::Vector3{x: px, y: py, z: pz}, 0.18, 0.04, 0.18, rl::Color{r:50, g:150, b:255, a:200});
+                        rl::DrawCubeWires(rl::Vector3{x: px, y: py, z: pz}, 0.18, 0.04, 0.18, rl::BLACK);
+                    }
+                }
+            }
             
             for i in 0..MAX_ZIBIS { zibis[i].draw(chunks, MAX_CHUNKS, day_time); }
             for wi in 0..MAX_WOLVES { wolves[wi].draw(chunks, MAX_CHUNKS, day_time); }
@@ -693,6 +814,33 @@ fn main() {
             draw_fireballs();
             
             if show_settings == 0 && show_spellbook == 0 && is_chest_ui_open() == 0 && is_scepter_ui_open() == 0 && is_banner_ui_open() == 0 && show_exit_confirm == 0 {
+                // --- Hotbar Input ---
+                // Keys 1-7
+                if rl::IsKeyPressed(49) { spellbook.hotbar_selected = 0; } // KEY_ONE
+                if rl::IsKeyPressed(50) { spellbook.hotbar_selected = 1; } // KEY_TWO
+                if rl::IsKeyPressed(51) { spellbook.hotbar_selected = 2; } // KEY_THREE
+                if rl::IsKeyPressed(52) { spellbook.hotbar_selected = 3; } // KEY_FOUR
+                if rl::IsKeyPressed(53) { spellbook.hotbar_selected = 4; } // KEY_FIVE
+                if rl::IsKeyPressed(54) { spellbook.hotbar_selected = 5; } // KEY_SIX
+                if rl::IsKeyPressed(55) { spellbook.hotbar_selected = 6; } // KEY_SEVEN
+                
+                // Mouse wheel scroll
+                let wheel = rl::GetMouseWheelMove();
+                if wheel > 0.0 {
+                    spellbook.hotbar_selected = spellbook.hotbar_selected - 1;
+                    if spellbook.hotbar_selected < 0 { spellbook.hotbar_selected = 6; }
+                }
+                if wheel < 0.0 {
+                    spellbook.hotbar_selected = spellbook.hotbar_selected + 1;
+                    if spellbook.hotbar_selected > 6 { spellbook.hotbar_selected = 0; }
+                }
+                
+                // Wire selected_spell from hotbar
+                let hotbar_spell = spellbook.hotbar[spellbook.hotbar_selected];
+                if hotbar_spell >= 0 {
+                    spellbook.selected_spell = hotbar_spell;
+                }
+                
                 handle_player_interaction(&p, chunks, dt, selected_block, spellbook.selected_spell, &wolves[0], MAX_WOLVES, &zibis[0], MAX_ZIBIS);
             }
             
@@ -702,7 +850,6 @@ fn main() {
             bloom_end_and_draw();
             
             (&p).draw_arm((float)rl::GetTime());
-            draw_hud(&p, selected_block, VERSION_TEXT);
             draw_obelisk_ui(chunks, MAX_CHUNKS, &zibis[0], MAX_ZIBIS, p.camera);
             
             // Draw Entity HP Bars
@@ -737,11 +884,18 @@ fn main() {
                        rl::DrawRectangle(bx, by, (int)((float)bw * pct), bh, rl::GREEN);
                    }
                 }
+            } // END OF MAX_WOLVES LOOP
+            
+            // HUD Layer
+            
+            let total_obelisks = get_total_obelisk_count(chunks, MAX_CHUNKS);
+            if show_settings == 0 && show_exit_confirm == 0 {
+                 draw_hud(&p, &spellbook, VERSION_TEXT, total_obelisks);
             }
             
             if show_debug_info { draw_debug_info(&p, chunks, dt, day_time, draw_distance, worker_count, active_wolves); }
             if show_settings { draw_settings_menu(&draw_distance, &grass_dist); }
-            if show_spellbook { draw_spellbook(&spellbook, &selected_block); }
+            if show_spellbook { draw_spellbook(&spellbook, &selected_block, chunks, MAX_CHUNKS); }
             draw_chest_ui(chunks);
             let total_active_zibis = 0;
             for zi in 0..MAX_ZIBIS {
@@ -822,24 +976,24 @@ fn main() {
             zibis_save[zi].mine_banner_z = zibis[zi].mine_banner_z;
         }
         save_player_data(p.x, p.y, p.z, selected_block, p.yaw, p.pitch, wave_number, wave_spawned_today, day_time, &zibis_save);
-    }
-    
-    for i in 0..MAX_CHUNKS {
-        if chunks[i].x != -9999 {
-             while get_pending_req_count() >= 250 {
-                 rl::BeginDrawing(); rl::ClearBackground(rl::BLACK);
-                 rl::DrawText("SAVING WORLD... QUEUE FULL", SCREEN_WIDTH/2 - 150, SCREEN_HEIGHT/2, 20, rl::WHITE);
-                 rl::EndDrawing(); rl::WaitTime(0.01);
-             }
-            request_save_async(&chunks[i]);
+        
+        for i in 0..MAX_CHUNKS {
+            if chunks[i].x != -9999 {
+                 while get_pending_req_count() >= 250 {
+                     rl::BeginDrawing(); rl::ClearBackground(rl::BLACK);
+                     rl::DrawText("SAVING WORLD... QUEUE FULL", SCREEN_WIDTH/2 - 150, SCREEN_HEIGHT/2, 20, rl::WHITE);
+                     rl::EndDrawing(); rl::WaitTime(0.01);
+                 }
+                request_save_async(&chunks[i]);
+            }
         }
-    }
-    
-    let start_wait = rl::GetTime();
-    while get_pending_req_count() > 0 && (rl::GetTime() - start_wait) < 5.0 {
-        rl::BeginDrawing(); rl::ClearBackground(rl::BLACK);
-        rl::DrawText("SAVING WORLD... DO NOT TURN OFF", SCREEN_WIDTH/2 - 150, SCREEN_HEIGHT/2, 20, rl::WHITE);
-        rl::DrawText(rl::TextFormat("Pending: %d", get_pending_req_count()), SCREEN_WIDTH/2 - 50, SCREEN_HEIGHT/2 + 30, 20, rl::GRAY);
-        rl::EndDrawing(); rl::WaitTime(0.01);
+        
+        let start_wait = rl::GetTime();
+        while get_pending_req_count() > 0 && (rl::GetTime() - start_wait) < 5.0 {
+            rl::BeginDrawing(); rl::ClearBackground(rl::BLACK);
+            rl::DrawText("SAVING WORLD... DO NOT TURN OFF", SCREEN_WIDTH/2 - 150, SCREEN_HEIGHT/2, 20, rl::WHITE);
+            rl::DrawText(rl::TextFormat("Pending: %d", get_pending_req_count()), SCREEN_WIDTH/2 - 50, SCREEN_HEIGHT/2 + 30, 20, rl::GRAY);
+            rl::EndDrawing(); rl::WaitTime(0.01);
+        }
     }
 }

@@ -76,6 +76,30 @@ fn scepter_add_item(block_type: int) -> int {
     return inv_add_item(&scepter_inv, block_type);
 }
 
+// Remove one block of a specific type from scepter. Returns 1 if found and removed, 0 if not in inventory.
+fn scepter_remove_block_type(block_type: int) -> int {
+    for i in 0..INV_SLOTS {
+        if scepter_inv.slots[i].block_type == block_type && scepter_inv.slots[i].count > 0 {
+            scepter_inv.slots[i].count--;
+            if scepter_inv.slots[i].count <= 0 {
+                scepter_inv.slots[i].block_type = BLOCK_AIR;
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Check if scepter has at least 1 of a block type
+fn scepter_has_block(block_type: int) -> int {
+    for i in 0..INV_SLOTS {
+        if scepter_inv.slots[i].block_type == block_type && scepter_inv.slots[i].count > 0 {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 fn scepter_init() {
     init_inventory(&scepter_inv);
 }

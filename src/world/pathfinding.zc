@@ -62,20 +62,14 @@ fn pf_eval_step(chunks: Chunk*, nc: int, cur_x: int, cur_y: int, cur_z: int,
               && pf_can_stand(chunks, nc, nx, cy - 2, nz) == 1 {
         *out_cost = 14; return cy - 2;
     }
-    // SMALL JUMP (+1)
+    // SMALL JUMP (+1): step up one block if destination has solid ground and valid landing,
+    // and there is headroom above the current position to jump.
     if pf_is_solid(get_block(chunks, nc, nx, cy, nz)) == 1
     && pf_can_stand(chunks, nc, nx, cy + 1, nz) == 1
     && pf_is_solid(get_block(chunks, nc, cur_x, cy + 2, cur_z)) == 0 {
         *out_cost = 15; return cy + 1;
     }
-    // BIG JUMP (+2)
-    if pf_is_solid(get_block(chunks, nc, nx, cy, nz)) == 1
-    && pf_is_solid(get_block(chunks, nc, nx, cy + 1, nz)) == 1
-    && pf_can_stand(chunks, nc, nx, cy + 2, nz) == 1
-    && pf_is_solid(get_block(chunks, nc, cur_x, cy + 2, cur_z)) == 0
-    && pf_is_solid(get_block(chunks, nc, cur_x, cy + 3, cur_z)) == 0 {
-        *out_cost = 25; return cy + 2;
-    }
+    // BIG JUMP (+2) deshabilitado para zibis: solo pueden saltar 1 bloque
     return -1;
 }
 

@@ -45,9 +45,12 @@ struct ChestData {
 struct BannerData {
     x: int; y: int; z: int;  // Position in world coords
     active: int;
-    assigned_zibis: int;     // How many Zibis should mine here
-    priority_blocks: int[8]; // Which block IDs to mine first
+    assigned_zibis: int;     // How many Zibis should work here
+    priority_blocks: int[8]; // Which block IDs to mine first (mining banner only)
     priority_count: int;
+    need_wood: int;          // Flag: miners waiting for wood at this banner
+    need_timer: float;       // Optional timer for how long to show the notification
+    banner_type: int;        // 0 = mining, 1 = lumberjack
 }
 
 struct ChunkMeshes {
@@ -57,6 +60,11 @@ struct ChunkMeshes {
     obelisk_count: int;
     cages: rl::Vector3[16];
     cage_count: int;
+}
+
+// Waypoint node used for chunk-local navigation graph
+struct Waypoint {
+    x: int; y: int; z: int;
 }
 
 struct Chunk {
@@ -77,6 +85,9 @@ struct Chunk {
     plant_mesh_built: int;
     grass_deco_mesh: rl::Mesh; grass_deco_model: rl::Model;
     grass_deco_built: int;
+    // Waypoints for AI navigation (virtual graph nodes inside this chunk)
+    waypoints: Waypoint[128];
+    waypoint_count: int;
     chests: ChestData[8];
     chest_count: int;
     banners: BannerData[4];
@@ -87,7 +98,7 @@ struct Chunk {
 }
 
 fn is_transparent(b: int) -> int {
-    if b == BLOCK_AIR || (b >= 10 && b <= 14) || b == 17 || b == BLOCK_TALLGRASS || b == BLOCK_LEAVES || b == BLOCK_WATER || b == BLOCK_WATER_2 || b == BLOCK_WATER_1 || b == BLOCK_WATER_0 || b == 18 || b == BLOCK_OBELISK || b == BLOCK_POWER_CRYSTAL || b == BLOCK_CAGE || b == BLOCK_CHEST || b == BLOCK_BANNER { return 1; }
+    if b == BLOCK_AIR || (b >= 10 && b <= 14) || b == 17 || b == BLOCK_TALLGRASS || b == BLOCK_LEAVES || b == BLOCK_WATER || b == BLOCK_WATER_2 || b == BLOCK_WATER_1 || b == BLOCK_WATER_0 || b == 18 || b == BLOCK_OBELISK || b == BLOCK_POWER_CRYSTAL || b == BLOCK_CAGE || b == BLOCK_CHEST || b == BLOCK_BANNER || b == BLOCK_LUMBER_BANNER { return 1; }
     return 0;
 }
 
@@ -127,4 +138,125 @@ fn set_block(chunks: Chunk*, num_chunks: int, x: int, y: int, z: int, type: int)
     if chunks[idx].x == cx && chunks[idx].z == cz {
         chunks[idx].blocks[lx][y][lz] = type;
     }
+}
+
+// --- Simple standability test used for waypoint generation ---
+fn chunk_can_stand(chunks: Chunk*, num_chunks: int, x: int, y: int, z: int) -> int {
+    if y < 1 || y >= CHUNK_HEIGHT - 1 { return 0; }
+    let feet = get_block(chunks, num_chunks, x, y, z);
+    let head = get_block(chunks, num_chunks, x, y + 1, z);
+    let ground = get_block(chunks, num_chunks, x, y - 1, z);
+    // Require true air for feet and head so waypoints are not created inside
+    // leaves, tall grass, water or other transparent-but-occupying blocks.
+    if feet == BLOCK_AIR && head == BLOCK_AIR && is_transparent(ground) == 0 {
+        return 1;
+    }
+    return 0;
+}
+
+// Build coarse waypoints inside a chunk. Called after lighting/mesh is recalculated.
+fn build_chunk_waypoints(chunks: Chunk*, num_chunks: int, idx: int) {
+    if idx < 0 || idx >= num_chunks { return; }
+    let c = &chunks[idx];
+    if c.x == -9999 { c.waypoint_count = 0; return; }
+
+    c.waypoint_count = 0;
+    let cx = c.x; let cz = c.z;
+
+    // Coarse grid: every 2 blocks horizontally to reduce node count
+    for lx in 0..16 {
+        if (lx & 1) == 1 { continue; }
+        for lz in 0..16 {
+            if (lz & 1) == 1 { continue; }
+            // Scan top-down for a valid standing position
+            for _t in 1..(CHUNK_HEIGHT - 1) {
+                let yy = (CHUNK_HEIGHT - 1) - _t; // descending from CHUNK_HEIGHT-2 down to 1
+                let wx = cx * 16 + lx;
+                let wy = yy;
+                let wz = cz * 16 + lz;
+                if chunk_can_stand(chunks, num_chunks, wx, wy, wz) == 1 {
+                    if c.waypoint_count < 128 {
+                        c.waypoints[c.waypoint_count].x = wx;
+                        c.waypoints[c.waypoint_count].y = wy;
+                        c.waypoints[c.waypoint_count].z = wz;
+                        c.waypoint_count++;
+                    }
+                    break; // found column, go to next horizontal
+                }
+            }
+        }
+    }
+}
+
+// Find nearest waypoint to world position (search current chunk and 8 neighbors)
+fn find_nearest_waypoint(chunks: Chunk*, num_chunks: int, wx: int, wy: int, wz: int, out_x: int*, out_y: int*, out_z: int*) -> int {
+    let best_d = 999999;
+    let found = 0;
+    let cx = wx >> 4; let cz = wz >> 4;
+    for ox in -1..2 {
+        for oz in -1..2 {
+            let ncx = cx + ox; let ncz = cz + oz;
+            let nidx = get_chunk_index(ncx, ncz);
+            if chunks[nidx].x != ncx || chunks[nidx].z != ncz { continue; }
+            let c = &chunks[nidx];
+            for wi in 0..c.waypoint_count {
+                let wxp = c.waypoints[wi].x; let wyp = c.waypoints[wi].y; let wzp = c.waypoints[wi].z;
+                let dx = wxp - wx; let dy = wyp - wy; let dz = wzp - wz;
+                let d = abs(dx) + abs(dy) + abs(dz);
+                if d < best_d {
+                    best_d = d;
+                    *out_x = wxp; *out_y = wyp; *out_z = wzp;
+                    found = 1;
+                }
+            }
+        }
+    }
+    return found;
+}
+
+// Find a next waypoint near `cur` that is closer to the goal than `cur`.
+// Searches current chunk and the 8 neighbors for candidates within `max_step` horizontal distance.
+fn find_next_waypoint_towards_goal(chunks: Chunk*, num_chunks: int,
+    cur_x: int, cur_y: int, cur_z: int,
+    goal_x: int, goal_y: int, goal_z: int,
+    out_x: int*, out_y: int*, out_z: int*) -> int {
+    let cur_chunk_x = cur_x >> 4; let cur_chunk_z = cur_z >> 4;
+    let best_d_goal = 999999; let best_idx = -1; let best_wp_x = 0; let best_wp_y = 0; let best_wp_z = 0;
+    // Distance from current waypoint to goal
+    let cur_to_goal_dx = goal_x - cur_x; let cur_to_goal_dz = goal_z - cur_z;
+    let cur_to_goal_sq = cur_to_goal_dx * cur_to_goal_dx + cur_to_goal_dz * cur_to_goal_dz;
+
+    let max_step = 12; // maximum horizontal distance to step to next waypoint
+
+    for cx_off in -1..2 {
+        for cz_off in -1..2 {
+            let ncx = cur_chunk_x + cx_off; let ncz = cur_chunk_z + cz_off;
+            let nidx = get_chunk_index(ncx, ncz);
+            if chunks[nidx].x != ncx || chunks[nidx].z != ncz { continue; }
+            let c = &chunks[nidx];
+            for wi in 0..c.waypoint_count {
+                let wp = c.waypoints[wi];
+                // horizontal distance from current waypoint
+                let dx = wp.x - cur_x; let dz = wp.z - cur_z;
+                let dist_sq = dx*dx + dz*dz;
+                if dist_sq > (max_step * max_step) { continue; }
+                // must be strictly closer to goal than current
+                let gdx = goal_x - wp.x; let gdz = goal_z - wp.z;
+                let gdist_sq = gdx*gdx + gdz*gdz;
+                if gdist_sq < cur_to_goal_sq {
+                    if gdist_sq < best_d_goal {
+                        best_d_goal = gdist_sq;
+                        best_wp_x = wp.x; best_wp_y = wp.y; best_wp_z = wp.z;
+                        best_idx = 1;
+                    }
+                }
+            }
+        }
+    }
+
+    if best_idx != -1 {
+        out_x[0] = best_wp_x; out_y[0] = best_wp_y; out_z[0] = best_wp_z;
+        return 1;
+    }
+    return 0;
 }

@@ -1,6 +1,7 @@
 //> Zibi character implementation — Cage & Worker System
 import "player.zc"; // Access to check_collision and chunk utilities
 import "../world/chunk.zc";
+import "../world/pathfinding.zc";
 import "raylib.h" as rl;
 import "math.h";
 
@@ -11,6 +12,7 @@ def ZIBI_WORKER = 2;             // Idle worker at obelisk
 def ZIBI_FOLLOW_PLAYER = 3;      // No obelisk nearby, player follow mode
 def ZIBI_COMBAT = 4;             // Fighting back against an attacker
 def ZIBI_MINING = 5;             // Active miner at a banner
+def ZIBI_LUMBERJACK = 6;         // Active lumberjack at a lumber banner
 
 struct Zibi {
     x: float;
@@ -64,6 +66,22 @@ struct Zibi {
     mine_target_z: int;
     mine_timer: float;
     mine_carrying_block: int;
+    mine_waiting_for_wood: int;
+    mine_wait_timer: float;
+    // Navigation path (A* on voxel grid) to respect jumps/steps
+    path: PathPoint[64];
+    path_len: int;
+    path_idx: int;
+    path_timer: float;
+    path_fail_count: int;
+    // Stuck detection: track position over time
+    stuck_timer: float;
+    last_stuck_check_x: float;
+    last_stuck_check_z: float;
+    // Waypoint navigation
+    waypoint_target_x: int;
+    waypoint_target_y: int;
+    waypoint_target_z: int;
 }
 
 // Zibi Constants
@@ -112,6 +130,18 @@ impl Zibi {
         inst.invincibility_timer = 0.0;
         inst.mine_timer = 0.0;
         inst.mine_carrying_block = 0;
+        inst.mine_waiting_for_wood = 0;
+        inst.mine_wait_timer = 0.0;
+        inst.path_len = 0;
+        inst.path_idx = 0;
+        inst.path_timer = 0.0;
+        inst.path_fail_count = 0;
+        inst.stuck_timer = 0.0;
+        inst.last_stuck_check_x = x;
+        inst.last_stuck_check_z = z;
+        inst.waypoint_target_x = 0;
+        inst.waypoint_target_y = 0;
+        inst.waypoint_target_z = 0;
         if state == ZIBI_FREED { inst.invincibility_timer = 4.0; } // 4s invincibility after freeing
         return inst;
     }
@@ -226,13 +256,162 @@ impl Zibi {
                 self.state = ZIBI_WORKER;
                 self.vx = 0.0;
                 self.vz = 0.0;
+                self.waypoint_target_x = 0;
+                self.waypoint_target_y = 0;
+                self.waypoint_target_z = 0;
                 return 1;
             }
             
-            // Face and move toward obelisk
-            self.yaw = (float)atan2(dz, dx);
-            self.vx = (dx / dist) * ZIBI_SPEED;
-            self.vz = (dz / dist) * ZIBI_SPEED;
+            // Decrease path timer
+            self.path_timer -= dt;
+
+            // If no waypoint target set, start at nearest waypoint to our current position
+            if self.waypoint_target_x == 0 && self.waypoint_target_y == 0 && self.waypoint_target_z == 0 {
+                let wpx = 0; let wpy = 0; let wpz = 0;
+                if find_nearest_waypoint(chunks, num_chunks, (int)floor(self.x), (int)floor(self.y), (int)floor(self.z), &wpx, &wpy, &wpz) == 1 {
+                    self.waypoint_target_x = wpx;
+                    self.waypoint_target_y = wpy;
+                    self.waypoint_target_z = wpz;
+                    // Immediately test reachability: compute a quick path to this waypoint
+                    self.path_len = find_path(chunks, num_chunks,
+                        (int)floor(self.x), (int)floor(self.y), (int)floor(self.z),
+                        self.waypoint_target_x, self.waypoint_target_y, self.waypoint_target_z,
+                        &self.path[0], MAX_PATH_LENGTH);
+                    self.path_idx = (self.path_len > 0 ? 1 : 0);
+                    if self.path_len == 0 {
+                        // Attempt to find an alternative nearby reachable waypoint
+                        let alt_x = 0; let alt_y = 0; let alt_z = 0;
+                        if find_next_waypoint_towards_goal(chunks, num_chunks, self.waypoint_target_x, self.waypoint_target_y, self.waypoint_target_z,
+                            (int)self.target_x, (int)self.target_y, (int)self.target_z, &alt_x, &alt_y, &alt_z) == 1 {
+                            self.waypoint_target_x = alt_x; self.waypoint_target_y = alt_y; self.waypoint_target_z = alt_z;
+                            self.path_len = find_path(chunks, num_chunks,
+                                (int)floor(self.x), (int)floor(self.y), (int)floor(self.z),
+                                self.waypoint_target_x, self.waypoint_target_y, self.waypoint_target_z,
+                                &self.path[0], MAX_PATH_LENGTH);
+                            self.path_idx = (self.path_len > 0 ? 1 : 0);
+                        } else {
+                            // leave waypoint_target as-is; pathing will be attempted later
+                        }
+                    }
+                }
+            }
+
+            // If we have a path, follow it
+            if self.path_idx < self.path_len {
+                let wp = (&self.path[0])[self.path_idx];
+                let tx = (float)wp.x + 0.5; let ty = (float)wp.y; let tz = (float)wp.z + 0.5;
+                let pdx = tx - self.x; let pdz = tz - self.z;
+                let pdist = (float)sqrt(pdx*pdx + pdz*pdz);
+                if pdist > 0.3 {
+                    self.yaw = (float)atan2(pdz, pdx);
+                    self.vx = (pdx / pdist) * ZIBI_SPEED;
+                    self.vz = (pdz / pdist) * ZIBI_SPEED;
+                } else {
+                    self.vx = 0.0; self.vz = 0.0;
+                }
+
+                // Advance when close enough (allow small vertical tolerance)
+                if pdist < 0.6 && (float)fabs(ty - self.y) < 1.8 { self.path_idx++; }
+            } else {
+                // Path done or empty — check if close to waypoint target
+                let wdx = (float)self.waypoint_target_x + 0.5 - self.x;
+                let wdz = (float)self.waypoint_target_z + 0.5 - self.z;
+                let wdist = (float)sqrt(wdx*wdx + wdz*wdz);
+                
+                if wdist < 1.5 {
+                    // Reached waypoint — try to pick a nearby waypoint that is closer to the obelisk
+                    let wpx = 0; let wpy = 0; let wpz = 0;
+                    if find_next_waypoint_towards_goal(chunks, num_chunks,
+                        self.waypoint_target_x, self.waypoint_target_y, self.waypoint_target_z,
+                        (int)self.target_x, (int)self.target_y, (int)self.target_z,
+                        &wpx, &wpy, &wpz) == 1 {
+                        self.waypoint_target_x = wpx;
+                        self.waypoint_target_y = wpy;
+                        self.waypoint_target_z = wpz;
+                        self.path_len = 0;
+                        self.path_idx = 0;
+                        self.path_timer = 0.0;
+                    } else {
+                        // Fallback: directly target the waypoint nearest the obelisk (goal side)
+                        if find_nearest_waypoint(chunks, num_chunks, (int)self.target_x, (int)self.target_y, (int)self.target_z, &wpx, &wpy, &wpz) == 1 {
+                            self.waypoint_target_x = wpx;
+                            self.waypoint_target_y = wpy;
+                            self.waypoint_target_z = wpz;
+                            self.path_len = 0;
+                            self.path_idx = 0;
+                            self.path_timer = 0.0;
+                        }
+                    }
+                } else if self.path_timer <= 0.0 {
+                    // Compute path to current waypoint target (throttled)
+                    self.path_timer = 1.5;
+                    self.path_len = find_path(chunks, num_chunks,
+                        (int)floor(self.x), (int)floor(self.y), (int)floor(self.z),
+                        self.waypoint_target_x, self.waypoint_target_y, self.waypoint_target_z,
+                        &self.path[0], MAX_PATH_LENGTH);
+                    self.path_idx = 1; // skip start
+
+                    // If path found, reset fail counter
+                    if self.path_len > 0 { self.path_fail_count = 0; }
+
+                    // If no path found to that waypoint, search nearby waypoints for a reachable one
+                    if self.path_len == 0 {
+                        let found_reachable = 0;
+                        // scan surrounding chunks for candidate waypoints
+                        let scx = (int)floor(self.x) >> 4; let scz = (int)floor(self.z) >> 4;
+                        for cx_off in -1..2 {
+                            for cz_off in -1..2 {
+                                let ncx = scx + cx_off; let ncz = scz + cz_off;
+                                let nidx = get_chunk_index(ncx, ncz);
+                                if ncx < -32768 || ncz < -32768 { continue; }
+                                if chunks[nidx].x != ncx || chunks[nidx].z != ncz { continue; }
+                                let c = &chunks[nidx];
+                                for wi in 0..c.waypoint_count {
+                                    let wp = c.waypoints[wi];
+                                    // skip if too far horizontally
+                                    let ddx = wp.x - (int)floor(self.x); let ddz = wp.z - (int)floor(self.z);
+                                    if (ddx*ddx + ddz*ddz) > (64*64) { continue; }
+                                    let test_len = find_path(chunks, num_chunks,
+                                        (int)floor(self.x), (int)floor(self.y), (int)floor(self.z),
+                                        wp.x, wp.y, wp.z, &self.path[0], MAX_PATH_LENGTH);
+                                    if test_len > 0 {
+                                        // adopt this reachable waypoint
+                                        self.waypoint_target_x = wp.x; self.waypoint_target_y = wp.y; self.waypoint_target_z = wp.z;
+                                        self.path_len = test_len; self.path_idx = 1;
+                                        self.path_fail_count = 0;
+                                        found_reachable = 1; break;
+                                    }
+                                }
+                                if found_reachable == 1 { break; }
+                            }
+                            if found_reachable == 1 { break; }
+                        }
+
+                        if found_reachable == 0 {
+                            // As a last resort, try pathing directly to the obelisk target
+                            let direct_len = find_path(chunks, num_chunks,
+                                (int)floor(self.x), (int)floor(self.y), (int)floor(self.z),
+                                (int)self.target_x, (int)self.target_y, (int)self.target_z,
+                                &self.path[0], MAX_PATH_LENGTH);
+                            if direct_len > 0 {
+                                self.path_len = direct_len; self.path_idx = 1;
+                                self.path_fail_count = 0;
+                            } else {
+                                // No reachable waypoint or direct path found: stop and retry later
+                                self.vx = 0.0; self.vz = 0.0;
+                                self.path_len = 0; self.path_idx = 0;
+                                // Backoff: increase retry interval after repeated failures
+                                self.path_fail_count++;
+                                if self.path_fail_count >= 5 {
+                                    self.path_timer = 5.0;
+                                } else {
+                                    self.path_timer = 1.5;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // === STATE: WORKER — idle at obelisk ===
@@ -284,7 +463,7 @@ impl Zibi {
                                     let target_bz = chunks[c_idx].banners[bi].z + ((cz + sz) * 16);
                                     
                                     for zi in 0..max_zibis {
-                                        if zibis[zi].active == 1 && zibis[zi].state == ZIBI_MINING {
+                                        if zibis[zi].active == 1 && (zibis[zi].state == ZIBI_MINING || zibis[zi].state == ZIBI_LUMBERJACK) {
                                             if zibis[zi].mine_banner_x == target_bx && zibis[zi].mine_banner_y == target_by && zibis[zi].mine_banner_z == target_bz {
                                                 active_miners++;
                                             }
@@ -295,12 +474,15 @@ impl Zibi {
                                     let target_priority_count = chunks[c_idx].banners[bi].priority_count;
                                     
                                     if active_miners < target_assigned {
-                                        // Random chance so they don't all transform at exactly the same frame
                                         if rl::GetRandomValue(0, 100) < 30 {
                                             self.mine_banner_x = target_bx;
                                             self.mine_banner_y = target_by;
                                             self.mine_banner_z = target_bz;
-                                            self.state = ZIBI_MINING;
+                                            if chunks[c_idx].banners[bi].banner_type == 1 {
+                                                self.state = ZIBI_LUMBERJACK;
+                                            } else {
+                                                self.state = ZIBI_MINING;
+                                            }
                                             self.mine_target_y = -999;
                                             self.mine_carrying_block = 0;
                                             banner_found = 1;
@@ -368,18 +550,40 @@ impl Zibi {
             let min_dist = 1.5;
             if found_light == 0 { min_dist = 4.0; }
             
-            if dist_to_target > min_dist { // follow light or player if far
-                self.yaw = (float)atan2(dz, dx);
-                self.vx = (dx / dist_to_target) * ZIBI_SPEED * (found_light ? 1.0 : 1.5);
-                self.vz = (dz / dist_to_target) * ZIBI_SPEED * (found_light ? 1.0 : 1.5);
-            } else { // stop when close
+            // Decrease path timer
+            self.path_timer -= dt;
+
+            if dist_to_target > min_dist {
+                // If moderately far enough, attempt pathing (throttled)
+                if dist_to_target > 2.0 && self.path_timer <= 0.0 {
+                    self.path_timer = 1.5;
+                    self.path_len = find_path(chunks, num_chunks,
+                        (int)floor(self.x), (int)floor(self.y), (int)floor(self.z),
+                        (int)floor(player_x), (int)floor(player_y), (int)floor(player_z),
+                        &self.path[0], MAX_PATH_LENGTH);
+                    self.path_idx = 1;
+                }
+
+                if self.path_idx < self.path_len {
+                    let wp = (&self.path[0])[self.path_idx];
+                    let tx = (float)wp.x + 0.5; let tz = (float)wp.z + 0.5;
+                    let pdx = tx - self.x; let pdz = tz - self.z;
+                    let pdist = (float)sqrt(pdx*pdx + pdz*pdz);
+                    if pdist > 0.3 {
+                        self.yaw = (float)atan2(pdz, pdx);
+                        self.vx = (pdx / pdist) * ZIBI_SPEED * (found_light ? 1.0 : 1.5);
+                        self.vz = (pdz / pdist) * ZIBI_SPEED * (found_light ? 1.0 : 1.5);
+                    } else { self.vx = 0.0; self.vz = 0.0; }
+                    if pdist < 0.6 { self.path_idx++; }
+                } else {
+                    self.yaw = (float)atan2(dz, dx);
+                    self.vx = (dx / dist_to_target) * ZIBI_SPEED * (found_light ? 1.0 : 1.5);
+                    self.vz = (dz / dist_to_target) * ZIBI_SPEED * (found_light ? 1.0 : 1.5);
+                }
+            } else {
                 self.vx = 0.0;
                 self.vz = 0.0;
-                
-                // turn to face randomly or stand still
-                if rl::GetRandomValue(0, 100) < 5 {
-                     self.yaw = (float)atan2(dz, dx);
-                }
+                if rl::GetRandomValue(0, 100) < 5 { self.yaw = (float)atan2(dz, dx); }
             }
             
             // Despawn if getting lost completely (only relative to player)
@@ -400,7 +604,7 @@ impl Zibi {
             
             let is_banner_valid = 0;
             let priority_count = 0;
-            let priority_list = (int*)Z_MALLOC(8 * sizeof(int));
+            let priority_list: int[8];
             
             if target_chunk >= 0 {
                 let bx_rel = self.mine_banner_x - (bcx * 16);
@@ -556,11 +760,53 @@ impl Zibi {
                         // SEQUENTIAL SCAN: Ensures tunnel is dug in order and priority items are reached correctly
                         for d in 1..40 {
                             let floor_y = self.mine_banner_y - (d / 3);
-                            
-                            // Check distance d for ANY solid block
+
+                            // Decide lateral range: start galleries at depth >=6 and every 3 levels
+                            let depth_level = self.mine_banner_y - floor_y;
+                            let gallery_level = 0;
+                            if depth_level >= 6 && ((depth_level - 6) % 3) == 0 { gallery_level = 1; }
+                            let wmin = -1; let wmax = 2;
+                            // If this depth is a gallery level, use width=3 and coordinate among assigned miners
+                            if gallery_level == 1 {
+                                let per_miner_width = 3; // each miner gets a 3-block-wide strip
+                                // Find banner index in chunk to read assigned_zibis
+                                let banner_idx = -1;
+                                if target_chunk >= 0 {
+                                    let bx_rel = self.mine_banner_x - (bcx * 16);
+                                    let bz_rel = self.mine_banner_z - (bcz * 16);
+                                    for bbi in 0..chunks[target_chunk].banner_count {
+                                        if chunks[target_chunk].banners[bbi].active > 0 && chunks[target_chunk].banners[bbi].x == bx_rel && chunks[target_chunk].banners[bbi].y == self.mine_banner_y && chunks[target_chunk].banners[bbi].z == bz_rel {
+                                            banner_idx = bbi; break;
+                                        }
+                                    }
+                                }
+
+                                let assigned_total = 1;
+                                if banner_idx != -1 { assigned_total = chunks[target_chunk].banners[banner_idx].assigned_zibis; if assigned_total < 1 { assigned_total = 1; } }
+
+                                // Compute this zibi's index among active miners for this banner
+                                let my_idx = 0; let idx_cnt = 0;
+                                for zi in 0..max_zibis {
+                                    if zibis[zi].active == 1 && zibis[zi].state == ZIBI_MINING {
+                                        if zibis[zi].mine_banner_x == self.mine_banner_x && zibis[zi].mine_banner_y == self.mine_banner_y && zibis[zi].mine_banner_z == self.mine_banner_z {
+                                            if &zibis[zi] == self { my_idx = idx_cnt; }
+                                            idx_cnt++;
+                                        }
+                                    }
+                                }
+                                if idx_cnt > 0 { if assigned_total < idx_cnt { assigned_total = idx_cnt; } }
+
+                                // Center the strips around banner: compute starting offset for this miner
+                                let center_off = -((assigned_total - 1) * per_miner_width) / 2;
+                                let start = center_off + my_idx * per_miner_width;
+                                wmin = start;
+                                wmax = start + per_miner_width - 1;
+                            }
+
+                            // Check distance d for ANY solid block (scan wider for gallery levels)
                             let d_has_any_solid = 0;
                             for h in 0..4 {
-                                for w in -1..2 {
+                                for w in wmin..wmax {
                                     let wx = self.mine_banner_x + (dir_x * d) + (perp_x * w);
                                     let wy = floor_y + h;
                                     let wz = self.mine_banner_z + (dir_z * d) + (perp_z * w);
@@ -575,13 +821,34 @@ impl Zibi {
                                 // Pass 1: Local priority at this distance
                                 if priority_count > 0 {
                                     for h in 0..4 {
-                                        for w in -1..2 {
-                                            let wx = self.mine_banner_x + (dir_x * d) + (perp_x * w);
-                                            let wy = floor_y + h;
-                                            let wz = self.mine_banner_z + (dir_z * d) + (perp_z * w);
-                                            let b = get_block(chunks, num_chunks, wx, wy, wz);
-                                            for pi in 0..priority_count {
-                                                if b == priority_list[pi] {
+                                            for w in wmin..wmax {
+                                                let wx = self.mine_banner_x + (dir_x * d) + (perp_x * w);
+                                                let wy = floor_y + h;
+                                                let wz = self.mine_banner_z + (dir_z * d) + (perp_z * w);
+                                                let b = get_block(chunks, num_chunks, wx, wy, wz);
+                                                for pi in 0..priority_count {
+                                                    if b == priority_list[pi] {
+                                                        if rl::GetRandomValue(0, 100) < 30 { continue; }
+                                                        target_wx = wx; target_wy = wy; target_wz = wz;
+                                                        found = 1; break;
+                                                    }
+                                                }
+                                                if found == 1 { break; }
+                                            }
+                                            if found == 1 { break; }
+                                        }
+                                }
+                                
+                                // Pass 2: If no priority here, pick the first solid block at this distance (top down)
+                                if found == 0 {
+                                    for h in 0..4 {
+                                            let real_h = 3 - h;
+                                            for w in wmin..wmax {
+                                                let wx = self.mine_banner_x + (dir_x * d) + (perp_x * w);
+                                                let wy = floor_y + real_h;
+                                                let wz = self.mine_banner_z + (dir_z * d) + (perp_z * w);
+                                                let b = get_block(chunks, num_chunks, wx, wy, wz);
+                                                if is_transparent(b) == 0 {
                                                     if rl::GetRandomValue(0, 100) < 30 { continue; }
                                                     target_wx = wx; target_wy = wy; target_wz = wz;
                                                     found = 1; break;
@@ -589,27 +856,6 @@ impl Zibi {
                                             }
                                             if found == 1 { break; }
                                         }
-                                        if found == 1 { break; }
-                                    }
-                                }
-                                
-                                // Pass 2: If no priority here, pick the first solid block at this distance (top down)
-                                if found == 0 {
-                                    for h in 0..4 {
-                                        let real_h = 3 - h;
-                                        for w in -1..2 {
-                                            let wx = self.mine_banner_x + (dir_x * d) + (perp_x * w);
-                                            let wy = floor_y + real_h;
-                                            let wz = self.mine_banner_z + (dir_z * d) + (perp_z * w);
-                                            let b = get_block(chunks, num_chunks, wx, wy, wz);
-                                            if is_transparent(b) == 0 {
-                                                if rl::GetRandomValue(0, 100) < 30 { continue; }
-                                                target_wx = wx; target_wy = wy; target_wz = wz;
-                                                found = 1; break;
-                                            }
-                                        }
-                                        if found == 1 { break; }
-                                    }
                                 }
                             }
                             
@@ -622,20 +868,144 @@ impl Zibi {
                             self.mine_target_z = target_wz;
                             self.mine_timer = 0.0;
                             self.state_timer = 20.0; // 20s to pathfind and mine
+                            // reset any previous path so we'll compute a new one to the mine target
+                            self.path_len = 0; self.path_idx = 0; self.path_timer = 0.0;
                         }
                         
                         // If really no block found at all, idle near banner
                         if found == 0 {
-                            let bdx = (float)self.mine_banner_x + 0.5 - self.x;
-                            let bdz = (float)self.mine_banner_z + 0.5 - self.z;
-                            let bdist = (float)sqrt(bdx*bdx + bdz*bdz);
-                            if bdist > 3.0 {
-                                self.yaw = (float)atan2(bdz, bdx);
-                                self.vx = (bdx / bdist) * ZIBI_SPEED * 0.5;
-                                self.vz = (bdz / bdist) * ZIBI_SPEED * 0.5;
-                            } else {
-                                self.vx = 0.0;
-                                self.vz = 0.0;
+                            // Periodically scan for nearby dangerous holes and attempt to fill them
+                            self.mine_wait_timer -= dt;
+                            if self.mine_wait_timer <= 0.0 {
+                                self.mine_wait_timer = 3.0; // throttle scanning
+                                let hole_handled = 0;
+                                // Scan a local area around the banner for a vertical shaft (a "hole")
+                                for sx in -6..7 {
+                                    for sz in -6..7 {
+                                        for hy in (self.mine_banner_y - 8)..self.mine_banner_y {
+                                            let wx = self.mine_banner_x + sx;
+                                            let wy = hy;
+                                            let wz = self.mine_banner_z + sz;
+                                            // Define a hole as at least two empty blocks downward
+                                            if get_block(chunks, num_chunks, wx, wy, wz) == BLOCK_AIR && get_block(chunks, num_chunks, wx, wy - 1, wz) == BLOCK_AIR {
+                                                // Try to fetch wood from a nearby chest (within radius)
+                                                let chest_found = 0;
+                                                let chest_x = 0; let chest_y = 0; let chest_z = 0;
+                                                for csx in -8..9 {
+                                                    for csy in -3..4 {
+                                                        for csz in -8..9 {
+                                                            let cxw = self.mine_banner_x + csx;
+                                                            let cyw = self.mine_banner_y + csy;
+                                                            let czw = self.mine_banner_z + csz;
+                                                            if get_block(chunks, num_chunks, cxw, cyw, czw) == BLOCK_CHEST {
+                                                                chest_found = 1;
+                                                                chest_x = cxw; chest_y = cyw; chest_z = czw;
+                                                                break;
+                                                            }
+                                                        }
+                                                        if chest_found == 1 { break; }
+                                                    }
+                                                    if chest_found == 1 { break; }
+                                                }
+
+                                                if chest_found == 1 {
+                                                    let ci = 0; let chi = 0;
+                                                    if find_chest_at(chunks, num_chunks, chest_x, chest_y, chest_z, &ci, &chi) == 1 {
+                                                        // Look for wood (logs or planks)
+                                                        let removed = 0;
+                                                        for si in 0..INV_SLOTS {
+                                                            let st = &chunks[ci].chests[chi].items.slots[si];
+                                                            if st.block_type == BLOCK_LOG || st.block_type == BLOCK_PLANKS {
+                                                                // Remove one item and place a plank at the hole top
+                                                                let bgot = inv_remove_item(&chunks[ci].chests[chi].items, si);
+                                                                if bgot != BLOCK_AIR {
+                                                                    set_block(chunks, num_chunks, wx, wy, wz, BLOCK_PLANKS);
+                                                                    self.mine_waiting_for_wood = 0;
+                                                                    let mx = (int)floor((float)wx / 16.0);
+                                                                    let mz = (int)floor((float)wz / 16.0);
+                                                                    let midx = get_chunk_index(mx, mz);
+                                                                    if midx >= 0 {
+                                                                        request_mesh_async(midx, 1);
+                                                                        request_light_async(midx, 4, 1);
+                                                                        chunks[midx].grass_deco_built = 0;
+                                                                        request_save_async(&chunks[midx]);
+                                                                    }
+                                                                    removed = 1;
+                                                                        // Clear banner need flag since we placed wood
+                                                                        if target_chunk >= 0 {
+                                                                            let bx_rel2 = self.mine_banner_x - (bcx * 16);
+                                                                            let bz_rel2 = self.mine_banner_z - (bcz * 16);
+                                                                            for bbi2 in 0..chunks[target_chunk].banner_count {
+                                                                                if chunks[target_chunk].banners[bbi2].active > 0 && chunks[target_chunk].banners[bbi2].x == bx_rel2 && chunks[target_chunk].banners[bbi2].y == self.mine_banner_y && chunks[target_chunk].banners[bbi2].z == bz_rel2 {
+                                                                                    chunks[target_chunk].banners[bbi2].need_wood = 0;
+                                                                                    chunks[target_chunk].banners[bbi2].need_timer = 0.0;
+                                                                                    break;
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                }
+                                                            }
+                                                            if removed == 1 { break; }
+                                                        }
+
+                                                        if removed == 1 {
+                                                            hole_handled = 1;
+                                                            break;
+                                                        } else {
+                                                            // Chest found but no wood — wait at banner and signal need
+                                                            self.mine_waiting_for_wood = 1;
+                                                            self.mine_wait_timer = 5.0;
+                                                            // Move to banner position and stay there
+                                                            let bdx = (float)self.mine_banner_x + 0.5 - self.x;
+                                                            let bdz = (float)self.mine_banner_z + 0.5 - self.z;
+                                                            let bdist = (float)sqrt(bdx*bdx + bdz*bdz);
+                                                            if bdist > 1.5 {
+                                                                self.yaw = (float)atan2(bdz, bdx);
+                                                                self.vx = (bdx / bdist) * ZIBI_SPEED * 0.5;
+                                                                self.vz = (bdz / bdist) * ZIBI_SPEED * 0.5;
+                                                            } else {
+                                                                self.vx = 0.0; self.vz = 0.0;
+                                                            }
+                                                            // Also mark the banner so UI/render can show indicator
+                                                            if target_chunk >= 0 {
+                                                                let bx_rel = self.mine_banner_x - (bcx * 16);
+                                                                let bz_rel = self.mine_banner_z - (bcz * 16);
+                                                                for bbi in 0..chunks[target_chunk].banner_count {
+                                                                    if chunks[target_chunk].banners[bbi].active > 0 && chunks[target_chunk].banners[bbi].x == bx_rel && chunks[target_chunk].banners[bbi].y == self.mine_banner_y && chunks[target_chunk].banners[bbi].z == bz_rel {
+                                                                        chunks[target_chunk].banners[bbi].need_wood = 1;
+                                                                        chunks[target_chunk].banners[bbi].need_timer = 5.0;
+                                                                        break;
+                                                                    }
+                                                                }
+                                                            }
+                                                            hole_handled = 1;
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+
+                                                if hole_handled == 1 { break; }
+                                            }
+                                        }
+                                        if hole_handled == 1 { break; }
+                                    }
+                                    if hole_handled == 1 { break; }
+                                }
+                            }
+
+                            // Default idle if nothing to do
+                            if self.mine_waiting_for_wood == 0 {
+                                let bdx = (float)self.mine_banner_x + 0.5 - self.x;
+                                let bdz = (float)self.mine_banner_z + 0.5 - self.z;
+                                let bdist = (float)sqrt(bdx*bdx + bdz*bdz);
+                                if bdist > 3.0 {
+                                    self.yaw = (float)atan2(bdz, bdx);
+                                    self.vx = (bdx / bdist) * ZIBI_SPEED * 0.5;
+                                    self.vz = (bdz / bdist) * ZIBI_SPEED * 0.5;
+                                } else {
+                                    self.vx = 0.0;
+                                    self.vz = 0.0;
+                                }
                             }
                         }
                     } else {
@@ -694,21 +1064,233 @@ impl Zibi {
                                 self.mine_timer = 0.0;
                             }
                         } else {
-                            // Walk to target
-                            self.yaw = (float)atan2(tdz, tdx);
-                            self.vx = (tdx / tdist_3d) * ZIBI_SPEED;
-                            self.vz = (tdz / tdist_3d) * ZIBI_SPEED;
-                            
+                            // Use pathfinding to approach mine target (throttled)
+                            self.path_timer -= dt;
+                            if self.path_idx < self.path_len {
+                                let wp = (&self.path[0])[self.path_idx];
+                                let tx = (float)wp.x + 0.5; let ty = (float)wp.y; let tz = (float)wp.z + 0.5;
+                                let pdx = tx - self.x; let pdz = tz - self.z;
+                                let pdist = (float)sqrt(pdx*pdx + pdz*pdz);
+                                if pdist > 0.3 {
+                                    self.yaw = (float)atan2(pdz, pdx);
+                                    self.vx = (pdx / pdist) * ZIBI_SPEED;
+                                    self.vz = (pdz / pdist) * ZIBI_SPEED;
+                                } else { self.vx = 0.0; self.vz = 0.0; }
+                                if pdist < 0.6 && (float)fabs(ty - self.y) < 1.8 { self.path_idx++; }
+                            } else {
+                                if self.mine_target_y != -999 && self.path_timer <= 0.0 {
+                                    self.path_timer = 1.5;
+                                    self.path_len = find_path(chunks, num_chunks,
+                                        (int)floor(self.x), (int)floor(self.y), (int)floor(self.z),
+                                        self.mine_target_x, self.mine_target_y, self.mine_target_z,
+                                        &self.path[0], MAX_PATH_LENGTH);
+                                    self.path_idx = 1;
+                                }
+
+                                // Fallback direct movement if no path
+                                if self.path_len == 0 {
+                                    self.yaw = (float)atan2(tdz, tdx);
+                                    self.vx = (tdx / tdist_3d) * ZIBI_SPEED;
+                                    self.vz = (tdz / tdist_3d) * ZIBI_SPEED;
+                                }
+                            }
+
                             // Use state_timer as a pathing timeout
                             self.state_timer -= dt;
-                            if self.state_timer <= 0.0 { 
+                            if self.state_timer <= 0.0 {
                                 self.mine_target_y = -999; // Give up
                             }
                         }
                     }
                 }
             }
-            Z_FREE(priority_list);
+        }
+        
+        // === STATE: LUMBERJACK — chop trees near lumber banner ===
+        if self.state == ZIBI_LUMBERJACK {
+            // Check if lumber banner still exists
+            let bcx = (int)floor((float)self.mine_banner_x / 16.0);
+            let bcz = (int)floor((float)self.mine_banner_z / 16.0);
+            let target_chunk = get_chunk_index(bcx, bcz);
+            
+            let is_banner_valid = 0;
+            if target_chunk >= 0 {
+                let bx_rel = self.mine_banner_x - (bcx * 16);
+                let bz_rel = self.mine_banner_z - (bcz * 16);
+                for bi in 0..chunks[target_chunk].banner_count {
+                    if chunks[target_chunk].banners[bi].active > 0 &&
+                       chunks[target_chunk].banners[bi].banner_type == 1 &&
+                       chunks[target_chunk].banners[bi].x == bx_rel && 
+                       chunks[target_chunk].banners[bi].y == self.mine_banner_y && 
+                       chunks[target_chunk].banners[bi].z == bz_rel {
+                        is_banner_valid = 1;
+                        break;
+                    }
+                }
+            }
+            
+            if is_banner_valid == 0 {
+                // Banner gone, return to obelisk
+                if self.find_obelisk(chunks, num_chunks) == 1 {
+                    self.state = ZIBI_WALK_TO_OBELISK;
+                } else {
+                    self.state = ZIBI_FOLLOW_PLAYER;
+                    self.state_timer = 2.0;
+                }
+                self.mine_target_y = -999;
+                self.mine_carrying_block = 0;
+            } else {
+                if self.mine_carrying_block != 0 {
+                    // CARRYING: Find chest and walk to it (same as mining)
+                    let chest_found = 0;
+                    let chest_x = 0; let chest_y = 0; let chest_z = 0;
+                    
+                    for sx in -8..9 {
+                        for sy in -3..4 {
+                            for sz in -8..9 {
+                                let wx = self.mine_banner_x + sx;
+                                let wy = self.mine_banner_y + sy;
+                                let wz = self.mine_banner_z + sz;
+                                if get_block(chunks, num_chunks, wx, wy, wz) == BLOCK_CHEST {
+                                    chest_found = 1;
+                                    chest_x = wx; chest_y = wy; chest_z = wz;
+                                    break;
+                                }
+                            }
+                            if chest_found == 1 { break; }
+                        }
+                        if chest_found == 1 { break; }
+                    }
+                    
+                    if chest_found == 1 {
+                        let cdx = (float)chest_x + 0.5 - self.x;
+                        let cdz = (float)chest_z + 0.5 - self.z;
+                        let cdist = (float)sqrt(cdx*cdx + cdz*cdz);
+                        
+                        if cdist < 1.8 {
+                            // Deposit block
+                            let out_ci = 0; let out_chi = 0;
+                            if find_chest_at(chunks, num_chunks, chest_x, chest_y, chest_z, &out_ci, &out_chi) == 1 {
+                                inv_add_item(&chunks[out_ci].chests[out_chi].items, self.mine_carrying_block);
+                            }
+                            self.mine_carrying_block = 0;
+                            self.vx = 0.0; self.vz = 0.0;
+                        } else {
+                            self.yaw = (float)atan2(cdz, cdx);
+                            self.vx = (cdx / cdist) * ZIBI_SPEED;
+                            self.vz = (cdz / cdist) * ZIBI_SPEED;
+                        }
+                    } else {
+                        // No chest, wander near banner
+                        self.state_timer -= dt;
+                        if self.state_timer <= 0.0 {
+                            self.state_timer = (float)rl::GetRandomValue(20, 40) / 10.0;
+                            self.yaw = (float)rl::GetRandomValue(0, 628) / 100.0;
+                            self.vx = (float)cos(self.yaw) * ZIBI_SPEED * 0.3;
+                            self.vz = (float)sin(self.yaw) * ZIBI_SPEED * 0.3;
+                        }
+                    }
+                } else {
+                    // NOT CARRYING: Find a LOG block to chop
+                    if self.mine_target_y == -999 {
+                        // Search for nearest LOG block within 20 blocks of banner
+                        let best_dist = 999.0;
+                        let found = 0;
+                        let tx = 0; let ty = 0; let tz = 0;
+                        
+                        for dx in -20..21 {
+                            for dz in -20..21 {
+                                for dy in -5..30 {
+                                    let wx = self.mine_banner_x + dx;
+                                    let wy = self.mine_banner_y + dy;
+                                    let wz = self.mine_banner_z + dz;
+                                    let b = get_block(chunks, num_chunks, wx, wy, wz);
+                                    if b == BLOCK_LOG {
+                                        let fdx = (float)wx + 0.5 - self.x;
+                                        let fdz = (float)wz + 0.5 - self.z;
+                                        let d = (float)sqrt(fdx*fdx + fdz*fdz);
+                                        if d < best_dist {
+                                            best_dist = d;
+                                            tx = wx; ty = wy; tz = wz;
+                                            found = 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if found == 1 {
+                            self.mine_target_y = ty;
+                            self.mine_timer = 0.0;
+                            // Store target X/Z in waypoint_target fields temporarily
+                            self.waypoint_target_x = tx;
+                            self.waypoint_target_z = tz;
+                            self.state_timer = 15.0; // Timeout
+                        } else {
+                            // No trees found, idle near banner
+                            self.state_timer -= dt;
+                            if self.state_timer <= 0.0 {
+                                self.state_timer = (float)rl::GetRandomValue(30, 60) / 10.0;
+                                self.yaw = (float)rl::GetRandomValue(0, 628) / 100.0;
+                                self.vx = (float)cos(self.yaw) * ZIBI_SPEED * 0.3;
+                                self.vz = (float)sin(self.yaw) * ZIBI_SPEED * 0.3;
+                            }
+                        }
+                    } else {
+                        // Walk to target LOG block
+                        let tdx = (float)self.waypoint_target_x + 0.5 - self.x;
+                        let tdz = (float)self.waypoint_target_z + 0.5 - self.z;
+                        let tdist = (float)sqrt(tdx*tdx + tdz*tdz);
+                        
+                        // Verify the block is still LOG
+                        let current_b = get_block(chunks, num_chunks, self.waypoint_target_x, self.mine_target_y, self.waypoint_target_z);
+                        if current_b != BLOCK_LOG {
+                            self.mine_target_y = -999; // Target gone, find new one
+                            self.vx = 0.0; self.vz = 0.0;
+                        } else if tdist < 2.5 {
+                            // Close enough, chop!
+                            self.vx = 0.0; self.vz = 0.0;
+                            self.yaw = (float)atan2(tdz, tdx);
+                            self.mine_timer += dt;
+                            if self.mine_timer >= 1.5 {
+                                // Chop the block!
+                                set_block(chunks, num_chunks, self.waypoint_target_x, self.mine_target_y, self.waypoint_target_z, BLOCK_AIR);
+                                self.mine_carrying_block = BLOCK_LOG;
+                                self.mine_target_y = -999;
+                                self.mine_timer = 0.0;
+                                
+                                // Spawn particles
+                                spawn_particle(
+                                    (float)self.waypoint_target_x + 0.5, 
+                                    (float)self.mine_target_y + 0.5, 
+                                    (float)self.waypoint_target_z + 0.5, 
+                                    rl::Color{r: 101, g: 67, b: 33, a: 255}
+                                );
+                                
+                                // Rebuild mesh
+                                let mcx = (int)floor((float)self.waypoint_target_x / 16.0);
+                                let mcz = (int)floor((float)self.waypoint_target_z / 16.0);
+                                let mi = get_chunk_index(mcx, mcz);
+                                if mi >= 0 {
+                                    request_mesh_async(mi, 1);
+                                    request_light_async(mi, 4, 1);
+                                    request_save_async(&chunks[mi]);
+                                }
+                            }
+                        } else {
+                            // Walk toward tree
+                            self.yaw = (float)atan2(tdz, tdx);
+                            self.vx = (tdx / tdist) * ZIBI_SPEED;
+                            self.vz = (tdz / tdist) * ZIBI_SPEED;
+                        }
+                        
+                        self.state_timer -= dt;
+                        if self.state_timer <= 0.0 {
+                            self.mine_target_y = -999; // Timeout, find new target
+                        }
+                    }
+                }
+            }
         }
         
         // === STATE: COMBAT — fight back against attacker ===
@@ -753,15 +1335,16 @@ impl Zibi {
         }
 
         // --- Physics & Movement ---
-        if self.state == ZIBI_WALK_TO_OBELISK || self.state == ZIBI_FOLLOW_PLAYER || self.state == ZIBI_WORKER || self.state == ZIBI_COMBAT || self.state == ZIBI_MINING {
+        if self.state == ZIBI_WALK_TO_OBELISK || self.state == ZIBI_FOLLOW_PLAYER || self.state == ZIBI_WORKER || self.state == ZIBI_COMBAT || self.state == ZIBI_MINING || self.state == ZIBI_LUMBERJACK {
             // Smart obstacle avoidance
             let front_x = self.x + self.vx * 0.6;
             let front_z = self.z + self.vz * 0.6;
             
             if check_collision(chunks, num_chunks, front_x, self.y, front_z, ZIBI_WIDTH, ZIBI_HEIGHT) {
                 // 1. Try to jump over 1-block walls
-                if check_collision(chunks, num_chunks, front_x, self.y + 1.2, front_z, ZIBI_WIDTH, ZIBI_HEIGHT) == 0 {
-                    if check_collision(chunks, num_chunks, self.x, self.y - 0.1, self.z, ZIBI_WIDTH, ZIBI_HEIGHT) != 0 {
+                let space_above = check_collision(chunks, num_chunks, self.x, self.y + 1.8, self.z, ZIBI_WIDTH, 0.4) == 0;
+                if (space_above && check_collision(chunks, num_chunks, front_x, self.y + 1.2, front_z, ZIBI_WIDTH, ZIBI_HEIGHT) == 0) {
+                    if (check_collision(chunks, num_chunks, self.x, self.y - 0.1, self.z, ZIBI_WIDTH, ZIBI_HEIGHT) != 0) {
                         self.vy = 7.5; // Jump!
                     }
                 } else {
@@ -810,8 +1393,11 @@ impl Zibi {
                         // 3. Completely blocked — SUPER JUMP to escape holes
                         self.vx = 0.0;
                         self.vz = 0.0;
-                        if self.vy == 0.0 { 
-                            self.vy = 9.0; // Higher jump to escape 2-block deep quarries
+                        if (self.vy == 0.0) { 
+                            let space_above = check_collision(chunks, num_chunks, self.x, self.y + 1.8, self.z, ZIBI_WIDTH, 0.4) == 0;
+                            if (space_above) {
+                                self.vy = 9.0; // Higher jump to escape 2-block deep quarries
+                            }
                         }
                     }
                 }
@@ -849,6 +1435,28 @@ impl Zibi {
             }
         }
 
+        // --- Stuck Detection: Force path recalc if not moving enough ---
+        if self.state == ZIBI_WALK_TO_OBELISK || self.state == ZIBI_FOLLOW_PLAYER {
+            self.stuck_timer += dt;
+            if self.stuck_timer >= 2.0 {
+                // Check if we've moved significantly since last check
+                let check_dx = self.x - self.last_stuck_check_x;
+                let check_dz = self.z - self.last_stuck_check_z;
+                let moved = (float)sqrt(check_dx*check_dx + check_dz*check_dz);
+                
+                if moved < 1.0 {
+                    // Stuck! Clear path and force immediate recalc
+                    self.path_len = 0;
+                    self.path_idx = 0;
+                    self.path_timer = 0.0;
+                }
+                
+                self.stuck_timer = 0.0;
+                self.last_stuck_check_x = self.x;
+                self.last_stuck_check_z = self.z;
+            }
+        }
+
         // Gravity
         self.vy -= 18.0 * dt;
         
@@ -879,15 +1487,16 @@ impl Zibi {
             let test_z = self.z;
             if blocked_z == 1 { test_z += moved_z; }
             
-            if check_collision(chunks, num_chunks, test_x, self.y + 1.2, test_z, ZIBI_WIDTH, ZIBI_HEIGHT) == 0 {
+            let space_above = check_collision(chunks, num_chunks, self.x, self.y + 1.8, self.z, ZIBI_WIDTH, 0.4) == 0;
+            if (space_above && check_collision(chunks, num_chunks, test_x, self.y + 1.2, test_z, ZIBI_WIDTH, ZIBI_HEIGHT) == 0) {
                 self.vy = 7.5; // Jump!
             }
         }
         
         // Y movement
         self.y += self.vy * dt;
-        if check_collision(chunks, num_chunks, self.x, self.y, self.z, ZIBI_WIDTH, ZIBI_HEIGHT) {
-            if self.vy < 0.0 { self.y -= self.vy * dt; }
+        if (check_collision(chunks, num_chunks, self.x, self.y, self.z, ZIBI_WIDTH, ZIBI_HEIGHT)) {
+            self.y -= self.vy * dt; // Always revert position on Y collision
             self.vy = 0.0;
         }
         
@@ -941,7 +1550,7 @@ impl Zibi {
         
         // Animation variables
         let limb_swing = 0.0;
-        let is_moving = (self.state == ZIBI_WALK_TO_OBELISK || self.state == ZIBI_COMBAT || (self.state == ZIBI_MINING && (float)sqrt(self.vx*self.vx + self.vz*self.vz) > 0.3) || (self.state == ZIBI_FOLLOW_PLAYER && (float)sqrt(self.vx*self.vx + self.vz*self.vz) > 0.3) || (self.state == ZIBI_WORKER && (float)sqrt(self.vx*self.vx + self.vz*self.vz) > 0.3));
+        let is_moving = (self.state == ZIBI_WALK_TO_OBELISK || self.state == ZIBI_COMBAT || (self.state == ZIBI_MINING && (float)sqrt(self.vx*self.vx + self.vz*self.vz) > 0.3) || (self.state == ZIBI_LUMBERJACK && (float)sqrt(self.vx*self.vx + self.vz*self.vz) > 0.3) || (self.state == ZIBI_FOLLOW_PLAYER && (float)sqrt(self.vx*self.vx + self.vz*self.vz) > 0.3) || (self.state == ZIBI_WORKER && (float)sqrt(self.vx*self.vx + self.vz*self.vz) > 0.3));
         if is_moving { 
             limb_swing = (float)sin(self.anim_time * 12.0);
         }
@@ -982,7 +1591,7 @@ impl Zibi {
         
         // Right Arm (-Z)
         let right_arm_swing = limb_swing * 40.0;
-        if self.state == ZIBI_MINING && self.mine_carrying_block == 0 && self.vx == 0.0 && self.vz == 0.0 && self.mine_target_y != -999 {
+        if (self.state == ZIBI_MINING || self.state == ZIBI_LUMBERJACK) && self.mine_carrying_block == 0 && self.vx == 0.0 && self.vz == 0.0 && self.mine_target_y != -999 {
             right_arm_swing = 45.0 + (float)sin(self.anim_time * 20.0) * 45.0; // Rapid chop
         }
         
@@ -992,8 +1601,8 @@ impl Zibi {
         rl::DrawCube(rl::Vector3{x: 0.0, y: -0.25, z: 0.0}, 0.18, 0.6, 0.18, c_skin);
         rl::DrawCube(rl::Vector3{x: 0.0, y: 0.0, z: 0.0}, 0.2, 0.25, 0.2, c_tunic);
         
-        // --- PICKAXE (only in combat or mining) ---
-        if self.state == ZIBI_COMBAT || (self.state == ZIBI_MINING && self.mine_carrying_block == 0) {
+        // --- TOOL (only in combat, mining, or lumberjack) ---
+        if self.state == ZIBI_COMBAT || ((self.state == ZIBI_MINING || self.state == ZIBI_LUMBERJACK) && self.mine_carrying_block == 0) {
             // Handle (wooden stick)
             rl::DrawCube(rl::Vector3{x: 0.0, y: -0.7, z: 0.0}, 0.08, 0.8, 0.08, rl::Color{r: 139, g: 90, b: 43, a: 255});
             // Pickaxe head (iron-gray)

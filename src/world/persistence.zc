@@ -440,6 +440,10 @@ fn poll_async_results() {
                                  if request_mesh_async(idx, queue[i].priority) == 1 { chunks[idx].mesh_dirty = 0; }
                              }
                          }
+                        // After light recalculation/propagation completes for this chunk, rebuild waypoints
+                        if idx >= 0 && idx < num_chunks {
+                            build_chunk_waypoints(chunks, num_chunks, idx);
+                        }
                      }
                      queue[i].io_status = IO_STATUS_FREE;
                      processed++;
@@ -472,6 +476,10 @@ fn poll_async_results() {
                         chunks[idx].plant_mesh_built = 0; chunks[idx].grass_deco_built = 0;
                         
                         pmap_remove(queue[i].cx, queue[i].cz);
+                        
+                        // Generate waypoints immediately after loading chunk
+                        build_chunk_waypoints(chunks, num_chunks, idx);
+                        
                         queue[i].io_status = IO_STATUS_FREE; 
                         processed++;
 
