@@ -1,0 +1,169 @@
+//> arrows.zc
+import "raylib.h" as rl;
+import "math.h";
+import "../world/chunk_core.zc";
+import "../world/blocks.zc";
+import "player.zc";
+import "shadow_wolf.zc";
+import "../render/particles.zc";
+
+struct Arrow {
+    active: int;
+    x: float; 
+    y: float; 
+    z: float;
+    vx: float; 
+    vy: float; 
+    vz: float;
+    pitch: float;
+    yaw: float;
+    life: float;
+    damage: float;
+}
+
+let MAX_ARROWS: int = 128;
+let arrows: Arrow*;
+
+fn init_arrows() {
+    arrows = (Arrow*)rl::MemAlloc(MAX_ARROWS * sizeof(Arrow));
+    for i in 0..MAX_ARROWS {
+        arrows[i].active = 0;
+    }
+}
+
+fn spawn_arrow(x: float, y: float, z: float, dir_x: float, dir_y: float, dir_z: float, speed: float, damage: float) {
+    for i in 0..MAX_ARROWS {
+        if arrows[i].active == 0 {
+            arrows[i].active = 1;
+            arrows[i].x = x;
+            arrows[i].y = y;
+            arrows[i].z = z;
+            
+            // Normalize direction
+            let len = (float)sqrt(dir_x*dir_x + dir_y*dir_y + dir_z*dir_z);
+            if len > 0.0 {
+                dir_x = dir_x / len;
+                dir_y = dir_y / len;
+                dir_z = dir_z / len;
+            }
+            
+            arrows[i].vx = dir_x * speed;
+            arrows[i].vy = dir_y * speed;
+            arrows[i].vz = dir_z * speed;
+            arrows[i].life = 5.0; // Arrow lasts 5 seconds maximum
+            arrows[i].damage = damage;
+            
+            // Calculate starting pitch and yaw based on velocity
+            arrows[i].yaw = (float)atan2(arrows[i].vx, arrows[i].vz);
+            let h_speed = (float)sqrt(arrows[i].vx*arrows[i].vx + arrows[i].vz*arrows[i].vz);
+            arrows[i].pitch = (float)atan2(arrows[i].vy, h_speed);
+            
+            break;
+        }
+    }
+}
+
+fn update_arrows(dt: float, chunks: Chunk*, num_chunks: int, wolves: ShadowWolf*, max_wolves: int) {
+    for i in 0..MAX_ARROWS {
+        if arrows[i].active == 1 {
+            arrows[i].life = arrows[i].life - dt;
+            if arrows[i].life <= 0.0 {
+                arrows[i].active = 0;
+                continue;
+            }
+            
+            // Gravity for arrows makes them arc
+            arrows[i].vy = arrows[i].vy - 15.0 * dt;
+            
+            // Update orientation based on current velocity vector
+            arrows[i].yaw = (float)atan2(arrows[i].vx, arrows[i].vz);
+            let h_speed = (float)sqrt(arrows[i].vx*arrows[i].vx + arrows[i].vz*arrows[i].vz);
+            arrows[i].pitch = (float)atan2(arrows[i].vy, h_speed);
+            
+            arrows[i].x = arrows[i].x + arrows[i].vx * dt;
+            arrows[i].y = arrows[i].y + arrows[i].vy * dt;
+            arrows[i].z = arrows[i].z + arrows[i].vz * dt;
+            
+            // Block Collision
+            let bx = (int)floor(arrows[i].x);
+            let by = (int)floor(arrows[i].y);
+            let bz = (int)floor(arrows[i].z);
+            let block = get_block(chunks, num_chunks, bx, by, bz);
+            
+            if block != BLOCK_AIR && block != BLOCK_WATER && block != BLOCK_WATER_0 && block != BLOCK_WATER_1 && block != BLOCK_WATER_2 && block != BLOCK_TALLGRASS {
+                arrows[i].active = 0; // Stuck in block
+                
+                // Spawn a few particles simulating dust/impact
+                for p in 0..4 {
+                    spawn_particle(arrows[i].x, arrows[i].y, arrows[i].z, rl::Color{r: 150, g: 150, b: 150, a: 255});
+                }
+                continue;
+            }
+            
+            // World bounds
+            if arrows[i].y < 0.0 || arrows[i].y > CHUNK_HEIGHT {
+                arrows[i].active = 0;
+                continue;
+            }
+            
+            // Entity collision (Wolves only for now, can expand later)
+            // Zibis are friendly, so arrows shouldn't hit them
+            let hit = 0;
+            for wi in 0..max_wolves {
+                if wolves[wi].active == 1 && wolves[wi].hp > 0 {
+                    let dx = wolves[wi].x - arrows[i].x;
+                    let dy = wolves[wi].y + 0.5 - arrows[i].y; // Wolf center
+                    let dz = wolves[wi].z - arrows[i].z;
+                    // Check radius (wolves are roughly 1 block wide/long)
+                    if (dx*dx + dy*dy + dz*dz) < 1.0 { // 1 block radius hit detection
+                        wolves[wi].take_damage((int)arrows[i].damage);
+                        
+                        // Impact effects (blood)
+                        for pb in 0..8 {
+                            spawn_particle(arrows[i].x, arrows[i].y, arrows[i].z, rl::Color{r: 200, g: 20, b: 20, a: 255});
+                        }
+                        
+                        arrows[i].active = 0;
+                        hit = 1;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn draw_arrows() {
+    for i in 0..MAX_ARROWS {
+        if arrows[i].active == 1 {
+            rl::rlPushMatrix();
+            rl::rlTranslatef(arrows[i].x, arrows[i].y, arrows[i].z);
+            
+            // Apply rotation (Pitch and Yaw)
+            // raylib's 3D rotation can be applied sequentially
+            rl::rlRotatef(arrows[i].yaw * 57.29578, 0.0, 1.0, 0.0); // Convert rad to deg for Y-axis (Yaw)
+            rl::rlRotatef(-arrows[i].pitch * 57.29578, 1.0, 0.0, 0.0); // Convert rad to deg for X-axis (Pitch)
+            
+            // Draw the arrow shape. We'll simplify to an elongated cylinder for the shaft, 
+            // and maybe a smaller triangle/cone at the tip (if we don't have a model).
+            
+            let shaft_col = rl::Color{r: 139, g: 69, b: 19, a: 255}; // Saddle Brown
+            let tip_col = rl::Color{r: 200, g: 200, b: 200, a: 255}; // Iron Silver
+            let feather_col = rl::Color{r: 255, g: 255, b: 255, a: 255}; // White feathers
+            
+            // Shaft (Z-axis aligned)
+            rl::DrawCylinderEx(rl::Vector3{x: 0.0, y: 0.0, z: -0.4}, rl::Vector3{x: 0.0, y: 0.0, z: 0.3}, 0.03, 0.03, 6, shaft_col);
+            
+            // Tip
+            rl::DrawCylinderEx(rl::Vector3{x: 0.0, y: 0.0, z: 0.3}, rl::Vector3{x: 0.0, y: 0.0, z: 0.5}, 0.05, 0.0, 4, tip_col);
+            
+            // Feathers (Fletching)
+            rl::DrawLine3D(rl::Vector3{x: 0.04, y: 0.0, z: -0.3}, rl::Vector3{x: 0.04, y: 0.0, z: -0.5}, feather_col);
+            rl::DrawLine3D(rl::Vector3{x: -0.04, y: 0.0, z: -0.3}, rl::Vector3{x: -0.04, y: 0.0, z: -0.5}, feather_col);
+            rl::DrawLine3D(rl::Vector3{x: 0.0, y: 0.04, z: -0.3}, rl::Vector3{x: 0.0, y: 0.04, z: -0.5}, feather_col);
+            rl::DrawLine3D(rl::Vector3{x: 0.0, y: -0.04, z: -0.3}, rl::Vector3{x: 0.0, y: -0.04, z: -0.5}, feather_col);
+            
+            rl::rlPopMatrix();
+        }
+    }
+}

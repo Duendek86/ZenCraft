@@ -11,6 +11,7 @@ fn get_spell_name(spell_id: int) -> char* {
     else if spell_id == 1 { return "Fireball"; }
     else if spell_id == 2 { return "Miner Banner"; }
     else if spell_id == 3 { return "Lumber Banner"; }
+    else if spell_id == 4 { return "Archer Banner"; }
     return "Empty";
 }
 
@@ -33,6 +34,14 @@ fn draw_spell_icon(spell_id: int, x: int, y: int, size: int) {
         rl::DrawRectangle(x + size/2 - 2, y + 4, 4, size - 8, rl::Color{r: 139, g: 90, b: 43, a: 255});
         rl::DrawRectangle(x + 6, y + 6, size - 12, size/3, rl::Color{r: 140, g: 220, b: 140, a: 255});
         rl::DrawRectangle(x + 10, y + 8, 4, size/3 - 4, rl::Color{r: 30, g: 100, b: 30, a: 255});
+    } else if spell_id == 4 {
+        // Archer banner icon
+        rl::DrawRectangle(x + size/2 - 2, y + 4, 4, size - 8, rl::Color{r: 139, g: 90, b: 43, a: 255});
+        rl::DrawRectangle(x + 6, y + 6, size - 12, size/3, rl::Color{r: 220, g: 100, b: 100, a: 255});
+        rl::DrawRectangle(x + 10, y + 8, 4, size/3 - 4, rl::Color{r: 150, g: 20, b: 20, a: 255});
+        // target
+        rl::DrawCircle(x + size/2, y + 8 + (size/3 - 4) / 2, 3.0, rl::WHITE);
+        rl::DrawCircle(x + size/2, y + 8 + (size/3 - 4) / 2, 1.0, rl::RED);
     } else {
         // Empty slot
         rl::DrawRectangle(x + 10, y + 10, size - 20, size - 20, rl::Color{r: 40, g: 40, b: 50, a: 100});

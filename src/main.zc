@@ -38,6 +38,7 @@ import "render/grass_deco.zc";
 import "render/particles.zc";
 import "ui/spellbook.zc";
 import "entities/fireball.zc";
+import "entities/arrows.zc";
 import "entities/shadow_wolf.zc";
 import "entities/player_interaction.zc";
 import "entities/obelisk.zc";
@@ -128,6 +129,7 @@ fn main() {
 
     for i in 0..MAX_CHUNKS { chunks[i].x = -9999; chunks[i].z = -9999; chunks[i].locked = 0; chunks[i].chest_count = 0; }
     scepter_init();
+    init_arrows();
     
     let day_time = 0.2;
     let title_start_time = rl::GetTime();
@@ -420,6 +422,7 @@ fn main() {
             poll_async_results();
             update_particles(dt);
             update_fireballs(dt, chunks, MAX_CHUNKS, &wolves[0], MAX_WOLVES, &zibis[0], MAX_ZIBIS);
+            update_arrows(dt, chunks, MAX_CHUNKS, &wolves[0], MAX_WOLVES);
             update_obelisks(chunks, MAX_CHUNKS, dt);
             
             let mesh_requests = 0;
@@ -568,7 +571,7 @@ fn main() {
                 if show_settings { rl::EnableCursor(); } else { rl::DisableCursor(); }
             }
             
-            day_time = day_time + (dt / 2400.0); // 2400 seconds total for a full day+night cycle
+            day_time = day_time + (dt / 120.0); // 120 seconds total for a full day+night cycle
             if day_time > 1.0 { day_time = day_time - 1.0; }
             update_day_night_cycle(day_time);
             
@@ -823,6 +826,7 @@ fn main() {
             draw_cages_3d(chunks, MAX_CHUNKS, day_time);
             draw_particles();
             draw_fireballs();
+            draw_arrows();
             
             if show_settings == 0 && show_spellbook == 0 && is_chest_ui_open() == 0 && is_scepter_ui_open() == 0 && is_banner_ui_open() == 0 && show_exit_confirm == 0 {
                 // --- Hotbar Input ---

@@ -588,6 +588,45 @@ fn generate_chunk_data(data: ChunkData*, x: int, z: int) {
             if ((cage_ground == BLOCK_GRASS || cage_ground == BLOCK_SAND || cage_ground == BLOCK_SNOW || cage_ground == BLOCK_STONE) && data.blocks[cage_x][cage_h+1][cage_z] == BLOCK_AIR) {
                 // Place 1-tall cage
                 data.blocks[cage_x][cage_h + 1][cage_z] = BLOCK_CAGE;
+                
+                // Spawning a chest nearby sometimes (50% chance)
+                if (rl::GetRandomValue(0, 100) < 50) {
+                    let ox = -2; if rl::GetRandomValue(0, 1) == 0 { ox = 2; }
+                    let oz = -2; if rl::GetRandomValue(0, 1) == 0 { oz = 2; }
+                    
+                    let chest_x = cage_x + ox;
+                    let chest_z = cage_z + oz;
+                    
+                    if (chest_x >= 0 && chest_x < 16 && chest_z >= 0 && chest_z < 16) {
+                        let chest_h = heights[chest_x][chest_z];
+                        let chest_ground = data.blocks[chest_x][chest_h][chest_z];
+                        
+                        // Look for a flat space on the ground nearby
+                        if (chest_h > 31 && chest_h < CHUNK_HEIGHT - 3 && (chest_ground == BLOCK_GRASS || chest_ground == BLOCK_SAND || chest_ground == BLOCK_SNOW || chest_ground == BLOCK_STONE) && data.blocks[chest_x][chest_h+1][chest_z] == BLOCK_AIR) {
+                             if data.chest_count < 8 {
+                                 data.blocks[chest_x][chest_h + 1][chest_z] = BLOCK_CHEST;
+                                 let ci = data.chest_count;
+                                 data.chests[ci].x = chest_x;
+                                 data.chests[ci].y = chest_h + 1;
+                                 data.chests[ci].z = chest_z;
+                                 
+                                 for inv_i in 0..16 { 
+                                     data.chests[ci].items.slots[inv_i].block_type = BLOCK_AIR; 
+                                     data.chests[ci].items.slots[inv_i].count = 0; 
+                                 }
+                                 
+                                 data.chests[ci].open = 0.0;
+                                 data.chests[ci].active = 1 + rl::GetRandomValue(0, 3);
+                                 
+                                 // Include Torches in the first slot
+                                 data.chests[ci].items.slots[0].block_type = BLOCK_TORCH;
+                                 data.chests[ci].items.slots[0].count = 10 + rl::GetRandomValue(0, 10);
+                                 
+                                 data.chest_count++;
+                             }
+                        }
+                    }
+                }
             }
         }
     }

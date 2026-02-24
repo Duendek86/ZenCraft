@@ -21,6 +21,7 @@ let sh_crystal: rl::Shader;
 let model_skull: rl::Model;
 let model_obelisco_base: rl::Model;
 let model_obelisco_cristal: rl::Model;
+let model_chest: rl::Model;
 
 // Uniform Locations (Lighting)
 let loc_light_dir: int;
@@ -287,6 +288,29 @@ fn init_textures() {
         rl::ImageDrawRectangle(&atlas, cg_x+bx, cg_y, 2, h, rl::Color{r: 100, g: 100, b: 100, a: 255});
     }
 
+    // Miner Banner (Procedural) - Slot (5, 0)
+    let b_mx = w * 5;
+    let b_my = 0;
+    rl::ImageDrawRectangle(&atlas, b_mx, b_my, w, h, rl::Color{r: 150, g: 30, b: 30, a: 255});
+    rl::ImageDrawRectangle(&atlas, b_mx+4, b_my+4, w-8, h-8, rl::Color{r: 100, g: 20, b: 20, a: 255});
+    rl::ImageDrawRectangle(&atlas, b_mx+6, b_my+6, w-12, h-12, rl::Color{r: 200, g: 200, b: 50, a: 255}); // Pickaxe implied
+
+    // Lumber Banner (Procedural) - Slot (6, 0)
+    let b_lx = w * 6;
+    let b_ly = 0;
+    rl::ImageDrawRectangle(&atlas, b_lx, b_ly, w, h, rl::Color{r: 30, g: 100, b: 30, a: 255});
+    rl::ImageDrawRectangle(&atlas, b_lx+4, b_ly+4, w-8, h-8, rl::Color{r: 20, g: 70, b: 20, a: 255});
+    rl::ImageDrawRectangle(&atlas, b_lx+6, b_ly+6, w-12, h-12, rl::Color{r: 150, g: 100, b: 50, a: 255}); // Axe implied
+
+    // Archer Banner (Procedural) - Slot (7, 0)
+    let b_ax = w * 7;
+    let b_ay = 0;
+    rl::ImageDrawRectangle(&atlas, b_ax, b_ay, w, h, rl::Color{r: 200, g: 40, b: 40, a: 255}); // Red background
+    rl::ImageDrawRectangle(&atlas, b_ax+4, b_ay+4, w-8, h-8, rl::Color{r: 140, g: 20, b: 20, a: 255});
+    rl::ImageDrawCircle(&atlas, b_ax + w/2, b_ay + h/2, 4, rl::WHITE); // Target
+    rl::ImageDrawCircle(&atlas, b_ax + w/2, b_ay + h/2, 2, rl::RED);
+
+
 
     tex_atlas = rl::LoadTextureFromImage(atlas);
     rl::SetTextureFilter(tex_atlas, rl::TEXTURE_FILTER_POINT);
@@ -360,6 +384,7 @@ fn init_textures() {
     model_skull = rl::LoadModel("assets/3DModels/skull.glb");
     model_obelisco_base = rl::LoadModel("assets/3DModels/obeliscoBase.glb");
     model_obelisco_cristal = rl::LoadModel("assets/3DModels/obeliscoCristal.glb");
+    model_chest = rl::LoadModel("assets/3DModels/chest.glb");
     
     
     for i in 0..model_skull.materialCount {
@@ -375,6 +400,9 @@ fn init_textures() {
     
     for i in 0..model_obelisco_cristal.materialCount {
         model_obelisco_cristal.materials[i].shader = sh_crystal;
+    }
+    for i in 0..model_chest.materialCount {
+        model_chest.materials[i].shader = sh_lighting;
     }
 }
 
@@ -395,6 +423,7 @@ fn get_loc_grass_crystal_count() -> int { return loc_grass_crystal_count; }
 fn get_model_skull() -> rl::Model { return model_skull; }
 fn get_model_obelisco_base() -> rl::Model { return model_obelisco_base; }
 fn get_model_obelisco_cristal() -> rl::Model { return model_obelisco_cristal; }
+fn get_model_chest() -> rl::Model { return model_chest; }
 
 fn get_snd_rayo_start() -> rl::Sound { return snd_rayo_start; }
 fn get_snd_rayo_loop() -> rl::Sound { return snd_rayo_loop; }

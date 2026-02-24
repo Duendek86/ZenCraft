@@ -132,6 +132,29 @@ fn draw_spellbook(state: SpellbookState*, selected_block: int*, chunks: Chunk*, 
     if (clicked && mx >= s4_x && mx <= s4_x + list_w && my >= s4_y && my <= s4_y + s4_h) {
         state.selected_spell = 3;
     }
+
+    // Spell 5: Archer Banner
+    let s5_x = left_x;
+    let s5_y = s4_y + s4_h + 25;
+    let s5_h = 80;
+    
+    rl::DrawRectangle(s5_x, s5_y, list_w, s5_h, rl::Color{r: 30, g: 35, b: 45, a: 255});
+    rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)s5_x, y: (float)s5_y, width: (float)list_w, height: (float)s5_h}, 3.0, rl::Color{r: 50, g: 50, b: 60, a: 255});
+    if (state.selected_spell == 4) {
+        rl::DrawRectangleLinesEx(rl::Rectangle{x: (float)s5_x, y: (float)s5_y, width: (float)list_w, height: (float)s5_h}, 3.0, rl::GOLD);
+    }
+    
+    rl::DrawText("Archer Banner", s5_x + 70, s5_y + 12, 36, rl::Color{r: 220, g: 80, b: 80, a: 255});
+    rl::DrawText("20 Mana", s5_x + 70, s5_y + 50, 20, rl::GRAY);
+    // Draw target icon base
+    rl::DrawRectangle(s5_x + 20, s5_y + 20, 36, 36, rl::Color{r: 150, g: 30, b: 30, a: 255});
+    rl::DrawCircle(s5_x + 38, s5_y + 38, 8, rl::WHITE);
+    rl::DrawCircle(s5_x + 38, s5_y + 38, 4, rl::RED);
+    
+    if (clicked && mx >= s5_x && mx <= s5_x + list_w && my >= s5_y && my <= s5_y + s5_h) {
+        state.selected_spell = 4;
+    }
+
     
     // --- HOTBAR ASSIGNMENT (centered at bottom) ---
     rl::DrawLine(win_x + 40, win_y + win_h - 200, win_x + win_w - 40, win_y + win_h - 200, rl::Color{r: 80, g: 80, b: 80, a: 150});
@@ -178,6 +201,7 @@ fn draw_spellbook(state: SpellbookState*, selected_block: int*, chunks: Chunk*, 
         else if spell_id == 1 { label = "F"; }  // Fireball
         else if spell_id == 2 { label = "M"; }  // Miner
         else if spell_id == 3 { label = "L"; }  // Lumber
+        else if spell_id == 4 { label = "A"; }  // Archer
         rl::DrawText(label, bx + 32, hb_label_y, 20, rl::LIGHTGRAY);
     }
     
@@ -349,7 +373,7 @@ impl SpellbookState {
         s.hotbar[1] = 1; // Fireball
         s.hotbar[2] = 2; // Miner Banner
         s.hotbar[3] = 3; // Lumber Banner
-        s.hotbar[4] = -1; // Empty
+        s.hotbar[4] = 4; // Archer Banner
         s.hotbar[5] = -1;
         s.hotbar[6] = -1;
         s.hotbar_selected = 0;

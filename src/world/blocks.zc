@@ -36,4 +36,5 @@ def BLOCK_CAGE = 27;    // Zibi cage
 def BLOCK_CHEST = 28;   // Storage chest
 def BLOCK_BANNER = 29;  // Mining banner
 def BLOCK_LUMBER_BANNER = 30; // Lumberjack banner
+def BLOCK_ARCHER_BANNER = 31; // Archer banner
 

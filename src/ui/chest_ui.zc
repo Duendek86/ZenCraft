@@ -14,6 +14,8 @@ let chest_ui_chest_idx: int = -1;
 let chest_hover_slot: int = -1;  // Which slot is hovered (-1=none)
 let chest_hover_panel: int = 0;  // 0=scepter, 1=chest
 
+extern fn get_model_chest() -> rl::Model;
+
 // Open the chest UI for a specific chest
 fn open_chest_ui(chunk_idx: int, chest_idx: int) {
     chest_ui_open = 1;
@@ -224,37 +226,16 @@ fn draw_chests_3d(chunks: Chunk*, num_chunks: int, day_time: float) {
             let el = rl::Vector2{x: (float)(packed & 0xF) / 15.0, y: (float)((packed >> 4) & 0xF) / 15.0};
             if loc_entity_light != -1 { rl::SetShaderValue(sh, loc_entity_light, &el, rl::SHADER_UNIFORM_VEC2); }
             
-            // Chest colors
-            let c_body = rl::Color{r: 139, g: 90, b: 43, a: 255};  // Dark wood
-            let c_top = rl::Color{r: 160, g: 110, b: 55, a: 255}; // Lighter top
-            let c_latch = rl::Color{r: 200, g: 180, b: 60, a: 255}; // Gold latch
-            
-            rl::rlPushMatrix();
-            rl::rlTranslatef(wx, wy, wz);
-            
             let c_dir = chunks[ci].chests[i].active - 1;
             let rot_angle = 0.0;
             if c_dir == 0 { rot_angle = 90.0; }
             else if c_dir == 1 { rot_angle = 0.0; }
             else if c_dir == 2 { rot_angle = -90.0; }
             else if c_dir == 3 { rot_angle = 180.0; }
-            rl::rlRotatef(rot_angle, 0.0, 1.0, 0.0);
             
-            // Body (bottom part) — slightly smaller than a full block
-            rl::DrawCube(rl::Vector3{x: 0.0, y: 0.3, z: 0.0}, 0.85, 0.55, 0.75, c_body);
-            
-            // Lid (top) — hinged effect with open animation
-            let open_angle = chunks[ci].chests[i].open * 60.0; // 0 to 60 degrees
-            rl::rlPushMatrix();
-            rl::rlTranslatef(0.0, 0.575, -0.375);  // Hinge point at back
-            rl::rlRotatef(-open_angle, 1.0, 0.0, 0.0); // Rotate lid open
-            rl::DrawCube(rl::Vector3{x: 0.0, y: 0.065, z: 0.375}, 0.85, 0.12, 0.75, c_top);
-            rl::rlPopMatrix();
-            
-            // Latch (front of chest)
-            rl::DrawCube(rl::Vector3{x: 0.0, y: 0.4, z: 0.38}, 0.12, 0.12, 0.04, c_latch);
-            
-            rl::rlPopMatrix();
+            let model_chest = get_model_chest();
+            let c_pos = rl::Vector3{x: wx, y: wy, z: wz};
+            rl::DrawModelEx(model_chest, c_pos, rl::Vector3{x: 0.0, y: 1.0, z: 0.0}, rot_angle, rl::Vector3{x: 1.0, y: 1.0, z: 1.0}, rl::WHITE);
         }
     }
     
@@ -273,7 +254,7 @@ fn find_chest_at(chunks: Chunk*, num_chunks: int, wx: int, wy: int, wz: int, out
     for ci in 0..num_chunks {
         if chunks[ci].x == cx && chunks[ci].z == cz {
             for i in 0..chunks[ci].chest_count {
-                if chunks[ci].chests[i].active == 1 &&
+                if chunks[ci].chests[i].active > 0 &&
                    chunks[ci].chests[i].x == lx &&
                    chunks[ci].chests[i].y == wy &&
                    chunks[ci].chests[i].z == lz {

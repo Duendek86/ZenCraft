@@ -3,6 +3,7 @@ import "player.zc"; // Access to check_collision and chunk utilities
 import "../world/chunk.zc";
 import "../world/pathfinding.zc";
 import "raylib.h" as rl;
+import "arrows.zc";
 import "math.h";
 
 // Zibi States
@@ -13,6 +14,7 @@ def ZIBI_FOLLOW_PLAYER = 3;      // No obelisk nearby, player follow mode
 def ZIBI_COMBAT = 4;             // Fighting back against an attacker
 def ZIBI_MINING = 5;             // Active miner at a banner
 def ZIBI_LUMBERJACK = 6;         // Active lumberjack at a lumber banner
+def ZIBI_ARCHER = 7;
 
 struct Zibi {
     x: float;
@@ -480,6 +482,8 @@ impl Zibi {
                                             self.mine_banner_z = target_bz;
                                             if chunks[c_idx].banners[bi].banner_type == 1 {
                                                 self.state = ZIBI_LUMBERJACK;
+                                            } else if chunks[c_idx].banners[bi].banner_type == 2 {
+                                                self.state = ZIBI_ARCHER;
                                             } else {
                                                 self.state = ZIBI_MINING;
                                             }
