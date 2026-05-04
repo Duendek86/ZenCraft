@@ -8,6 +8,24 @@ raw {
     #define Z_REALLOC(p,sz)   zdebug_realloc_loc(p, sz, __FILE__, __LINE__)
     #define Z_FREE(p)         zdebug_free(p)
     
+    // Escudo anti-colisiones entre Windows API y Raylib
+    #ifdef _WIN32
+        #ifndef WIN32_LEAN_AND_MEAN
+            #define WIN32_LEAN_AND_MEAN
+        #endif
+        #ifndef NOGDI
+            #define NOGDI
+        #endif
+        #ifndef NOUSER
+            #define NOUSER
+        #endif
+        #include <windows.h>
+        #undef DrawText
+        #undef CloseWindow
+        #undef ShowCursor
+        #undef Rectangle
+    #endif
+
     #include "src/zalloc.h"
     
     // Wrappers para ZALLOC en Zen-C

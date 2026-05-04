@@ -28,6 +28,14 @@ raw {
     #include "src/world/pending_map.h"
     #define ZTHREAD_IMPLEMENTATION
     #include "src/zthread.h"
+
+    // Limpieza de macros de Windows que chocan con Raylib
+    #ifdef _WIN32
+        #undef DrawText
+        #undef CloseWindow
+        #undef ShowCursor
+        #undef Rectangle
+    #endif
     
     // El traductor mágico para que C entienda la palabra "any"
     typedef void* any;

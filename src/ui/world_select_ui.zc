@@ -8,8 +8,16 @@ raw {
     #include <sys/stat.h>
 
     #ifdef _WIN32
+        #ifndef WIN32_LEAN_AND_MEAN
+            #define WIN32_LEAN_AND_MEAN
+        #endif
         #include <windows.h>
         #include <direct.h>
+        // Limpieza de macros de Windows que chocan con Raylib
+        #undef DrawText
+        #undef CloseWindow
+        #undef ShowCursor
+        #undef Rectangle
     #else
         #include <dirent.h>
         #include <unistd.h>
